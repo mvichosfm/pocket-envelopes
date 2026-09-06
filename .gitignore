@@ -1,0 +1,60 @@
+# User data — NEVER commit. This is real personal finance data.
+finance-data.json
+finance-data.bak*.json
+*.bak
+# Server-side persistence artefacts (serve.py): the atomic-write staging file
+# and the rolling backups it rotates on every PUT. `*.bak` does NOT cover
+# these — the slot number comes after the extension (finance-data.bak.0).
+finance-data.json.tmp
+finance-data.bak.*
+*.tmp
+
+# Editing twin used when a tool refuses the .app extension (see CLAUDE.md)
+_edit.html
+
+# Local Claude tooling — contains machine-specific absolute paths.
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# OS
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Build / dist (none today, but reserved if vendor/build steps are added later)
+dist/
+build/
+node_modules/
+
+# Logs
+*.log
+
+# Local launch overrides
+launch.local.bat
+launch.local.sh
+
+# The hosted edition is its own git repo nested here (site/.git), not a
+# submodule. Without this it shows as an untracked 452 MB directory forever.
+site/

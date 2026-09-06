@@ -1,0 +1,23 @@
+# Force LF line endings for shell scripts and Python so the repo works
+# identically when cloned on macOS/Linux from a Windows checkout.
+*.sh text eol=lf
+*.py text eol=lf
+
+# Treat the .app file as text (it's HTML/CSS/JS); LF for consistency across
+# platforms.
+*.app text eol=lf
+
+# Normalise common text formats.
+*.md text
+*.json text
+*.html text
+*.css text
+*.js text
+
+# Mark binary files explicitly so git doesn't try to diff them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
