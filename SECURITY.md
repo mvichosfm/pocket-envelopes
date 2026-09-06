@@ -42,6 +42,16 @@ finances through the `/data` API. Access control is therefore entirely about
 - **Injection**: every user-supplied string rendered into HTML goes through
   `esc()`. Payees, notes, envelope, account and tag names are all escaped.
 
+## The Windows installer
+
+The installer is not code-signed, so SmartScreen shows an "unrecognised
+publisher" warning. Each release page prints the installer's SHA-256; check
+it before running, or build the installer yourself from the repository with
+`installer\build.ps1` (it fetches only the official python.org runtime and
+verifies that download against a pinned hash). The installer writes only to
+your user profile and adds no services, drivers or firewall rules; the
+bundled server binds to `127.0.0.1` like every other way of running it.
+
 ## Reporting a vulnerability
 
 Please do not open a public issue for anything that could expose someone's

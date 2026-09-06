@@ -32,15 +32,17 @@ Start the server (next section) and open <http://localhost:8765/?demo=1>. That l
 
 ## Install and run
 
-Download or clone the repository, then:
+**Windows, the easy way: the installer.** Download `PocketEnvelopes-Setup-<version>.exe` from the [latest release](https://github.com/mvichosfm/pocket-envelopes/releases/latest) and run it. It needs no Python and no administrator rights: it bundles the official Python runtime, installs for your user only (under `%LOCALAPPDATA%\Programs\Pocket Envelopes`), and puts **Pocket Envelopes** in the Start menu. That shortcut starts the server if it is not already running and opens the app. Your budget is kept in `%LOCALAPPDATA%\PocketEnvelopes\finance-data.json`, which the uninstaller deliberately leaves in place. Tick *Start the server when I sign in* during setup if you use the app from a phone or as an installed app and want it always reachable.
 
-**Windows**
+> Windows SmartScreen will warn about an unrecognised publisher the first time, because the installer is not code-signed. Choose *More info → Run anyway*, or verify the SHA-256 printed on the release page first. You can also build the installer yourself with `installer\build.ps1` (see `installer/`).
+
+**Windows, from the source folder**
 
 ```bat
 launch.bat
 ```
 
-Double-clicking it works too. If Python is missing it prints install instructions and waits instead of failing silently.
+Double-clicking it works too. Uses the Python already on your machine; if it is missing it prints install instructions and waits instead of failing silently.
 
 **macOS / Linux**
 
@@ -99,11 +101,13 @@ Your budget is `finance-data.json`, next to `serve.py`. The app reads it with `G
 
 ## Updating
 
-Replace the files with the new release (or `git pull`), restart the server, and reload the app. Your `finance-data.json` is never part of the repository. The app migrates older data files forward automatically; `CHANGELOG.md` marks the changes that affect how money is counted, so you know when to glance at your figures. If you installed it as an app, a reload picks up the new shell.
+With the Windows installer, run the newer setup over the old one: it stops the running server, replaces the program files and leaves your data where it is. From a source folder, replace the files with the new release (or `git pull`), restart the server, and reload the app. Your `finance-data.json` is never part of the repository. The app migrates older data files forward automatically; `CHANGELOG.md` marks the changes that affect how money is counted, so you know when to glance at your figures. If you installed it as an app, a reload picks up the new shell.
 
 ## Uninstalling
 
-Stop the server (Ctrl-C, or end the scheduled task or service if you set one up), delete the folder, and keep or delete `finance-data.json` as you prefer. If you used `tailscale serve`, run `tailscale serve reset`. Remove the installed app from your home screen or browser like any other.
+Installed with the Windows installer: *Settings → Apps → Pocket Envelopes → Uninstall*. It stops the server, removes the program and shortcuts, and keeps your budget at `%LOCALAPPDATA%\PocketEnvelopes`; delete that folder yourself if you no longer want it.
+
+From a source folder: stop the server (Ctrl-C, or end the scheduled task or service if you set one up), delete the folder, and keep or delete `finance-data.json` as you prefer. If you used `tailscale serve`, run `tailscale serve reset`. Remove the installed app from your home screen or browser like any other.
 
 ## Security
 

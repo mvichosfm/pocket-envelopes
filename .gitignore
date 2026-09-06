@@ -43,8 +43,9 @@ desktop.ini
 .Trashes
 ehthumbs.db
 
-# Build / dist (none today, but reserved if vendor/build steps are added later)
+# Build output: the Windows installer (installeruild.ps1) and its staged runtime
 dist/
+installer/stage/
 build/
 node_modules/
 

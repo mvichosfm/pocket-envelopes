@@ -5,7 +5,19 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## 2026-09-06 — public release
+## 2026-09-06 — v0.3.0, Windows installer
+
+- A Windows installer (`PocketEnvelopes-Setup-<version>.exe`, built by
+  `installer\build.ps1` with Inno Setup): per-user, no administrator rights,
+  no Python to install — it bundles the official embeddable CPython runtime.
+  Start-menu shortcut starts the server if needed and opens the app; optional
+  desktop shortcut and sign-in autostart; upgrades and uninstalls stop a
+  running server first; the uninstaller keeps your budget.
+- `serve.py` honours `DATA_DIR`: the installer keeps the budget in
+  `%LOCALAPPDATA%\PocketEnvelopes` instead of the program folder. A source
+  checkout is unchanged (default is still next to `serve.py`).
+
+## 2026-09-06 — v0.2.0, public release
 
 - Transaction **tags**: one optional tag per transaction or recurring entry,
   from a short user-defined list (up to eight). Filter and search by tag, a

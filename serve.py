@@ -88,9 +88,15 @@ mimetypes.add_type("text/html", ".app")
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("text/javascript", ".js")
 
-DATA_FILE = "finance-data.json"
+# Where the budget lives. Default: next to this file, which is what a
+# checkout expects. The Windows installer sets DATA_DIR to a per-user folder
+# (%LOCALAPPDATA%\PocketEnvelopes) because the program folder is not a place
+# to keep, or write, personal data. Static files always come from this
+# file's own directory regardless.
+DATA_DIR = os.path.abspath(os.environ.get("DATA_DIR") or os.path.dirname(os.path.abspath(__file__)))
+DATA_FILE = os.path.join(DATA_DIR, "finance-data.json")
 TMP_FILE = DATA_FILE + ".tmp"
-BAK_PREFIX = "finance-data.bak."
+BAK_PREFIX = os.path.join(DATA_DIR, "finance-data.bak.")
 BAK_SLOTS = 5          # .bak.0 (newest) .. .bak.4 (oldest)
 MAX_BODY = 64 * 1024 * 1024   # refuse absurd bodies rather than buffering them
 
@@ -151,6 +157,7 @@ def _rotate_backups():
 
 def _write_data(payload: bytes):
     """Atomically replace DATA_FILE with payload, after rotating backups."""
+    os.makedirs(DATA_DIR, exist_ok=True)
     _rotate_backups()
     with open(TMP_FILE, "wb") as fh:
         fh.write(payload)
@@ -318,6 +325,7 @@ def main():
     # Always print localhost: that is what the person sitting at this machine
     # should click, whatever interface we listen on.
     print(f"Serving http://localhost:{PORT}/  ({shutdown_note})")
+    print(f"Data file: {DATA_FILE}")
     if BIND == "0.0.0.0":
         print(f"WARNING: BIND=0.0.0.0 -- reachable from every device on this machine's networks, port {PORT}, with no authentication.")
     try:
