@@ -30,7 +30,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Decide the version
         id: version
@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload unsigned installer
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: installer-unsigned
           path: dist/*.exe
@@ -85,7 +85,7 @@ jobs:
           output-artifact-directory: signed
 
       - name: Upload signed installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: installer-signed
           path: signed/**/*.exe
@@ -99,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download the signed installer if there is one, else the unsigned build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ${{ needs.sign.result == 'success' && 'installer-signed' || 'installer-unsigned' }}
           path: out
