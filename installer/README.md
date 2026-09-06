@@ -19,6 +19,10 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 0.3.0
 Output: `dist\PocketEnvelopes-Setup-0.3.0.exe` (about 11 MB, most of it the
 Python runtime).
 
+## Built on GitHub Actions for releases
+
+`.github/workflows/installer.yml` runs this same `build.ps1` on a `windows-latest` runner (Inno Setup is preinstalled there) for every `v*` tag, uploads the installer as a workflow artifact, and attaches it plus a `.sha256` file to the GitHub release. Once SignPath Foundation has approved the project and the repository has the `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG` variables and the `SIGNPATH_API_TOKEN` secret, the workflow also submits the build for code signing and attaches the signed file instead. *Run workflow* on the Actions tab does a dry run without a tag.
+
 ## Test it without touching your own budget
 
 The launcher honours `PORT`, so a test can run beside a real server:

@@ -160,6 +160,15 @@ A service worker caches the app shell, so it opens even when the server is aslee
 
 `pocket-envelopes.app` is one HTML file: CSS, then a single script that holds the data model, the accounting helpers, the forecast, and one render loop per tab. `serve.py` is a `SimpleHTTPRequestHandler` with two extra routes, `GET` and `PUT /data`, an ETag per response, and an idle watchdog. `sw.js` caches the shell network-first and never touches `/data`. The developer guide, including the decision log that explains every accounting rule and why it is the way it is, is `CLAUDE.md`; `node audit/run-audit.mjs` syntax-checks the app and unit-tests its accounting helpers.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [Manos Vichos (mvichosfm)](https://github.com/mvichosfm)
+- Approvers: [Manos Vichos (mvichosfm)](https://github.com/mvichosfm)
+
+Release installers are built by the [Windows installer workflow](.github/workflows/installer.yml) on GitHub Actions from the tagged commit, so every signed binary traces back to the public source. **Privacy policy:** this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The app makes no outbound network calls of its own; the only network activity is between your browser and the server you run.
+
 ## Contributing and license
 
 See `CONTRIBUTING.md`. Bug reports with a reproduction on the demo data are the most useful thing you can send.

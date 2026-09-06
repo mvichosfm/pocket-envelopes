@@ -1,0 +1,120 @@
+# Builds the Windows installer from the public tree, so a release binary can be
+# traced to a commit rather than to somebody's PC. Runs on every v* tag and on
+# demand. When the SignPath variables and secret are configured (after SignPath
+# Foundation approves the project), the installer is also code-signed and the
+# signed file is what gets attached to the release.
+#
+# Repository settings this expects, all optional until signing is approved:
+#   variables: SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG
+#   secret:    SIGNPATH_API_TOKEN
+name: Windows installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp (e.g. 0.3.1). Defaults to 0.0.0-ci for a dry run."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build installer
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide the version
+        id: version
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME.Substring(1) }
+               elseif ('${{ inputs.version }}' -ne '') { '${{ inputs.version }}' }
+               else { '0.0.0-ci' }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building version $v"
+
+      - name: Audit the app (syntax + accounting checks)
+        run: node audit/run-audit.mjs
+
+      - name: Build with Inno Setup (preinstalled on the runner)
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/build.ps1 -Version ${{ steps.version.outputs.version }}
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/*.exe | Select-Object -First 1
+          $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$sha  $($exe.Name)" | Set-Content -Encoding ascii "dist/$($exe.Name).sha256"
+          Write-Host "SHA-256 $sha  $($exe.Name)"
+
+      - name: Upload unsigned installer
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-unsigned
+          path: dist/*.exe
+          if-no-files-found: error
+
+  sign:
+    name: Code-sign (SignPath Foundation)
+    needs: build
+    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    runs-on: ubuntu-latest
+    outputs:
+      signed: "true"
+    steps:
+      - name: Submit signing request
+        uses: SignPath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Upload signed installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-signed
+          path: signed/**/*.exe
+          if-no-files-found: error
+
+  release:
+    name: Attach to the GitHub release
+    needs: [build, sign]
+    # Run on tags whether or not the sign job ran (it is skipped until SignPath is configured).
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && needs.sign.result != 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the signed installer if there is one, else the unsigned build
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.sign.result == 'success' && 'installer-signed' || 'installer-unsigned' }}
+          path: out
+
+      - name: Checksum and attach
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          exe=$(find out -name '*.exe' | head -1)
+          name=$(basename "$exe")
+          sha256sum "$exe" | sed "s|$exe|$name|" > "out/$name.sha256"
+          echo "Attaching $name ($(stat -c %s "$exe") bytes)"; cat "out/$name.sha256"
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" "$exe" "out/$name.sha256" --repo "$GITHUB_REPOSITORY" --clobber
