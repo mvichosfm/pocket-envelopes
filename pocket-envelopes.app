@@ -43,6 +43,7 @@
     --warn: #d9a441;
     --bad: #d2685c;         /* stamp red */
     --good: #6baf7f;        /* ledger green */
+    --on-fill: #08110d;     /* ink on a solid accent/warn/bad/good fill */
     --manila: #d9c89e;      /* the paper — structural, never semantic */
     --manila-soft: rgba(217, 200, 158, .13);
     --tint-ink: rgba(147, 187, 224, .13);  /* printed hatch — texture only */
@@ -70,6 +71,7 @@
     --warn: #8a6516;
     --bad: #b3453a;
     --good: #2e7d4f;
+    --on-fill: #ffffff;     /* the light fills are dark, so the ink on them is white */
     --manila: #8a7c58;
     --manila-soft: rgba(138, 124, 88, .12);
     --tint-ink: rgba(31, 95, 148, .13);
@@ -136,12 +138,12 @@
   .btn { background: var(--bg-3); color: var(--text); border: 1px solid var(--border);
     padding: 7px 12px; border-radius: 7px; font-size: 13px; transition: .15s; }
   .btn:hover { background: var(--border); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #08110d; font-weight: 600; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-fill); font-weight: 600; }
   .btn.primary:hover { filter: brightness(1.08); }
   .btn.danger { color: var(--text-dim); border-color: var(--border); background: transparent; }
   .btn.danger:hover { color: var(--bad); border-color: var(--bad); background: rgba(224,108,117,.08); }
-  .btn.danger.solid { background: var(--bad); border-color: var(--bad); color: #1a0a0c; font-weight: 600; }
-  .btn.danger.solid:hover { filter: brightness(1.08); background: var(--bad); color: #1a0a0c; }
+  .btn.danger.solid { background: var(--bad); border-color: var(--bad); color: var(--on-fill); font-weight: 600; }
+  .btn.danger.solid:hover { filter: brightness(1.08); background: var(--bad); color: var(--on-fill); }
   .btn.ghost { background: transparent; border: none; color: var(--text-dim); }
   .btn.ghost:hover { color: var(--text); background: var(--bg-3); }
   .btn.sm { padding: 4px 8px; font-size: 12px; min-height: 24px; }
@@ -456,7 +458,7 @@
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--bg); border: 1px solid var(--border);
     font-weight: 600; font-size: 13px; color: var(--text-dim); }
-  .ob-step.ob-done .ob-num { background: var(--good); color: #0a0a0a; border-color: var(--good); }
+  .ob-step.ob-done .ob-num { background: var(--good); color: var(--on-fill); border-color: var(--good); }
   .ob-body { flex: 1; min-width: 0; }
   .ob-title { font-weight: 600; font-size: 14px; }
   .ob-blurb { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
@@ -4548,7 +4550,7 @@ function csvShowReview(profile, filename) {
   const rowsHtml = cands.map((c, i) => `<tr>
     <td><input type="checkbox" data-csv-i="${i}" ${c.dup ? '' : 'checked'}></td>
     <td style="white-space:nowrap;">${c.date}</td>
-    <td>${esc(c.payee || '—')}${c.dup ? ' <span class="badge" style="background:var(--warn);color:#1a0a0c;">dup?</span>' : ''}</td>
+    <td>${esc(c.payee || '—')}${c.dup ? ' <span class="badge" style="background:var(--warn);color:var(--on-fill);">dup?</span>' : ''}</td>
     <td class="num ${c.type === 'expense' ? 'neg' : 'pos'}" style="white-space:nowrap;">${c.type === 'expense' ? '−' : '+'}${fmt(c.amount)}</td>
     <td><select data-csv-env="${i}" style="max-width:160px;">${envOpts(c.envelopeId)}</select></td>
     ${hasTags ? `<td><select data-csv-tag="${i}" style="max-width:130px;">${tagOptions(c.tag)}</select></td>` : ''}

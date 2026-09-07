@@ -114,7 +114,7 @@ data = {
 1. **Delete refuses orphans, not cascades.** `deleteAccount` / `deleteEnvelope` block the delete with an `alert()` listing the linked-record count. Reasoning: silent orphans break net worth; cascade deletes destroy history irretrievably. User must clear refs first.
 2. **Forecast folds due recurrings into idx 0.** Without this, "lowest in period" is optimistic by exactly the sum of unapplied dues. The fix is in `forecastAccountBalances` right after the envelope-total seed. Don't move it after the future-projection loop — it must contribute to idx 0 specifically.
 3. **Refill modal binds by envelope.id, not array index.** Two-tab race protection. Same pattern should apply to any future modal that mutates a `data.*[]` list selectively.
-4. **Light-theme semantic tokens are darker.** `[data-theme="light"]` overrides `--accent`, `--accent-2`, `--warn`, `--bad`, `--good`, `--chart-grid`, `--chart-total`. Dark-mode hues (`#56d364`, `#e06c75`, `#f0a64a`) fail WCAG AA on white; the overrides (`#1a7f37`, `#cf222e`, `#9a6700`) pass. Don't add hardcoded chart colours — route everything through `themeColor()` / `chartPalette()`.
+4. **Light-theme semantic tokens are darker.** `[data-theme="light"]` overrides `--accent`, `--accent-2`, `--warn`, `--bad`, `--good`, `--chart-grid`, `--chart-total`. Dark-mode hues (`#56d364`, `#e06c75`, `#f0a64a`) fail WCAG AA on white; the overrides (`#1a7f37`, `#cf222e`, `#9a6700`) pass. Don't add hardcoded chart colours — route everything through `themeColor()` / `chartPalette()`. The same goes for text sitting **on** a solid semantic fill (primary/danger buttons, the done-step marker, the import "dup?" badge): use `--on-fill` (dark ink in the dark theme, white in light), never a literal — a literal dark ink was invisible on the light theme's darker accent until 2026-09-07.
 5. **Mini calculator in Amount fields.** `type="number"` strips operators, so Add Tx and Move Funds use `type="text" inputmode="decimal"` + `evalAmount()` on save. Don't revert to `type="number"`.
 6. **Account balances appear next to names** in the tx-modal account dropdowns — three places (`t_acc`, `t_facc`, `t_tacc`). If you add a new account select anywhere, follow the pattern (`${esc(a.name)} — ${fmt(accountBalance(a))}`).
 7. **License is MIT.** Don't change without asking.
@@ -198,7 +198,7 @@ data = {
 
 - **Don't refactor `pocket-envelopes.app` into modules.** Single-file is a feature.
 - **Don't add CDN scripts** beyond the existing Chart.js (and Chart.js is on the vendor-locally list).
-- **Don't hardcode hex colours in JS.** Route through `themeColor()` / `chartPalette()`.
+- **Don't hardcode hex colours in JS.** Route through `themeColor()` / `chartPalette()`. In CSS, text on a solid `--accent`/`--bad`/`--warn`/`--good` fill uses `var(--on-fill)`, never a literal ink colour.
 - **Don't `parseFloat` user-typed amount fields.** Use `evalAmount()`.
 - **Don't silently merge phone-captured transactions** into `data.transactions`. The review-and-accept banner is the contract.
 - **Don't change `lastAppliedDate` semantics** without auditing `nextDue`, `dueRecurringOccurrences`, `applyDueRecurring`, and forecast — they're tightly coupled.

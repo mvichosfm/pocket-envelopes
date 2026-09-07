@@ -5,6 +5,14 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- Light theme: text on solid primary / danger buttons, the completed
+  onboarding step marker and the CSV-import "dup?" badge is now white. It
+  was a hardcoded near-black ink that only ever suited the dark theme's
+  paler fills, so "+ Add transaction" and friends were dark-on-dark on
+  paper. A new `--on-fill` token carries the ink colour per theme.
+
 ## 2026-09-06 — v0.3.0, Windows installer
 
 - A Windows installer (`PocketEnvelopes-Setup-<version>.exe`, built by
