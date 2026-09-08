@@ -132,7 +132,10 @@
      status + buttons + all 10 tabs, so the tab strip would clip behind a
      horizontal scrollbar (1280px laptops hit this). Drop the tabs to their own
      full-width row — without the small-screen font shrink above. */
-  @media (min-width: 721px) and (max-width: 1380px) {
+  /* Up to 1440px the tab strip takes its own row: between 1381 and 1440 the
+     ten tabs plus a long status label ("demo data (not saved)", "conflict")
+     clipped the last tab. */
+  @media (min-width: 721px) and (max-width: 1440px) {
     header.top { flex-wrap: wrap; }
     header.top nav.tabs { order: 99; flex-basis: 100%; }
   }

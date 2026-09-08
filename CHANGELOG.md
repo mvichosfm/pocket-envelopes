@@ -5,6 +5,13 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- The tab strip takes its own row up to 1440px wide (was 1380px): between
+  the two, a long status label pushed the Help tab off the header.
+- README screenshots regenerated for the v0.6.0 look; the Playwright script
+  that makes them now lives in `screenshots/capture.py`.
+
 ## 2026-09-08 — v0.6.0, pace bars, a marked forecast low, a lighter light theme
 
 - **Envelope cards show the month's pace.** The printed-tint fill (a hatch
