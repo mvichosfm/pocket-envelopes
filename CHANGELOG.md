@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-08 — v0.4.0, skips, month-aware envelopes, a stronger Transactions tab
 
 - **Skip an occurrence** in the due-recurring review. Each due row now has
   Record / Skip / Decide later; a skipped occurrence (a waived fee, a month
