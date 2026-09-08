@@ -115,9 +115,13 @@ jobs:
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      # The workflow's own ref (the tag on a tag push, the chosen branch on a
+      # manual run), not inputs.tag: the notes script and the CHANGELOG are
+      # read from here, and a manual re-publish of an older tag must still use
+      # the current tooling. The installer itself is built from the tag's tree
+      # by the build job.
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
 
       - name: Download the signed installer if there is one, else the unsigned build
