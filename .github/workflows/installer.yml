@@ -4,6 +4,13 @@
 # Foundation approves the project), the installer is also code-signed and the
 # signed file is what gets attached to the release.
 #
+# The release job also PUBLISHES the release: it writes the notes from the
+# CHANGELOG section for that version plus the download/SHA-256 block, and
+# flips the draft to published. Nothing is done by hand afterwards. (GitHub's
+# edit form does not list a draft's uploaded assets and silently deletes them
+# on submit — v0.5.0 lost its installer that way on 2026-09-08.) To re-attach
+# and publish an existing tag, run the workflow by hand with the `tag` input.
+#
 # Repository settings this expects, all optional until signing is approved:
 #   variables: SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG, SIGNPATH_SIGNING_POLICY_SLUG
 #   secret:    SIGNPATH_API_TOKEN
@@ -16,6 +23,10 @@ on:
     inputs:
       version:
         description: "Version to stamp (e.g. 0.3.1). Defaults to 0.0.0-ci for a dry run."
+        required: false
+        default: ""
+      tag:
+        description: "Existing release tag to build, attach to and publish (e.g. v0.6.0). Overrides version."
         required: false
         default: ""
 
@@ -31,12 +42,15 @@ jobs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Decide the version
         id: version
         shell: pwsh
         run: |
           $v = if ($env:GITHUB_REF -like 'refs/tags/v*') { $env:GITHUB_REF_NAME.Substring(1) }
+               elseif ('${{ inputs.tag }}' -ne '') { '${{ inputs.tag }}'.TrimStart('v') }
                elseif ('${{ inputs.version }}' -ne '') { '${{ inputs.version }}' }
                else { '0.0.0-ci' }
           "version=$v" >> $env:GITHUB_OUTPUT
@@ -92,12 +106,20 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Attach to the GitHub release
+    name: Attach to the GitHub release and publish
     needs: [build, sign]
-    # Run on tags whether or not the sign job ran (it is skipped until SignPath is configured).
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && needs.sign.result != 'failure' }}
+    # Run on tags (or a manual run naming a tag) whether or not the sign job ran
+    # (it is skipped until SignPath is configured).
+    if: ${{ always() && (startsWith(github.ref, 'refs/tags/v') || inputs.tag != '') && needs.build.result == 'success' && needs.sign.result != 'failure' }}
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
       - name: Download the signed installer if there is one, else the unsigned build
         uses: actions/download-artifact@v5
         with:
@@ -107,7 +129,6 @@ jobs:
       - name: Checksum and attach
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
           set -e
           exe=$(find out -name '*.exe' | head -1)
@@ -115,6 +136,23 @@ jobs:
           sha256sum "$exe" | sed "s|$exe|$name|" > "out/$name.sha256"
           echo "Attaching $name ($(stat -c %s "$exe") bytes)"; cat "out/$name.sha256"
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --generate-notes
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --notes "Building…"
           fi
           gh release upload "$TAG" "$exe" "out/$name.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Release notes = the CHANGELOG section whose heading names this version
+      # (the release commit finalises that heading before the tag is cut), with
+      # the download / SHA-256 block on top and a compare link at the bottom.
+      - name: Write the notes and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          exe=$(find out -name '*.exe' | head -1)
+          name=$(basename "$exe")
+          sha=$(cut -d' ' -f1 "out/$name.sha256")
+          prev=$(git tag --sort=-v:refname | grep -A1 -x "$TAG" | tail -1)
+          python3 .github/release-notes.py "$TAG" "$name" "$sha" "$prev" "$GITHUB_REPOSITORY" > notes.md
+          echo "----- notes.md -----"; cat notes.md; echo "--------------------"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md --draft=false --latest
+          echo "Published $TAG"
