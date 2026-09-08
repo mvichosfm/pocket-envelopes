@@ -7,6 +7,44 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Skip an occurrence** in the due-recurring review. Each due row now has
+  Record / Skip / Decide later; a skipped occurrence (a waived fee, a month
+  you paid nothing) stops being offered instead of reappearing in every
+  review. Skips live in `rec.skippedDates` until the recurring's applied
+  watermark passes them. The whole review is one undo step. The Recurring
+  tab has a matching ⏭ button per row that skips the next occurrence, due
+  or upcoming, without opening the review.
+- **Envelope cards show this month's spending** ("spent €97.30 this month ·
+  €502.70 of budget left"), and Reports gains a **Budget vs actual** table
+  for any month — the same figures the close-out review uses.
+- **Transactions tab**: filters survive edits (they used to reset after every
+  save), a from / to date range with a "This month" shortcut, cash in / out /
+  net for the rows shown, and the search box matches amounts. Same-day rows
+  no longer reshuffle when you type in the search box.
+- **Bulk edit**: tick rows, then set a tag or an envelope for all of them or
+  delete them — one undo step each. Envelope changes leave transfers and
+  split transactions alone and say so.
+- **Drill-through**: account and envelope names on the Accounts tab, the
+  envelope cards, both dashboard tables and the new report open Transactions
+  pre-filtered. `?view=transactions&acc=…&env=…&tag=…&q=…&from=…&to=…`
+  does the same from a bookmark.
+- **Payee picker + looser matching**: the payee field suggests every payee
+  you have used, and auto-fill now matches a bank description that merely
+  contains a prior payee ("CARD 1234 SUPERMARKET 12/08" → Supermarket), so
+  CSV import finally learns from history.
+- **Scheduled transactions**: anything dated after today is badged
+  "scheduled" and dimmed in both transaction lists, and the Accounts tab
+  shows the net scheduled amount under each balance — balances have always
+  excluded future-dated entries; now the lists say so.
+- **Redo** (Ctrl+Y or Ctrl+Shift+Z, also in the command palette), and "Reset
+  all data" is undoable until you reload.
+- Dashboard copy: the "Lowest spendable" tile no longer claims to be the
+  "max safe to allocate today" or that spendable "drops by the funded
+  amount" — neither has been true since the per-envelope floor (the Fund
+  modal re-forecasts instead). The Help FAQ and the Fund modal tip say the
+  same.
+- The per-account **Currency** field is hidden: nothing converted by it, so
+  it implied FX that never happened. Stored values are untouched.
 - Light theme: text on solid primary / danger buttons, the completed
   onboarding step marker and the CSV-import "dup?" badge is now white. It
   was a hardcoded near-black ink that only ever suited the dark theme's

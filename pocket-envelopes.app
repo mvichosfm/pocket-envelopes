@@ -259,6 +259,20 @@
   .badge.expense { color: var(--bad); border-color: var(--bad); }
   .badge.transfer { color: var(--text-dim); border-color: var(--text-dim); }
   .badge.due { color: var(--warn); border-color: var(--warn); }
+  /* A transaction dated after today. Balances exclude it (accountBalance /
+     envelopeBalance stop at today), so the row must not look like a posted one. */
+  .badge.scheduled { color: var(--warn); border-color: var(--warn); border-style: dashed; }
+  tr.tx-future td { color: var(--text-dim); }
+  tr.tx-future td.num { opacity: .7; }
+  /* Drill-through links: an account or envelope name that opens the
+     Transactions tab pre-filtered. Looks like text until hovered. */
+  a.drill { color: inherit; text-decoration: none; border-bottom: 1px dotted transparent; }
+  a.drill:hover, a.drill:focus-visible { color: var(--accent); border-bottom-color: var(--accent); }
+  /* Bulk-edit bar on the Transactions tab — appears once a row is ticked. */
+  .bulk-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px;
+    margin-bottom: 10px; background: var(--bg-3); border: 1px solid var(--accent); border-radius: 7px; font-size: 13px; }
+  .bulk-bar select { padding: 5px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+  .tx-totals { color: var(--text-dim); font-variant-numeric: tabular-nums; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
   /* Transaction tag chip. --tag-c is set inline per chip from chartPalette()
      (so chip and chart slice share a colour and follow the theme); a stray tag
      with no --tag-c falls back to the plain grey badge. */
@@ -321,6 +335,11 @@
   .envelope .ev-meta { display: flex; justify-content: space-between; font-size: 11px;
     color: var(--text-dim); font-family: var(--font-mono); letter-spacing: .04em;
     margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  /* This month's spending against the budget — the figure an envelope
+     budgeter checks most, and the one the balance alone doesn't tell you. */
+  .envelope .ev-month { display: flex; justify-content: space-between; font-size: 11px;
+    color: var(--text-dim); font-family: var(--font-mono); letter-spacing: .04em; margin-top: 4px; }
+  .envelope .ev-month .over { color: var(--bad); }
   /* Five equal buttons per card read as clutter. The three money actions are
      what you came for; Edit and delete step back until hover/focus. They stay
      fully keyboard-reachable and never drop below AA contrast. */
@@ -1011,18 +1030,36 @@ function flushNow() {
 // mirror, not this.
 const UNDO_STACK_MAX = 30;
 let undoStack = [];
+// Redo is the same mechanism run the other way: performUndo parks the state
+// it is leaving on redoStack, performRedo pops it back. Any NEW mutation
+// (pushUndo) clears the redo stack — the usual linear-history rule — so a redo
+// can never resurrect a state that a later edit has since diverged from.
+let redoStack = [];
 function pushUndo(label) {
   if (!data) return;
   undoStack.push({ snapshot: JSON.parse(JSON.stringify(data)), label });
   if (undoStack.length > UNDO_STACK_MAX) undoStack.shift();
+  redoStack = [];
 }
 function performUndo() {
   if (!undoStack.length) { toast("Nothing to undo"); return; }
   const { snapshot, label } = undoStack.pop();
+  redoStack.push({ snapshot: JSON.parse(JSON.stringify(data)), label });
+  if (redoStack.length > UNDO_STACK_MAX) redoStack.shift();
   data = snapshot;
   saveDirty();
   render();
-  toast("Undone: " + label);
+  toast("Undone: " + label, 4000, undefined, { label: "Redo", onClick: performRedo });
+}
+function performRedo() {
+  if (!redoStack.length) { toast("Nothing to redo"); return; }
+  const { snapshot, label } = redoStack.pop();
+  undoStack.push({ snapshot: JSON.parse(JSON.stringify(data)), label });
+  if (undoStack.length > UNDO_STACK_MAX) undoStack.shift();
+  data = snapshot;
+  saveDirty();
+  render();
+  toast("Redone: " + label);
 }
 
 // Backups: rolling daily snapshots in localStorage. One slot per calendar day,
@@ -1403,6 +1440,7 @@ function showShortcuts() {
         <tr><td style="padding:6px 8px;"><kbd>n</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">New transaction</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>c</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Duplicate the focused/hovered transaction to today</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Undo last destructive change (delete or apply recurring)</td></tr>
+        <tr><td style="padding:6px 8px;"><kbd>Ctrl</kbd>+<kbd>Y</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Redo what you just undid</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>?</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Show this list</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>Esc</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Close any open modal</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>Enter</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Submit the current form</td></tr>
@@ -1437,14 +1475,64 @@ function envelopeById(id) { return data.envelopes.find(e => e.id === id); }
 // returns the most-common envelopeId and most-common accountId from prior
 // transactions, or null if no match. Only considers expense/income (not
 // transfers — they don't have a single primary envelope or account).
-function suggestPayeeDefaults(payee) {
+// Payees the app books on its own; they are bookkeeping, not somewhere the
+// user shops, so they stay out of the payee picker and out of fuzzy matching.
+const BOOKKEEPING_PAYEES = new Set(['Envelope refill', 'Close-out adjustment', 'Close-out sweep', 'Market adjustment']);
+
+// Distinct user-typed payees, most recently used first, for the tx form's
+// <datalist>. Capped so a years-old file doesn't ship a 5,000-option list.
+function payeeHistory(limit = 300) {
+  const seen = new Set(), out = [];
+  for (let i = data.transactions.length - 1; i >= 0 && out.length < limit; i--) {
+    const p = (data.transactions[i].payee || '').trim();
+    if (!p || BOOKKEEPING_PAYEES.has(p)) continue;
+    const k = p.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k); out.push(p);
+  }
+  return out;
+}
+
+// Index of normalised payee → its transactions, built once per CSV review so
+// fuzzy matching 200 statement rows doesn't rescan the tx list 200 times.
+function payeeIndex() {
+  const m = new Map();
+  for (const t of data.transactions) {
+    const p = (t.payee || '').trim();
+    if (!p || BOOKKEEPING_PAYEES.has(p)) continue;
+    const k = p.toLowerCase();
+    if (!m.has(k)) m.set(k, { key: k, payee: p, txs: [] });
+    m.get(k).txs.push(t);
+  }
+  return [...m.values()];
+}
+
+// suggestPayeeDefaults(payee, opts?) → { accountId, envelopeId, tag, sampleCount,
+// matchedPayee } or null. An exact (case-insensitive) match wins. With
+// opts.fuzzy, a description that merely CONTAINS a prior payee — or is
+// contained by one — matches too, longest prior payee first: bank statement
+// lines ("CARD 1234 SUPERMARKET ATHENS 12/08") almost never equal the name the
+// user typed by hand, so exact-only meant CSV import learned nothing from
+// history. Four-character minimum so "sa" can't claim every row.
+function suggestPayeeDefaults(payee, opts) {
   if (!payee || !payee.trim()) return null;
   const key = payee.trim().toLowerCase();
   // Account/envelope defaults come from expense+income history only (a
   // transfer has neither); the tag suggestion looks at every type, because
   // a tagged transfer ("petty cash" → Work) is exactly the case worth
   // repeating.
-  const all = data.transactions.filter(t => (t.payee || '').trim().toLowerCase() === key);
+  let all = data.transactions.filter(t => (t.payee || '').trim().toLowerCase() === key);
+  let matchedPayee = null;
+  if (!all.length && opts && opts.fuzzy && key.length >= 4) {
+    const idx = opts.index || payeeIndex();
+    let best = null;
+    for (const e of idx) {
+      if (e.key.length < 4) continue;
+      if (!(key.includes(e.key) || e.key.includes(key))) continue;
+      if (!best || e.key.length > best.key.length) best = e;
+    }
+    if (best) { all = best.txs; matchedPayee = best.payee; }
+  }
   const matches = all.filter(t => t.type === 'expense' || t.type === 'income');
   if (!all.length) return null;
   const mostCommon = (arr, getter) => {
@@ -1461,7 +1549,8 @@ function suggestPayeeDefaults(payee) {
     accountId: mostCommon(matches, t => t.accountId),
     envelopeId: mostCommon(matches, t => t.envelopeId),
     tag: mostCommon(all, t => t.tag),
-    sampleCount: all.length
+    sampleCount: all.length,
+    matchedPayee
   };
 }
 
@@ -1788,8 +1877,19 @@ function firstPendingOccurrence(rec) {
   // If fromD is already past the horizon (paused for years with a remote start)
   // extend the search window so we still find the next occurrence.
   const upper = fromD > horizon ? addMonths(fromD, 24) : horizon;
-  for (const d of recurringOccurrences(rec, fromD, upper)) return d;
+  for (const d of recurringOccurrences(rec, fromD, upper)) if (!isSkippedOccurrence(rec, d)) return d;
   return null;
+}
+
+// A deliberately skipped occurrence — the "this month's gym fee was waived"
+// case. rec.skippedDates holds ISO dates the user chose to skip in the due
+// review. It only ever lists dates AFTER lastAppliedDate: once the watermark
+// moves past a skipped date the entry is pruned (see showDueReview), so the
+// list stays short and lastAppliedDate keeps its single meaning. Both
+// pending-occurrence readers honour it; the forecast doesn't need to, since
+// skips are past dates and the forecast projects from tomorrow.
+function isSkippedOccurrence(rec, iso) {
+  return !!(rec.skippedDates && rec.skippedDates.includes(iso));
 }
 
 // Recurring entries are NOT auto-recorded. This finds occurrences whose date is
@@ -1805,6 +1905,7 @@ function dueRecurringOccurrences() {
     const todayD = parseDate(today);
     if (fromD > todayD) continue;
     for (const d of recurringOccurrences(rec, fromD, todayD)) {
+      if (isSkippedOccurrence(rec, d)) continue;
       out.push({ rec, date: d });
     }
   }
@@ -2455,19 +2556,15 @@ function renderDashboard() {
     const fromD = recurringResumeDate(rec, today);
     const start = fromD > today ? fromD : today;
     for (const d of recurringOccurrences(rec, start, addDays(today, 7))) {
+      if (isSkippedOccurrence(rec, d)) continue;
       upcoming.push({ rec, date: d });
     }
   }
   upcoming.sort((a, b) => a.date.localeCompare(b.date));
 
-  // Tie-break same-date entries by insertion order so a freshly logged
-  // transaction lands at the top of today's block, mirroring renderTransactions.
-  const recentOrderIdx = new Map(data.transactions.map((tx, i) => [tx.id, i]));
-  const recentTx = [...data.transactions].sort((a, b) => {
-    const d = b.date.localeCompare(a.date);
-    if (d !== 0) return d;
-    return (recentOrderIdx.get(b.id) || 0) - (recentOrderIdx.get(a.id) || 0);
-  }).slice(0, 8);
+  // Same ordering as the Transactions tab (date desc, then most recently
+  // added first) so a freshly logged entry tops today's block in both places.
+  const recentTx = sortTxsDesc(data.transactions).slice(0, 8);
 
   const envSummary = data.envelopes.map(e => ({
     e, bal: envelopeBalance(e)
@@ -2665,7 +2762,7 @@ function renderDashboard() {
               <div class="dash-fc-label">Lowest spendable in period <span class="help-tip" tabindex="0" title="The lowest your SPENDABLE cash dips to in the horizon — total of your accounts minus all envelope balances (Available-to-Budget). Funding envelopes pulls money into buckets, which reduces spendable but leaves your account totals unchanged. Projected envelope spending is paid out of that envelope's own balance first and only reduces spendable once the envelope runs dry. Due-but-unapplied recurrings are folded in, so this is the realistic worst case.">?</span></div>
               <div class="dash-fc-value ${dashFc.spendMin < 0 ? 'neg' : ''}" style="color:var(--warn);">${fmt(dashFc.spendMin)}</div>
               <div class="dash-fc-delta" style="color:var(--text-dim);">on ${fmtDate(dashFc.spendMinDate)}</div>
-              <div class="dash-fc-spend" style="font-style:italic;color:var(--text-dim);">max safe to allocate today</div>
+              <div class="dash-fc-spend" style="font-style:italic;color:var(--text-dim);">if you fund nothing · Fund the month shows the effect of a proposal</div>
             </div>`;
         }
         return `
@@ -2677,7 +2774,7 @@ function renderDashboard() {
               <div class="dash-fc-spend">
                 Lowest spendable <strong>${fmt(dashFc.spendMin)}</strong>
                 <span style="color:var(--text-dim);font-weight:400;"> on ${fmtDate(dashFc.spendMinDate)}</span>
-                <div style="font-style:italic;color:var(--text-dim);font-size:11px;margin-top:2px;">max safe to allocate today · drops by funded amount when you refill envelopes</div>
+                <div style="font-style:italic;color:var(--text-dim);font-size:11px;margin-top:2px;">if you fund nothing · Fund the month re-forecasts with your proposal applied</div>
               </div>
             ` : ''}
           </div>`;
@@ -2707,7 +2804,7 @@ function renderDashboard() {
       ${envSummary.length === 0 ? '<p style="color:var(--text-dim);">No envelopes yet.</p>' :
         `<table><thead><tr><th>Envelope</th><th class="num">Balance</th></tr></thead><tbody>${envSummary.map(({e, bal}) => `
         <tr>
-          <td>${esc(e.name)}</td>
+          <td><a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a></td>
           <td class="num ${bal < 0 ? 'neg' : ''}">${fmt(bal)}<span style="color:var(--text-dim);font-weight:400;font-size:.85em;margin-left:6px;">/ ${fmt(e.budgetAmount || 0)}${e.cadence === 'annual' ? '/yr' : ''}</span></td>
         </tr>`).join('')}</tbody></table>`}
     </div>
@@ -2721,7 +2818,7 @@ function renderDashboard() {
         <tr class="drag-row" draggable="true" data-acc-id="${a.id}">
           <td>
             <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-            ${esc(a.name)}
+            <a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a>
             ${a.type ? `<span style="color:var(--text-dim);font-size:.85em;margin-left:6px;">${esc(a.type)}</span>` : ''}
           </td>
           <td class="num ${b < 0 ? 'neg' : ''}"><strong>${fmt(b)}</strong></td>
@@ -2773,8 +2870,20 @@ function bindDashboard() {
   if (closeBtn) closeBtn.onclick = () => showCloseOut();
   document.querySelectorAll("a.rec-link[data-edit-rec]").forEach(a =>
     a.onclick = (e) => { e.preventDefault(); editRecurring(a.dataset.editRec); });
+  wireDrillLinks();
 
   wireAccountDragReorder();
+}
+
+// Drill-through: any <a class="drill" data-tx-acc|data-tx-env> in the current
+// view opens the Transactions tab filtered to that account / envelope. The
+// Accounts tab, envelope cards and both dashboard tables use it.
+function wireDrillLinks() {
+  document.querySelectorAll("a.drill[data-tx-acc],a.drill[data-tx-env]").forEach(a =>
+    a.onclick = (e) => {
+      e.preventDefault();
+      goToTransactions(a.dataset.txAcc ? { acc: a.dataset.txAcc } : { env: a.dataset.txEnv });
+    });
 }
 
 // Shared drag-to-reorder for account rows. Used by both bindDashboard (pinned
@@ -2854,81 +2963,110 @@ function showDueReview() {
     const inputColor = u.rec.type === 'expense' ? 'var(--bad)'
       : (u.rec.type === 'income' ? 'var(--good)' : 'var(--text)');
     return `<tr>
-      <td><label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
-        <input type="checkbox" data-due-i="${i}" checked> ${fmtDate(u.date)}
-      </label></td>
+      <td style="white-space:nowrap;">${fmtDate(u.date)}</td>
       <td>${esc(u.rec.name)} <span class="badge ${u.rec.type}">${u.rec.type}</span></td>
       <td class="num">
-        <input type="number" step="0.01" min="0" data-due-amt="${i}" value="${(u.rec.amount || 0).toFixed(2)}"
+        <input type="text" inputmode="decimal" autocomplete="off" data-due-amt="${i}" value="${(u.rec.amount || 0).toFixed(2)}"
           style="width:100px;text-align:right;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:${inputColor};font-variant-numeric:tabular-nums;">
       </td>
       <td>${esc(u.rec.type === 'transfer-account'
         ? (accountById(u.rec.fromAccountId)?.name + '→' + accountById(u.rec.toAccountId)?.name)
         : (accountById(u.rec.accountId)?.name || ''))}</td>
+      <td>
+        <select data-due-act="${i}" aria-label="What to do with ${esc(u.rec.name)} on ${fmtDate(u.date)}" style="padding:4px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+          <option value="record">Record</option>
+          <option value="skip">Skip</option>
+          <option value="later">Decide later</option>
+        </select>
+      </td>
     </tr>`;
   }).join('');
   openModal(`
     <h2>Review due recurring</h2>
-    <p style="color:var(--text-dim);">Untick anything you don't want to record. You can also edit the amount for any specific occurrence — the recurring template stays unchanged for future months.</p>
+    <p style="color:var(--text-dim);margin-top:0;"><strong style="color:var(--text);">Record</strong> books the transaction;
+      <strong style="color:var(--text);">skip</strong> marks this one occurrence as never happening (a waived fee, a month you paid nothing) so it stops being offered;
+      <strong style="color:var(--text);">decide later</strong> leaves it due. Edit an amount for this occurrence only — the template is unchanged.</p>
+    <div style="margin:-4px 0 10px 0;font-size:12px;color:var(--text-dim);">
+      Set all:
+      <button type="button" class="btn sm ghost" data-dueall="record">Record</button>
+      <button type="button" class="btn sm ghost" data-dueall="skip">Skip</button>
+      <button type="button" class="btn sm ghost" data-dueall="later">Decide later</button>
+    </div>
     <div style="max-height:50vh;overflow:auto;">
       <table>
-        <thead><tr><th>Date</th><th>Name</th><th class="num">Amount</th><th>Account</th></tr></thead>
+        <thead><tr><th>Date</th><th>Name</th><th class="num">Amount</th><th>Account</th><th>Action</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" id="dueApplySel">Apply selected</button>
+      <button class="btn primary" id="dueApplySel">Apply</button>
     </div>
-  `);
+  `, { className: 'wide' });
+  document.querySelectorAll("[data-dueall]").forEach(b => b.onclick = () => {
+    document.querySelectorAll("[data-due-act]").forEach(sel => { sel.value = b.dataset.dueall; });
+  });
   document.getElementById("dueApplySel").onclick = () => {
-    const picked = new Set();
-    document.querySelectorAll("[data-due-i]").forEach(c => {
-      if (c.checked) picked.add(+c.dataset.dueI);
-    });
-    if (!picked.size) { closeModal(); return; }
-    // Read per-row amount overrides; fall back to rec.amount when blank or invalid.
+    const action = {};
+    document.querySelectorAll("[data-due-act]").forEach(sel => { action[+sel.dataset.dueAct] = sel.value; });
+    const anyChange = Object.values(action).some(a => a !== 'later');
+    if (!anyChange) { closeModal(); return; }
+    // Per-row amount overrides go through evalAmount like every other amount
+    // field; blank, invalid or non-positive falls back to the template amount.
     const overrides = {};
     document.querySelectorAll("[data-due-amt]").forEach(inp => {
       const idx = +inp.dataset.dueAmt;
-      const v = parseFloat(inp.value);
+      const v = evalAmount(inp.value);
       if (!isNaN(v) && v > 0) overrides[idx] = v;
     });
-    let n = 0;
+    pushUndo('Review due recurring');
+    let n = 0, skipped = 0;
     due.forEach(({ rec, date }, i) => {
-      if (!picked.has(i)) return;
-      const tx = recurringToTx(rec, date, overrides[i] !== undefined ? overrides[i] : rec.amount);
-      data.transactions.push(tx);
-      n++;
+      if (action[i] === 'record') {
+        data.transactions.push(recurringToTx(rec, date, overrides[i] !== undefined ? overrides[i] : rec.amount));
+        n++;
+      } else if (action[i] === 'skip') {
+        rec.skippedDates = rec.skippedDates || [];
+        if (!rec.skippedDates.includes(date)) rec.skippedDates.push(date);
+        skipped++;
+      }
     });
     // Advance each recurring's lastAppliedDate ONLY through its contiguous
-    // applied prefix — up to the day OF its latest applied occurrence that has
-    // no earlier UN-ticked sibling. The old code advanced to the max applied
-    // date, which jumped the watermark past a skipped earlier occurrence; that
-    // occurrence then sat before lastAppliedDate and was silently never offered
-    // again (financial data loss). Trade-off of this fix: a later occurrence
-    // applied across a gap reappears in the next review (visible, recoverable)
-    // rather than an earlier skipped one vanishing (silent). A permanent skip
-    // must be a separate deliberate action, not a side effect of applying a sibling.
+    // resolved prefix — recorded or skipped occurrences up to the first one
+    // left for later. Advancing to the max recorded date used to jump the
+    // watermark past an unresolved earlier occurrence, which then sat before
+    // lastAppliedDate and was silently never offered again (financial data
+    // loss). A later occurrence resolved across a "later" gap is safe either
+    // way: a recorded one reappears in the next review (visible, recoverable),
+    // and a skipped one stays in skippedDates until the watermark reaches it.
     const occByRec = new Map();
     due.forEach(({ rec, date }, i) => {
       if (!occByRec.has(rec.id)) occByRec.set(rec.id, { rec, occ: [] });
-      occByRec.get(rec.id).occ.push({ date, picked: picked.has(i) });
+      occByRec.get(rec.id).occ.push({ date, resolved: action[i] !== 'later' });
     });
     for (const { rec, occ } of occByRec.values()) {
       occ.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
       let watermark = null;
       for (const o of occ) {
-        if (!o.picked) break;      // stop at the first un-ticked occurrence
-        watermark = o.date;        // contiguous applied prefix extends to here
+        if (!o.resolved) break;    // stop at the first "decide later"
+        watermark = o.date;        // contiguous resolved prefix extends to here
       }
       if (watermark && (!rec.lastAppliedDate || rec.lastAppliedDate < watermark)) {
         rec.lastAppliedDate = watermark;
       }
+      // Skips at or before the watermark are implied by it now — prune so the
+      // list never grows past the handful of dates still ahead of the watermark.
+      if (rec.skippedDates && rec.lastAppliedDate) {
+        rec.skippedDates = rec.skippedDates.filter(d => d > rec.lastAppliedDate);
+        if (!rec.skippedDates.length) delete rec.skippedDates;
+      }
     }
     saveDirty();
     closeModal();
-    if (n) toast(`Applied ${n} ${n === 1 ? 'entry' : 'entries'}`);
+    const bits = [];
+    if (n) bits.push(`recorded ${plural(n, 'entry', 'entries')}`);
+    if (skipped) bits.push(`skipped ${skipped}`);
+    if (bits.length) toast(bits.join(', ') + ' (Ctrl+Z to undo)', 4000, 'success', { label: 'Undo', onClick: performUndo });
     render();
   };
 }
@@ -2952,8 +3090,8 @@ function txDisplayParts(tx) {
 
 function txRow(tx) {
   const { sign, acc, env, tag } = txDisplayParts(tx);
-  return `<tr>
-    <td>${fmtDate(tx.date)}</td>
+  return `<tr class="${tx.date > todayISO() ? 'tx-future' : ''}">
+    <td style="white-space:nowrap;">${txDateCell(tx)}</td>
     <td>${esc(tx.payee || tx.notes || '')} ${tag} <span class="badge ${tx.type}">${tx.type}</span></td>
     <td>${acc}</td>
     <td>${env}</td>
@@ -2970,7 +3108,15 @@ function esc(s) {
 // ACCOUNTS
 //=============================================================================
 function renderAccounts() {
-  const accs = data.accounts.map(a => ({ a, b: accountBalance(a) }));
+  // `sched` = net effect of transactions dated after today, which the balance
+  // excludes (accountBalance stops at today). Shown under the balance so a
+  // future-dated entry can't make the figure look wrong next to its own list.
+  const today = todayISO();
+  const accs = data.accounts.map(a => {
+    let sched = 0;
+    for (const tx of data.transactions) if (tx.date > today) sched += txAccountDelta(tx, a.id);
+    return { a, b: accountBalance(a), sched };
+  });
   const total = accs.filter(x => x.a.includeInNetWorth !== false).reduce((s,x) => s + x.b, 0);
   return `
   <h2>Accounts</h2>
@@ -2991,18 +3137,18 @@ function renderAccounts() {
       <tbody>
         ${accs.length === 0 ? `<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-dim);">
           No accounts yet. Add your bank accounts, credit cards, cash and investment accounts.</td></tr>` :
-          accs.map(({a, b}) => `<tr class="drag-row" draggable="true" data-acc-id="${a.id}">
+          accs.map(({a, b, sched}) => `<tr class="drag-row" draggable="true" data-acc-id="${a.id}">
           <td>
             <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
             <button class="pin-btn" data-pin-acc="${a.id}" title="${a.pinned ? 'Unpin from dashboard' : 'Pin to dashboard'}" aria-label="${a.pinned ? 'Unpin ' + esc(a.name) + ' from dashboard' : 'Pin ' + esc(a.name) + ' to dashboard'}" aria-pressed="${a.pinned ? 'true' : 'false'}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0 6px 0 0;opacity:${a.pinned ? '1' : '0.5'};vertical-align:middle;">📌</button>
-            <strong style="font-size:14px;">${esc(a.name)}</strong>
+            <strong style="font-size:14px;"><a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a></strong>
             ${a.isInvestment ? '<span class="badge invest">Investment</span>' : ''}
             ${a.includeInNetWorth === false ? '<span class="badge">Excluded</span>' : ''}
           </td>
           <td>${esc(a.type || '')}</td>
           <td>${esc(a.owner || '')}</td>
           <td class="num">${fmt(a.openingBalance || 0)}</td>
-          <td class="num ${b < 0 ? 'neg' : ''}"><strong>${fmt(b)}</strong></td>
+          <td class="num ${b < 0 ? 'neg' : ''}"><strong>${fmt(b)}</strong>${Math.abs(sched) >= 0.005 ? `<div class="micro" title="Net of transactions dated after today, which the balance excludes">${sched > 0 ? '+' : ''}${fmt(sched)} scheduled</div>` : ''}</td>
           <td class="actions">
             <button class="btn sm" data-edit="${a.id}">Edit</button>
             ${a.isInvestment ? `<button class="btn sm" data-update="${a.id}">Update value</button>` : ''}
@@ -3020,6 +3166,7 @@ function bindAccounts() {
   document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => deleteAccount(b.dataset.del));
   document.querySelectorAll("[data-update]").forEach(b => b.onclick = () => updateInvestmentValue(b.dataset.update));
   document.querySelectorAll("[data-pin-acc]").forEach(b => b.onclick = () => toggleAccountPin(b.dataset.pinAcc));
+  wireDrillLinks();
   wireAccountDragReorder();
 }
 
@@ -3057,8 +3204,6 @@ function editAccount(id) {
         <input type="number" step="0.01" id="f_open" value="${a.openingBalance ?? 0}"></div>
       <div class="field"><label>Current balance</label>
         <input type="number" step="0.01" id="f_current" value="${(id ? accountBalance(a) : (a.openingBalance ?? 0)).toFixed(2)}"></div>
-      <div class="field"><label>Currency</label>
-        <input id="f_curr" value="${esc(a.currency || 'EUR')}"></div>
     </div>
     <div style="font-size:11px;color:var(--text-dim);margin:-6px 0 12px;line-height:1.4;">
       Edit either field — typing a new Current balance updates Opening balance by the same amount, so the figure on the Accounts page matches what your bank shows.
@@ -3096,7 +3241,9 @@ function editAccount(id) {
     a.type = document.getElementById("f_type").value;
     a.owner = document.getElementById("f_owner").value;
     a.openingBalance = parseFloat(document.getElementById("f_open").value) || 0;
-    a.currency = document.getElementById("f_curr").value || "EUR";
+    // a.currency is left as stored. Nothing converts by it, so the editor no
+    // longer shows it — a visible field implied FX that never happened
+    // (roadmap: per-account currency + FX table).
     a.isInvestment = document.getElementById("f_inv").checked;
     a.includeInNetWorth = document.getElementById("f_nw").checked;
     a.notes = document.getElementById("f_notes").value;
@@ -3226,10 +3373,31 @@ function envelopeActivityTier(env) {
   return 3;
 }
 
+// Real spending per envelope in one calendar month, one pass over the tx
+// list: {envId: spent}. Same rules as envelopeMonthSummary's `spent` (split-
+// aware, isCashflowTx so one-sided bookkeeping doesn't count, transfers out
+// count) but for every envelope at once — the card grid needs all of them.
+function envelopeMonthSpendMap(ym) {
+  const start = ym + "-01", last = lastDayOfMonthKey(ym);
+  const out = {};
+  for (const tx of data.transactions) {
+    if (tx.date < start || tx.date > last) continue;
+    if (tx.type === 'expense' && isCashflowTx(tx)) {
+      if (tx.splits && tx.splits.length) {
+        for (const sp of tx.splits) if (sp.envelopeId) out[sp.envelopeId] = (out[sp.envelopeId] || 0) + Math.abs(sp.amount || 0);
+      } else if (tx.envelopeId) out[tx.envelopeId] = (out[tx.envelopeId] || 0) + tx.amount;
+    } else if (tx.type === 'transfer-envelope' && tx.fromEnvelopeId) {
+      out[tx.fromEnvelopeId] = (out[tx.fromEnvelopeId] || 0) + tx.amount;
+    }
+  }
+  return out;
+}
+
 function renderEnvelopes() {
   // Precompute the activity tier once per envelope — calling it inside the sort
   // comparator below re-ran an O(transactions) scan O(n log n) times.
-  const envs = data.envelopes.map(e => ({ e, bal: envelopeBalance(e), tier: envelopeActivityTier(e) }));
+  const spentMap = envelopeMonthSpendMap(todayISO().slice(0, 7));
+  const envs = data.envelopes.map(e => ({ e, bal: envelopeBalance(e), tier: envelopeActivityTier(e), spent: spentMap[e.id] || 0 }));
   const groups = {};
   for (const x of envs) {
     const cat = x.e.category || "Uncategorized";
@@ -3273,13 +3441,21 @@ function renderEnvelopes() {
         </div>
       </div>
       <div class="grid cols-3" style="margin-bottom:14px;">
-        ${items.map(({e, bal}) => envelopeCard(e, bal)).join('')}
+        ${items.map(({e, bal, spent}) => envelopeCard(e, bal, spent)).join('')}
       </div>
     `;}).join('')}
   `;
 }
-function envelopeCard(e, bal) {
+function envelopeCard(e, bal, spent) {
   const budget = e.budgetAmount || 0;
+  // This month's spending vs the monthly budget (1/12 for annual). Balance
+  // says what's left in the envelope; this says how the month is going.
+  const monthly = envMonthlyEquiv(e);
+  const left = monthly - (spent || 0);
+  const monthLine = e.isReserve ? '' : `<div class="ev-month">
+      <span>spent ${fmt(spent || 0)} this month</span>
+      ${monthly > 0 ? `<span class="${left < 0 ? 'over' : ''}">${left < 0 ? fmt(-left) + ' over budget' : fmt(left) + ' of budget left'}</span>` : ''}
+    </div>`;
   const isAnnual = e.cadence === "annual";
   const isReset = !isAnnual && e.rolloverPolicy === "reset";
   const isSweep = !isAnnual && !e.isReserve && e.rolloverPolicy === "sweep";
@@ -3291,7 +3467,7 @@ function envelopeCard(e, bal) {
   const state = bal < 0 ? "over" : (e.isReserve || pct >= 25) ? "ok" : "low";
   return `<div class="card envelope" data-state="${state}" style="--ev-fill:${pct.toFixed(1)}%;">
     <div class="ev-head">
-      <div class="ev-name">${isPinned ? '<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">📌</span>' : ''}${esc(e.name)}${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — never funded by Fund the month; receives close-out sweeps">reserve</span>' : ''}</div>
+      <div class="ev-name">${isPinned ? '<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">📌</span>' : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — never funded by Fund the month; receives close-out sweeps">reserve</span>' : ''}</div>
       <div class="ev-bal ${bal<0?'neg':''}">${fmt(bal)}</div>
     </div>
     <div class="ev-meta">
@@ -3300,6 +3476,7 @@ function envelopeCard(e, bal) {
         : `<span>${pct.toFixed(0)}% of ${isAnnual ? 'annual' : 'monthly'}</span>
       <span>${fmt(budget)} / ${isAnnual ? 'yr' : 'mo'}</span>`}
     </div>
+    ${monthLine}
     <div class="ev-actions">
       <button class="btn sm" data-spend="${e.id}">Spend</button>
       <button class="btn sm" data-fund="${e.id}">Fund</button>
@@ -3323,6 +3500,7 @@ function bindEnvelopes() {
     b.onclick = () => quickTx("income", { envelopeId: b.dataset.fund }));
   document.querySelectorAll("[data-return]").forEach(b =>
     b.onclick = () => returnEnvelopeFunds(b.dataset.return));
+  wireDrillLinks();
 }
 
 function editEnvelope(id) {
@@ -3720,7 +3898,7 @@ function refillEnvelopes() {
           <div style="font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;">${fmt(headroom.spendNow)}</div>
         </div>
         <div>
-          <div class="stat-label">Spendable min in horizon <span class="help-tip" tabindex="0" title="Spendable = total of your accounts − sum of all envelope balances (the YNAB Available-to-Budget concept). Funding envelopes moves money INTO buckets, so spendable drops by the funded amount even though your total account balance is unchanged. Projected spending comes out of each envelope's own balance first, so money you've already set aside isn't counted against you twice.">?</span></div>
+          <div class="stat-label">Spendable min in horizon <span class="help-tip" tabindex="0" title="Spendable = total of your accounts − sum of all envelope balances (the YNAB Available-to-Budget concept). Funding envelopes moves money INTO buckets, so spendable drops even though your total account balance is unchanged — but not always one-for-one: funding an overspent envelope first fills its hole, and money in an envelope with an allowance gets spent from that envelope inside the horizon. That is why the figure below the list is a real re-forecast with your proposal applied, not this number minus the total.">?</span></div>
           <div style="font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--warn);">
             ${fmt(headroom.spendMin)}
             <span style="font-size:12px;font-weight:400;color:var(--text-dim);">on ${fmtDate(headroom.spendMinDate)}</span>
@@ -4191,17 +4369,72 @@ function transferEnvelopes(fromId) {
 //=============================================================================
 // TRANSACTIONS
 //=============================================================================
-function renderTransactions() {
-  // Sort by date desc, then by insertion order desc so a transaction logged
-  // just now appears at the top of today's block (not buried under earlier
-  // same-day entries). Array index is a stable proxy for "most recently
-  // added" since transactions are appended to data.transactions.
+// Sort by date desc, then by insertion order desc so a transaction logged
+// just now appears at the top of today's block (not buried under earlier
+// same-day entries). Array index is a stable proxy for "most recently added"
+// since transactions are appended to data.transactions. Shared by the
+// Transactions tab (initial render AND every filter pass — the filter used to
+// re-sort by date alone, so same-day rows reshuffled as soon as you typed)
+// and the dashboard's Recent transactions.
+function sortTxsDesc(txs) {
   const orderIdx = new Map(data.transactions.map((tx, i) => [tx.id, i]));
-  let txs = [...data.transactions].sort((a, b) => {
+  return [...txs].sort((a, b) => {
     const d = b.date.localeCompare(a.date);
     if (d !== 0) return d;
     return (orderIdx.get(b.id) || 0) - (orderIdx.get(a.id) || 0);
   });
+}
+
+// Transactions-tab filter state. Module-level so it survives the full
+// re-render every mutation triggers (editing one row used to reset every
+// filter) and so other views can pre-fill it: goToTransactions({acc}) is the
+// drill-through from an account or envelope name, and ?acc=/?env=/?tag=/?q=
+// in the URL do the same for a bookmark.
+let txFilter = { q: '', type: '', acc: '', env: '', tag: '', from: '', to: '' };
+let txSelected = new Set();   // bulk-edit selection (tx ids); cleared on every full render
+function goToTransactions(f) {
+  txFilter = { q: '', type: '', acc: '', env: '', tag: '', from: '', to: '', ...f };
+  activeView = 'transactions';
+  render();
+}
+function filterTxs() {
+  const f = txFilter;
+  const q = (f.q || '').toLowerCase();
+  let rows = sortTxsDesc(data.transactions);
+  if (f.type) rows = rows.filter(t => t.type === f.type);
+  if (f.acc) rows = rows.filter(t => t.accountId === f.acc || t.fromAccountId === f.acc || t.toAccountId === f.acc);
+  if (f.env) rows = rows.filter(t => t.envelopeId === f.env || t.fromEnvelopeId === f.env || t.toEnvelopeId === f.env || (t.splits && t.splits.some(s => s.envelopeId === f.env)));
+  // Tag filter values are prefixed ("u" = untagged, "t:<name>") so a
+  // user-typed tag name can never collide with a sentinel.
+  if (f.tag === 'u') rows = rows.filter(t => !t.tag);
+  else if (f.tag && f.tag.startsWith('t:')) { const name = f.tag.slice(2); rows = rows.filter(t => t.tag === name); }
+  if (f.from) rows = rows.filter(t => t.date >= f.from);
+  if (f.to) rows = rows.filter(t => t.date <= f.to);
+  // Search matches payee, notes, tag — and the amount, both as typed
+  // ("49.9") and as displayed in the user's locale ("49,90").
+  if (q) rows = rows.filter(t => (t.payee||"").toLowerCase().includes(q) || (t.notes||"").toLowerCase().includes(q) || (t.tag||"").toLowerCase().includes(q)
+    || String(t.amount).includes(q) || fmtNum(t.amount).includes(q));
+  return rows;
+}
+// Cash in / out / net for the rows on screen. Only real cashflow counts
+// (isCashflowTx): transfers are internal movement and one-sided envelope
+// bookkeeping moves no money, so neither belongs in a "how much did I spend"
+// total — the caption says so.
+function txTotalsHTML(rows) {
+  let inc = 0, exp = 0;
+  for (const t of rows) {
+    if (!isCashflowTx(t)) continue;
+    if (t.type === 'income') inc += t.amount; else if (t.type === 'expense') exp += t.amount;
+  }
+  const net = inc - exp;
+  return `<span>${plural(rows.length, 'entry', 'entries')}</span>
+    <span title="Income and expenses with an account, for the rows shown. Transfers and envelope-only bookkeeping are excluded.">cash in <strong class="pos">+${fmt(inc)}</strong> · out <strong class="neg">−${fmt(exp)}</strong> · net <strong class="${net >= 0 ? 'pos' : 'neg'}">${net >= 0 ? '+' : ''}${fmt(net)}</strong></span>`;
+}
+function renderTransactions() {
+  txSelected = new Set();
+  const f = txFilter;
+  const txs = filterTxs();
+  const activeCount = ['q','type','acc','env','tag','from','to'].filter(k => f[k]).length;
   return `
   <h2>Transactions</h2>
   <div class="toolbar">
@@ -4209,34 +4442,50 @@ function renderTransactions() {
     <button class="btn" id="addTransfer">⇄ Account transfer</button>
     <button class="btn" id="importCsv" title="Import transactions from a bank CSV statement">⤓ Import CSV</button>
     <div class="filter-group">
-      <input class="filter-input" id="txFilter" placeholder="Search..." aria-label="Search transactions" style="width:200px;">
+      <input class="filter-input" id="txFilter" placeholder="Search payee, notes, amount…" aria-label="Search transactions" style="width:200px;" value="${esc(f.q)}">
       <select class="filter-input" id="txTypeFilter" aria-label="Filter by type">
         <option value="">All types</option>
-        <option value="expense">Expense</option>
-        <option value="income">Income</option>
-        <option value="transfer-account">Account transfer</option>
-        <option value="transfer-envelope">Envelope transfer</option>
+        <option value="expense" ${f.type === 'expense' ? 'selected' : ''}>Expense</option>
+        <option value="income" ${f.type === 'income' ? 'selected' : ''}>Income</option>
+        <option value="transfer-account" ${f.type === 'transfer-account' ? 'selected' : ''}>Account transfer</option>
+        <option value="transfer-envelope" ${f.type === 'transfer-envelope' ? 'selected' : ''}>Envelope transfer</option>
       </select>
       <select class="filter-input" id="txAccFilter" aria-label="Filter by account">
         <option value="">All accounts</option>
-        ${data.accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}
+        ${data.accounts.map(a => `<option value="${a.id}" ${f.acc === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
       </select>
       <select class="filter-input" id="txEnvFilter" aria-label="Filter by envelope">
         <option value="">All envelopes</option>
-        ${data.envelopes.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}
+        ${data.envelopes.map(e => `<option value="${e.id}" ${f.env === e.id ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}
       </select>
       <select class="filter-input" id="txTagFilter" aria-label="Filter by tag">
         <option value="">All tags</option>
-        <option value="u">Untagged</option>
-        ${allTags().map(t => `<option value="t:${esc(t)}">${esc(t)}</option>`).join('')}
+        <option value="u" ${f.tag === 'u' ? 'selected' : ''}>Untagged</option>
+        ${allTags().map(t => `<option value="t:${esc(t)}" ${f.tag === 't:' + t ? 'selected' : ''}>${esc(t)}</option>`).join('')}
       </select>
+      <input type="date" class="filter-input" id="txFromFilter" aria-label="From date" title="From date" value="${esc(f.from)}">
+      <span style="color:var(--text-dim);">–</span>
+      <input type="date" class="filter-input" id="txToFilter" aria-label="To date" title="To date" value="${esc(f.to)}">
+      <button class="btn sm ghost" id="txMonthFilter" title="This calendar month">This month</button>
+      <button class="btn sm ghost" id="txClearFilter" title="Clear all filters" ${activeCount ? '' : 'disabled'}>✕ Clear</button>
     </div>
     <div class="spacer"></div>
-    <span id="txCount" style="color:var(--text-dim);">${txs.length} entries</span>
+    <div class="tx-totals" id="txCount">${txTotalsHTML(txs)}</div>
+  </div>
+  <div class="bulk-bar" id="txBulk" hidden>
+    <strong id="txBulkCount"></strong>
+    <label style="display:flex;gap:6px;align-items:center;">Tag
+      <select id="bulkTag"><option value="">(no change)</option><option value="__clear">— remove tag —</option>${tagList().map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select></label>
+    <label style="display:flex;gap:6px;align-items:center;">Envelope
+      <select id="bulkEnv"><option value="">(no change)</option><option value="__clear">— none —</option>${data.envelopes.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>
+    <button class="btn sm primary" id="bulkApply">Apply to selected</button>
+    <button class="btn sm danger" id="bulkDelete">Delete selected</button>
+    <button class="btn sm ghost" id="bulkClear">Clear selection</button>
   </div>
   <div class="card" style="padding:0;">
     <table>
       <thead><tr>
+        <th style="width:28px;"><input type="checkbox" id="txSelAll" aria-label="Select all shown transactions" title="Select all shown"></th>
         <th>Date</th><th>Description</th><th>Type</th>
         <th>Account</th><th>Envelope</th><th>Tag</th><th class="num">Amount</th><th></th>
       </tr></thead>
@@ -4247,10 +4496,19 @@ function renderTransactions() {
   </div>
   `;
 }
+// Date cell shared by both transaction tables. A transaction dated after
+// today is excluded from every balance (accountBalance / envelopeBalance stop
+// at today), so it is labelled rather than shown as if it had posted.
+function txDateCell(tx) {
+  const future = tx.date > todayISO();
+  return `${fmtDate(tx.date)}${future ? ' <span class="badge scheduled" title="Dated after today — not yet counted in any balance">scheduled</span>' : ''}`;
+}
 function txDataRow(tx) {
   const { sign, acc, env, tag } = txDisplayParts(tx);
-  return `<tr data-tx="${tx.id}">
-    <td>${fmtDate(tx.date)}</td>
+  const future = tx.date > todayISO();
+  return `<tr data-tx="${tx.id}" class="${future ? 'tx-future' : ''}">
+    <td><input type="checkbox" data-sel-tx="${tx.id}" aria-label="Select transaction" ${txSelected.has(tx.id) ? 'checked' : ''}></td>
+    <td style="white-space:nowrap;">${txDateCell(tx)}</td>
     <td>${esc(tx.payee || '')}${tx.notes ? `<br><span style="color:var(--text-dim);font-size:11px;">${esc(tx.notes)}</span>` : ''}</td>
     <td>${(tx.type === 'transfer-account' || tx.type === 'transfer-envelope')
       ? `<span class="badge ${tx.type}">${tx.type}</span>`
@@ -4270,39 +4528,106 @@ function bindTransactions() {
   document.getElementById("addTx").onclick = () => editTransaction();
   document.getElementById("addTransfer").onclick = () => editTransaction(null, "transfer-account");
   document.getElementById("importCsv").onclick = csvImportStart;
-  document.querySelectorAll("[data-edit-tx]").forEach(b =>
-    b.onclick = () => editTransaction(b.dataset.editTx));
-  document.querySelectorAll("[data-copy-tx]").forEach(b =>
-    b.onclick = () => copyTransaction(b.dataset.copyTx));
-  document.querySelectorAll("[data-del-tx]").forEach(b =>
-    b.onclick = () => deleteTransaction(b.dataset.delTx));
 
-  const filt = () => {
-    const q = document.getElementById("txFilter").value.toLowerCase();
-    const ty = document.getElementById("txTypeFilter").value;
-    const ac = document.getElementById("txAccFilter").value;
-    const en = document.getElementById("txEnvFilter").value;
-    // Tag filter values are prefixed ("u" = untagged, "t:<name>") so a
-    // user-typed tag name can never collide with a sentinel.
-    const tg = document.getElementById("txTagFilter").value;
-    let rows = [...data.transactions].sort((a,b) => b.date.localeCompare(a.date));
-    if (ty) rows = rows.filter(t => t.type === ty);
-    if (ac) rows = rows.filter(t => t.accountId === ac || t.fromAccountId === ac || t.toAccountId === ac);
-    if (en) rows = rows.filter(t => t.envelopeId === en || t.fromEnvelopeId === en || t.toEnvelopeId === en || (t.splits && t.splits.some(s => s.envelopeId === en)));
-    if (tg === 'u') rows = rows.filter(t => !t.tag);
-    else if (tg.startsWith('t:')) { const name = tg.slice(2); rows = rows.filter(t => t.tag === name); }
-    if (q) rows = rows.filter(t => (t.payee||"").toLowerCase().includes(q) || (t.notes||"").toLowerCase().includes(q) || (t.tag||"").toLowerCase().includes(q));
-    document.getElementById("txBody").innerHTML = rows.map(t => txDataRow(t)).join('');
-    document.getElementById("txCount").textContent = `${rows.length} entries`;
+  // Row buttons + selection checkboxes are re-bound after every filter pass
+  // (the tbody is rebuilt), so they live in one helper.
+  const bindRows = () => {
     document.querySelectorAll("[data-edit-tx]").forEach(b =>
       b.onclick = () => editTransaction(b.dataset.editTx));
     document.querySelectorAll("[data-copy-tx]").forEach(b =>
       b.onclick = () => copyTransaction(b.dataset.copyTx));
     document.querySelectorAll("[data-del-tx]").forEach(b =>
       b.onclick = () => deleteTransaction(b.dataset.delTx));
+    document.querySelectorAll("[data-sel-tx]").forEach(c =>
+      c.onchange = () => { if (c.checked) txSelected.add(c.dataset.selTx); else txSelected.delete(c.dataset.selTx); updateBulk(); });
   };
-  ["txFilter","txTypeFilter","txAccFilter","txEnvFilter","txTagFilter"].forEach(id =>
+  const updateBulk = () => {
+    const bar = document.getElementById("txBulk");
+    const n = txSelected.size;
+    bar.hidden = n === 0;
+    document.getElementById("txBulkCount").textContent = `${plural(n, 'transaction')} selected`;
+    const all = document.getElementById("txSelAll");
+    const shown = [...document.querySelectorAll("[data-sel-tx]")];
+    all.checked = shown.length > 0 && shown.every(c => c.checked);
+    all.indeterminate = !all.checked && shown.some(c => c.checked);
+  };
+
+  const filt = () => {
+    txFilter = {
+      q: document.getElementById("txFilter").value,
+      type: document.getElementById("txTypeFilter").value,
+      acc: document.getElementById("txAccFilter").value,
+      env: document.getElementById("txEnvFilter").value,
+      tag: document.getElementById("txTagFilter").value,
+      from: document.getElementById("txFromFilter").value,
+      to: document.getElementById("txToFilter").value
+    };
+    const rows = filterTxs();
+    document.getElementById("txBody").innerHTML = rows.map(t => txDataRow(t)).join('');
+    document.getElementById("txCount").innerHTML = txTotalsHTML(rows);
+    document.getElementById("txClearFilter").disabled = !Object.values(txFilter).some(Boolean);
+    bindRows();
+    updateBulk();
+  };
+  ["txFilter","txTypeFilter","txAccFilter","txEnvFilter","txTagFilter","txFromFilter","txToFilter"].forEach(id =>
     document.getElementById(id).oninput = filt);
+  document.getElementById("txMonthFilter").onclick = () => {
+    const ym = todayISO().slice(0, 7);
+    document.getElementById("txFromFilter").value = ym + "-01";
+    document.getElementById("txToFilter").value = lastDayOfMonthKey(ym);
+    filt();
+  };
+  document.getElementById("txClearFilter").onclick = () => {
+    txFilter = { q: '', type: '', acc: '', env: '', tag: '', from: '', to: '' };
+    render();
+  };
+
+  // Bulk edit. Each operation is one undo snapshot. Envelope changes apply
+  // only to expense/income rows that aren't split — a transfer has no
+  // envelope field and a split's envelopes live in splits[] — and the toast
+  // says how many rows were left alone rather than silently touching them.
+  document.getElementById("txSelAll").onchange = (e) => {
+    document.querySelectorAll("[data-sel-tx]").forEach(c => {
+      c.checked = e.target.checked;
+      if (c.checked) txSelected.add(c.dataset.selTx); else txSelected.delete(c.dataset.selTx);
+    });
+    updateBulk();
+  };
+  document.getElementById("bulkClear").onclick = () => { txSelected.clear(); document.querySelectorAll("[data-sel-tx]").forEach(c => c.checked = false); updateBulk(); };
+  document.getElementById("bulkApply").onclick = () => {
+    const tagV = document.getElementById("bulkTag").value;
+    const envV = document.getElementById("bulkEnv").value;
+    if (!tagV && !envV) { toast("Pick a tag or an envelope to apply", 2600, 'info'); return; }
+    const ids = txSelected;
+    if (!ids.size) return;
+    pushUndo(`Bulk edit ${plural(ids.size, 'transaction')}`);
+    let changed = 0, envSkipped = 0;
+    for (const tx of data.transactions) {
+      if (!ids.has(tx.id)) continue;
+      let touched = false;
+      if (tagV) { if (tagV === '__clear') delete tx.tag; else tx.tag = tagV; touched = true; }
+      if (envV) {
+        const simple = (tx.type === 'expense' || tx.type === 'income') && !(tx.splits && tx.splits.length);
+        if (simple) { tx.envelopeId = envV === '__clear' ? null : envV; touched = true; }
+        else envSkipped++;
+      }
+      if (touched) changed++;
+    }
+    saveDirty(); render();
+    toast(`Updated ${plural(changed, 'transaction')}${envSkipped ? ` · ${envSkipped} skipped for envelope (transfers / splits)` : ''} (Ctrl+Z to undo)`, 4500, 'success', { label: 'Undo', onClick: performUndo });
+  };
+  document.getElementById("bulkDelete").onclick = () => {
+    const ids = txSelected;
+    if (!ids.size) return;
+    if (!confirm(`Delete ${plural(ids.size, 'transaction')}? Ctrl+Z restores them.`)) return;
+    pushUndo(`Delete ${plural(ids.size, 'transaction')}`);
+    const n = ids.size;
+    data.transactions = data.transactions.filter(t => !ids.has(t.id));
+    saveDirty(); render();
+    toast(`Deleted ${plural(n, 'transaction')}`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+  };
+  bindRows();
+  updateBulk();
 }
 
 function editTransaction(id, defaultType) {
@@ -4531,6 +4856,9 @@ function csvShowReview(profile, filename) {
   const dataRows = profile.hasHeader ? rows.slice(1) : rows;
   let skipped = 0;
   const cands = [];
+  // One payee index for the whole file — fuzzy matching per row would
+  // otherwise rescan the tx list once per statement line.
+  const pIndex = payeeIndex();
   for (const r of dataRows) {
     const iso = parseImportDate(r[profile.map.date], profile.dateOrder);
     let amt;
@@ -4538,7 +4866,7 @@ function csvShowReview(profile, filename) {
     else { const dr = parseImportAmount(r[profile.map.debit]), cr = parseImportAmount(r[profile.map.credit]); amt = (!isNaN(cr) && cr) ? Math.abs(cr) : (!isNaN(dr) && dr ? -Math.abs(dr) : NaN); }
     if (iso === null || isNaN(amt) || amt === 0) { skipped++; continue; }
     const payee = (r[profile.map.desc] || '').trim();
-    const sug = suggestPayeeDefaults(payee);
+    const sug = suggestPayeeDefaults(payee, { fuzzy: true, index: pIndex });
     cands.push({ date: iso, payee, amount: Math.abs(amt), type: amt < 0 ? 'expense' : 'income', envelopeId: (sug && sug.envelopeId) || '',
       tag: (sug && sug.tag && tagIndex(sug.tag) >= 0) ? sug.tag : '', dup: _csvIsDup(iso, Math.abs(amt), payee) });
   }
@@ -4674,7 +5002,8 @@ function txFormModal(tx, isNew, opts) {
       </div>
     </div>
 
-    <div class="field"><label>Payee / description</label><input id="t_payee" value="${esc(tx.payee || '')}"></div>
+    <div class="field"><label>Payee / description</label><input id="t_payee" value="${esc(tx.payee || '')}" list="payeeList" autocomplete="off">
+      <datalist id="payeeList">${payeeHistory().map(p => `<option value="${esc(p)}">`).join('')}</datalist></div>
     <div class="field" ${tagList().length || tx.tag ? '' : 'style="display:none;"'}><label>Tag</label><select id="t_tag">${tagOptions(tx.tag)}</select></div>
     <div class="field"><label>Notes</label><textarea id="t_notes" rows="2">${esc(tx.notes || '')}</textarea></div>
     <div class="modal-actions">
@@ -4697,7 +5026,7 @@ function txFormModal(tx, isNew, opts) {
   if (isNew) {
     const _payeeIn = document.getElementById('t_payee');
     _payeeIn.addEventListener('blur', () => {
-      const sug = suggestPayeeDefaults(_payeeIn.value);
+      const sug = suggestPayeeDefaults(_payeeIn.value, { fuzzy: true });
       if (!sug) return;
       let applied = [];
       // The tag suggestion applies to every type (a tagged transfer is the
@@ -4723,7 +5052,7 @@ function txFormModal(tx, isNew, opts) {
         }
       }
       if (applied.length) {
-        toast(`Auto-filled ${applied.join(' + ')} from ${sug.sampleCount} prior "${_payeeIn.value.trim()}" tx${sug.sampleCount === 1 ? '' : 's'}`, 2400, 'info');
+        toast(`Auto-filled ${applied.join(' + ')} from ${sug.sampleCount} prior "${sug.matchedPayee || _payeeIn.value.trim()}" tx${sug.sampleCount === 1 ? '' : 's'}`, 2400, 'info');
       }
     });
   }
@@ -4905,7 +5234,8 @@ function renderRecurring() {
             <button class="btn sm" data-edit-rec="${r.id}">Edit</button>
             ${r.active===false
               ? ''
-              : `<button class="btn sm ghost" data-apply-rec="${r.id}" ${pending ? `title="Apply next instance today (scheduled ${fmtDate(pending)})" aria-label="Apply next instance of ${esc(r.name)} today"` : `disabled title="No pending or upcoming instance" aria-label="No pending instance of ${esc(r.name)} to apply"`}>⚡</button>`}
+              : `<button class="btn sm ghost" data-apply-rec="${r.id}" ${pending ? `title="Apply next instance today (scheduled ${fmtDate(pending)})" aria-label="Apply next instance of ${esc(r.name)} today"` : `disabled title="No pending or upcoming instance" aria-label="No pending instance of ${esc(r.name)} to apply"`}>⚡</button>
+                 <button class="btn sm ghost" data-skip-rec="${r.id}" ${pending ? `title="Skip the next occurrence (${fmtDate(pending)}) — it will never be offered; the one after moves up" aria-label="Skip next occurrence of ${esc(r.name)}"` : `disabled title="No pending or upcoming instance" aria-label="No pending occurrence of ${esc(r.name)} to skip"`}>⏭</button>`}
             ${r.active===false
               ? `<button class="btn sm" data-toggle-rec="${r.id}">▶ Enable</button>`
               : `<button class="btn sm ghost" data-toggle-rec="${r.id}">⏸ Pause</button>`}
@@ -4924,6 +5254,8 @@ function bindRecurring() {
     b.onclick = () => editRecurring(b.dataset.editRec));
   document.querySelectorAll("[data-apply-rec]").forEach(b =>
     b.onclick = () => applyRecurringInstanceNow(b.dataset.applyRec));
+  document.querySelectorAll("[data-skip-rec]").forEach(b =>
+    b.onclick = () => skipRecurringOccurrence(b.dataset.skipRec));
   document.querySelectorAll("[data-del-rec]").forEach(b =>
     b.onclick = () => deleteRecurring(b.dataset.delRec));
   document.querySelectorAll("[data-toggle-rec]").forEach(b =>
@@ -4936,6 +5268,31 @@ function bindRecurring() {
 // rec.lastAppliedDate to the scheduled occurrence being consumed, so the
 // Dashboard's Review-Due banner won't flag it again. If the user cancels the
 // modal, nothing is written and lastAppliedDate is untouched.
+// The ⏭ button on the Recurring tab: mark the next pending occurrence as
+// never happening, without booking anything. Because firstPendingOccurrence
+// is by definition the earliest unresolved date, skipping it is always a
+// contiguous resolution, so the watermark simply advances to it (same as
+// applyRecurringInstanceNow does after booking) — no skippedDates entry is
+// needed and any entries the watermark now covers are pruned. Works on a
+// future occurrence too: the forecast projects from the watermark, so a
+// skipped future bill leaves the projection. Undoable.
+function skipRecurringOccurrence(recId) {
+  const rec = data.recurring.find(r => r.id === recId);
+  if (!rec) return;
+  const pending = firstPendingOccurrence(rec);
+  if (!pending) { toast("No pending or upcoming occurrence to skip"); return; }
+  if (!confirm(`Skip "${rec.name}" on ${fmtDate(pending)}?\n\nThis occurrence will never be offered or recorded; the following one becomes "next". Ctrl+Z undoes it.`)) return;
+  pushUndo(`Skip ${rec.name} (${fmtDate(pending)})`);
+  if (!rec.lastAppliedDate || rec.lastAppliedDate < pending) rec.lastAppliedDate = pending;
+  if (rec.skippedDates) {
+    rec.skippedDates = rec.skippedDates.filter(d => d > rec.lastAppliedDate);
+    if (!rec.skippedDates.length) delete rec.skippedDates;
+  }
+  saveDirty(); render();
+  const next = firstPendingOccurrence(rec);
+  toast(`Skipped ${rec.name} on ${fmtDate(pending)}${next ? ` · next ${fmtDate(next)}` : ''}`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+}
+
 function applyRecurringInstanceNow(recId) {
   const rec = data.recurring.find(r => r.id === recId);
   if (!rec) return;
@@ -5802,16 +6159,61 @@ function reportsAggregates() {
   return { months, envSpend, tagSpend, tagCols, anyTagged };
 }
 
+// Budget vs actual for one calendar month — the standard envelope report,
+// which until now existed only inside the close-out dialog. Same figures as
+// close-out (envelopeMonthSummary: spent is split-aware and excludes one-sided
+// bookkeeping; funded includes refills and incoming envelope transfers), so
+// the two can't disagree. Rows sort most-over-budget first.
+function budgetVsActualHTML(ym) {
+  const rows = data.envelopes.map(env => {
+    const s = envelopeMonthSummary(env, ym);
+    const budget = envMonthlyEquiv(env);
+    return { env, ...s, budget, variance: s.spent - budget };
+  }).sort((a, b) => b.variance - a.variance);
+  if (!rows.length) return '<p style="color:var(--text-dim);">No envelopes yet.</p>';
+  const tot = rows.reduce((t, r) => ({ budget: t.budget + r.budget, spent: t.spent + r.spent, funded: t.funded + r.funded, balance: t.balance + r.balance }), { budget: 0, spent: 0, funded: 0, balance: 0 });
+  const varCell = v => Math.abs(v) < 0.005 ? '<span style="color:var(--text-dim);">—</span>' : `<span class="${v > 0 ? 'neg' : 'pos'}">${v > 0 ? '+' : ''}${fmt(v)}</span>`;
+  return `<table>
+    <thead><tr><th>Envelope</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Funded</th><th class="num">Over / under <span class="help-tip" tabindex="0" title="Spent minus budget for the month. Positive (red) = over budget. Annual envelopes count 1/12 of their yearly target as the month's budget.">?</span></th><th class="num">Balance at month end</th></tr></thead>
+    <tbody>
+      ${rows.map(r => `<tr>
+        <td><a href="#" class="drill" data-tx-env="${r.env.id}" title="Show this envelope's transactions">${esc(r.env.name)}</a>${r.env.cadence === 'annual' ? ' <span class="badge">annual</span>' : ''}${r.env.isReserve ? ' <span class="badge">reserve</span>' : ''}</td>
+        <td class="num" style="color:var(--text-dim);">${fmt(r.budget)}</td>
+        <td class="num">${fmt(r.spent)}</td>
+        <td class="num" style="color:var(--text-dim);">${fmt(r.funded)}</td>
+        <td class="num">${varCell(r.variance)}</td>
+        <td class="num ${r.balance < 0 ? 'neg' : ''}">${fmt(r.balance)}</td>
+      </tr>`).join('')}
+      <tr style="border-top:2px solid var(--border);"><td><strong>Total</strong></td>
+        <td class="num"><strong>${fmt(tot.budget)}</strong></td>
+        <td class="num"><strong>${fmt(tot.spent)}</strong></td>
+        <td class="num"><strong>${fmt(tot.funded)}</strong></td>
+        <td class="num"><strong>${varCell(tot.spent - tot.budget)}</strong></td>
+        <td class="num ${tot.balance < 0 ? 'neg' : ''}"><strong>${fmt(tot.balance)}</strong></td>
+      </tr>
+    </tbody>
+  </table>`;
+}
+
 function renderReports() {
   const agg = reportsAggregates();
   _reportsAgg = agg;                 // shared with bindReports (runs right after)
   const { months, envSpend, tagSpend, tagCols, anyTagged } = agg;
   const showTags = tagList().length > 0 || anyTagged;
   const cell = v => v ? fmt(v) : '<span style="color:var(--text-dim);">—</span>';
+  const bvaMonth = todayISO().slice(0, 7);
 
   return `
   <h2>Reports</h2>
   <div class="grid cols-2">
+    <div class="card" style="grid-column:1/-1;">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h3 style="margin:0 0 10px;">Budget vs actual</h3>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-dim);">Month
+          <input type="month" id="rpBvaMonth" value="${bvaMonth}" style="background:var(--bg-3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;"></label>
+      </div>
+      <div style="overflow:auto;" id="rpBvaTable">${budgetVsActualHTML(bvaMonth)}</div>
+    </div>
     <div class="card">
       <h3>Income vs expense (12 months)</h3>
       <div style="height:280px;"><canvas id="rpCash"></canvas></div>
@@ -5863,6 +6265,14 @@ function renderReports() {
 function bindReports() {
   // Reuse the single-scan aggregates renderReports just computed.
   const { months, envSpend, tagSpend } = _reportsAgg || reportsAggregates();
+
+  const bvaIn = document.getElementById("rpBvaMonth");
+  if (bvaIn) bvaIn.onchange = () => {
+    if (!bvaIn.value) return;
+    document.getElementById("rpBvaTable").innerHTML = budgetVsActualHTML(bvaIn.value);
+    wireDrillLinks();
+  };
+  wireDrillLinks();
 
   if (currentChart) currentChart.destroy();
   const ctx = document.getElementById("rpCash").getContext("2d");
@@ -6111,9 +6521,11 @@ function bindSettings() {
   };
   document.getElementById("btnReset").onclick = () => {
     if (!confirm("This will erase ALL data in the current file. Continue?")) return;
-    if (!confirm("Are you absolutely sure?")) return;
+    if (!confirm("Are you absolutely sure? (Ctrl+Z restores it until you reload.)")) return;
+    pushUndo('Reset all data');
     data = emptyData();
     saveDirty(); render();
+    toast('All data reset', 6000, 'info', { label: 'Undo', onClick: performUndo });
   };
 }
 
@@ -6207,7 +6619,7 @@ function renderHelp() {
     <h3>FAQ</h3>
 
     <details class="faq"><summary>Why doesn't my forecast match my actual balance after I fund an envelope?</summary>
-    <div>Funding an envelope doesn't move real cash — it just earmarks part of your existing balance for a category. Your total balance stays the same; your <em>spendable cash</em> (total minus envelopes) drops by the funded amount. On the Forecast tab, toggle "spendable cash" to see the line that reflects funding effects.</div>
+    <div>Funding an envelope doesn't move real cash — it just earmarks part of your existing balance for a category. Your total balance stays the same; your <em>spendable cash</em> (total minus envelope balances) goes down, though not always one-for-one: funding an overspent envelope first fills its hole, and money put into an envelope with a monthly allowance gets spent from that envelope before it ever touches spendable. "Fund the month" re-runs the forecast with your proposal applied so you see the real effect. On the Forecast tab, toggle "spendable cash" to see the line that reflects funding effects.</div>
     </details>
 
     <details class="faq"><summary>What's the difference between rollover and reset envelopes?</summary>
@@ -6370,6 +6782,7 @@ function _buildCommands() {
     { label: 'Reload from server', keywords: 'reload refresh server latest sync', run: () => document.getElementById('btnReload').click() },
     { label: 'Save now', keywords: 'save write file server', run: () => writeFile().then(ok => { if (ok) toast('Saved'); }).catch(() => {}) },
     { label: 'Undo last change', hint: 'Ctrl+Z', keywords: 'undo revert', run: () => performUndo() },
+    { label: 'Redo', hint: 'Ctrl+Y', keywords: 'redo repeat restore', run: () => performRedo() },
     { label: 'Toggle theme', keywords: 'dark light auto appearance', run: () => { const b = document.getElementById('btnTheme'); if (b) b.click(); } },
   ];
   return nav.concat(actions);
@@ -6444,19 +6857,23 @@ document.addEventListener("keydown", e => {
   }
 });
 
-// Ctrl-Z / Cmd-Z: pop the last undoable mutation. Suppressed inside text
-// inputs (so browser text-undo still works) and while a modal is open (so
-// Ctrl-Z inside a modal field does not silently wipe global state).
+// Ctrl-Z / Cmd-Z: pop the last undoable mutation. Ctrl-Y or Ctrl-Shift-Z /
+// Cmd-Shift-Z: redo. Suppressed inside text inputs (so browser text-undo
+// still works) and while a modal is open (so Ctrl-Z inside a modal field does
+// not silently wipe global state).
 document.addEventListener("keydown", e => {
   if (!(e.ctrlKey || e.metaKey)) return;
-  if (e.shiftKey || e.altKey) return;
-  if (e.key !== 'z' && e.key !== 'Z') return;
+  if (e.altKey) return;
+  const k = e.key.toLowerCase();
+  const isUndo = k === 'z' && !e.shiftKey;
+  const isRedo = (k === 'z' && e.shiftKey) || (k === 'y' && !e.shiftKey);
+  if (!isUndo && !isRedo) return;
   const t = e.target;
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   if (document.getElementById("modalBg")?.classList.contains("open")) return;
   if (!data) return;
   e.preventDefault();
-  performUndo();
+  if (isUndo) performUndo(); else performRedo();
 });
 
 //=============================================================================
@@ -6539,6 +6956,14 @@ function applyUrlParams() {
     demoApplied = true;
     updateFileStatus("demo data (not saved)", "no-file");
   }
+  // ?view=transactions&acc=<id>&env=<id>&tag=<name>&q=…&from=YYYY-MM-DD&to=…
+  // pre-fills the Transactions filter so a bookmark can land on "this
+  // account, this month". Unknown ids are harmless: the select just shows
+  // "All" and the filter matches nothing until cleared.
+  const pf = {};
+  for (const k of ['acc', 'env', 'q', 'from', 'to', 'type']) if (params.get(k)) pf[k] = params.get(k);
+  if (params.get('tag')) pf.tag = params.get('tag') === 'untagged' ? 'u' : 't:' + params.get('tag');
+  if (Object.keys(pf).length) txFilter = { ...txFilter, ...pf };
   return { demoApplied, view: params.get("view") };
 }
 

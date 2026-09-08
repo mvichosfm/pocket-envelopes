@@ -83,7 +83,8 @@ The in-app **Help** tab explains the concepts (accounts vs envelopes vs spendabl
 - **Split transactions** across several envelopes.
 - **CSV import** of bank statements with a column-mapping wizard, saved profiles, duplicate detection and a review step.
 - **Net-worth history** with automatic daily snapshots and manual backfill; investment accounts with a value-update button.
-- **Undo** (Ctrl/Cmd-Z) for every destructive action, an amount field that accepts arithmetic (`2380,50-100`), keyboard shortcuts, dark / light / auto theme.
+- **Undo** (Ctrl/Cmd-Z) and redo (Ctrl-Y) for every destructive action, an amount field that accepts arithmetic (`2380,50-100`), keyboard shortcuts, dark / light / auto theme.
+- **Finding things**: the Transactions tab filters by type, account, envelope, tag and date range, totals what it shows, and can bulk-tag, re-envelope or delete the rows you tick. Click any account or envelope name to jump to its transactions.
 - **Safety**: atomic writes, five rotating backups on disk, seven daily backups in the browser, schema validation on load, and a conflict dialog instead of a silent overwrite when two devices edit at once.
 
 ## Where your data lives, and how to get it back
