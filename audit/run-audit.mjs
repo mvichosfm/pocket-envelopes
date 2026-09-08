@@ -21,6 +21,8 @@
 //        - validateData rejects malformed collections
 //        - forecast floors overspent envelopes (spendable is not inflated)
 //        - a funded monthly allowance is charged once, not twice
+//        - backed envelopes: a full account selection forecasts exactly as before,
+//          a filtered one subtracts only the envelopes its accounts hold
 //        - "fund one month" assigns the budget, not the overspend gap
 //        - envelope-only adjustments are not cashflow
 //   4. sw.js compiles, never intercepts /data, and keeps the shell network-first.
@@ -139,6 +141,7 @@ function logicApi() {
     "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
     "dueRecurringOccurrences", "recurringToTx", "recurringResumeDate",
     "recurringMonthlyEquiv", "recurringMonthlyForEnvelope",
+    "envelopeBackingAccount", "envelopeCountsFor",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
   ];
@@ -241,6 +244,81 @@ if (api) {
     const expected = 5000 - 300;
     assert.ok(Math.abs(fc.spendable.at(-1) - expected) < 0.05,
       `Expected ${expected}, got ${fc.spendable.at(-1)}`);
+  });
+
+  // Arrays built inside the vm context have a foreign Array prototype, so
+  // strict deepEqual on them fails; copy them into this realm first.
+  const arr = (x) => Array.from(x);
+
+  check("Backed envelopes: selecting every account forecasts exactly as before", () => {
+    const fixture = (withBacking) => ({
+      accounts: [
+        { id: "mine", name: "Mine", openingBalance: 500, includeInNetWorth: true },
+        { id: "theirs", name: "Theirs", openingBalance: 1000, includeInNetWorth: true },
+      ],
+      envelopes: [
+        { id: "shared", name: "Shared", openingBalance: 120, budgetAmount: 0, cadence: "monthly" },
+        { id: "rent", name: "Rent", openingBalance: 300, budgetAmount: 0, cadence: "monthly", ...(withBacking ? { accountId: "theirs" } : {}) },
+        { id: "fuel", name: "Fuel", openingBalance: 80, budgetAmount: 0, cadence: "monthly", ...(withBacking ? { accountId: "mine" } : {}) },
+      ],
+      transactions: [], recurring: [],
+    });
+    api.setData(fixture(false));
+    const before = api.forecastAccountBalances(["mine", "theirs"], 30, { includeAllowances: false });
+    api.setData(fixture(true));
+    const after = api.forecastAccountBalances(["mine", "theirs"], 30, { includeAllowances: false });
+    assert.deepEqual(arr(after.spendable), arr(before.spendable));
+    assert.deepEqual(arr(after.envelopeTotal), arr(before.envelopeTotal));
+    assert.equal(after.spendable[0], 1500 - 500);
+    assert.equal(after.excludedEnvelopes.length, 0);
+  });
+
+  check("Backed envelopes: a filtered forecast subtracts only the envelopes its accounts hold", () => {
+    api.setData({
+      accounts: [
+        { id: "mine", name: "Mine", openingBalance: 500, includeInNetWorth: true },
+        { id: "theirs", name: "Theirs", openingBalance: 1000, includeInNetWorth: true },
+      ],
+      envelopes: [
+        { id: "shared", name: "Shared", openingBalance: 120, budgetAmount: 0, cadence: "monthly" },          // household: counts everywhere
+        { id: "rent", name: "Rent", openingBalance: 300, budgetAmount: 0, cadence: "monthly", accountId: "theirs" },
+        { id: "fuel", name: "Fuel", openingBalance: 80, budgetAmount: 0, cadence: "monthly", accountId: "mine" },
+        { id: "gone", name: "Gone", openingBalance: 50, budgetAmount: 0, cadence: "monthly", accountId: "deleted" }, // dangling → household
+      ],
+      transactions: [], recurring: [],
+    });
+    const mine = api.forecastAccountBalances(["mine"], 7, { includeAllowances: false });
+    assert.equal(mine.spendable[0], 500 - 120 - 80 - 50);
+    assert.deepEqual(arr(mine.excludedEnvelopes).map((x) => `${x.name}@${x.accountName}`), ["Rent@Theirs"]);
+    const theirs = api.forecastAccountBalances(["theirs"], 7, { includeAllowances: false });
+    assert.equal(theirs.spendable[0], 1000 - 120 - 300 - 50);
+    assert.deepEqual(arr(theirs.excludedEnvelopes).map((x) => x.name), ["Fuel"]);
+    // The old rule charged every envelope against the single selected account.
+    assert.notEqual(mine.spendable[0], 500 - 120 - 300 - 80 - 50);
+  });
+
+  check("Backed envelopes: the allowance drains from the backing account, or not at all", () => {
+    const now = new Date();
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const daysToMonthEnd = Math.round((monthEnd - midnight) / 86400000);
+    api.setData({
+      accounts: [
+        { id: "mine", name: "Mine", openingBalance: 2000, includeInNetWorth: true },
+        { id: "theirs", name: "Theirs", openingBalance: 2000, includeInNetWorth: true },
+      ],
+      envelopes: [{ id: "rent", name: "Rent", openingBalance: 0, budgetAmount: 300, cadence: "monthly", accountId: "theirs" }],
+      // Spending history says "mine"; the explicit backing account must win.
+      transactions: [{ id: "t1", date: "2020-01-05", type: "expense", amount: 10, accountId: "mine", envelopeId: "rent" }],
+      recurring: [],
+    });
+    const both = api.forecastAccountBalances(["mine", "theirs"], daysToMonthEnd, { includeAllowances: true });
+    assert.deepEqual(arr(both.allowanceInfo.included).map((x) => x.accountName), ["Theirs"]);
+    assert.ok(Math.abs(both.series.mine.at(-1) - 1990) < 0.005, "mine must not be drained (2000 less the posted 10)");
+    const onlyMine = api.forecastAccountBalances(["mine"], daysToMonthEnd, { includeAllowances: true });
+    assert.equal(onlyMine.allowanceInfo.included.length, 0);
+    assert.deepEqual(arr(onlyMine.allowanceInfo.unassigned).map((x) => x.name), ["Rent"]);
+    assert.ok(Math.abs(onlyMine.total.at(-1) - 1990) < 0.005, "a forecast without the backing account sees no drain");
   });
 
   check("Fund-one-month does not silently repay overspending", () => {

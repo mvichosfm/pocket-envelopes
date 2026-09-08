@@ -881,6 +881,12 @@ function migrate(raw) {
     // (its budgetAmount is forced to 0), and is the destination for close-out
     // sweeps. Additive field, no version bump — undefined → false.
     if (e.isReserve === undefined) e.isReserve = false;
+    // accountId ("backed by") is additive and optional: undefined = household.
+    // A reserve envelope is always household-wide (it is fed by sweeps from
+    // envelopes backed by any account), and an id whose account no longer
+    // exists degrades to household rather than silently excluding the
+    // envelope from every filtered forecast.
+    if (e.isReserve || (e.accountId && !raw.accounts.some(a => a.id === e.accountId))) delete e.accountId;
   }
   // Pinned accounts: a small dashboard strip surfaces the live balance of any
   // account the user pins. Additive field, no version bump — undefined → false.
@@ -1999,8 +2005,31 @@ function recurringMonthlyForEnvelope(env) {
   return covered;
 }
 
+// BACKED ENVELOPES (decision #41). An envelope may name the account that holds
+// its money (env.accountId — "Backed by" in the envelope dialog). The forecast
+// uses it in two places: a backed envelope is subtracted from spendable only
+// when its account is among the selected ones, and its allowance drains from
+// that account rather than from the spending-history guess. An envelope with
+// no backing account is household-wide: it is subtracted from every selection
+// and its allowance routes by history, exactly as every envelope did before
+// the field existed — so a file that never sets it forecasts as before.
+function envelopeBackingAccount(env) {
+  if (!env || !env.accountId) return null;
+  return accountById(env.accountId) || null;   // a dangling id degrades to household
+}
+// Does this envelope's balance count against the spendable line of a forecast
+// over `accountIds`? Household envelopes always do; backed ones only when
+// their account is selected.
+function envelopeCountsFor(env, accountIds) {
+  const acc = envelopeBackingAccount(env);
+  return !acc || accountIds.includes(acc.id);
+}
+
 // Pick a "spending account" for an envelope when projecting its allowance.
 // Rules:
+//   0. A backed envelope drains from its backing account — if that account is
+//      among the forecast-selected ones; otherwise null (its money is not in
+//      this forecast at all, so neither is its spending).
 //   1. If there's expense history for this envelope, use the most recent
 //      expense's account — but only if it's among the forecast-selected
 //      accounts. If it isn't, return null (don't re-route to a different
@@ -2008,6 +2037,8 @@ function recurringMonthlyForEnvelope(env) {
 //   2. If there's no history at all, fall back to the first selected
 //      non-investment account.
 function envelopeSpendingAccount(env, candidateAccountIds) {
+  const backing = envelopeBackingAccount(env);
+  if (backing) return candidateAccountIds.includes(backing.id) ? backing : null;
   let bestTx = null;
   for (const tx of data.transactions) {
     if (tx.type === "expense" && tx.envelopeId === env.id && tx.accountId) {
@@ -2026,12 +2057,17 @@ function envelopeSpendingAccount(env, candidateAccountIds) {
 }
 
 function forecastAccountBalances(accountIds, days, opts) {
-  // returns { dates, series, total, envelopeTotal, spendable, allowanceInfo }
+  // returns { dates, series, total, envelopeTotal, spendable, allowanceInfo,
+  //           excludedEnvelopes }
   // - total: sum of selected account balances over time
-  // - envelopeTotal: sum of ALL envelope balances over time, each floored at
-  //   zero (regardless of which accounts are selected — envelopes are global
-  //   allocations). Projected spending draws down the envelope it belongs to
-  //   before it reaches spendable; see the clamp at the aggregation step.
+  // - envelopeTotal: sum of the envelope balances that live in the selected
+  //   accounts, each floored at zero: every household envelope (no backing
+  //   account) plus every envelope backed by a selected account. Envelopes
+  //   backed by an account outside the selection are listed in
+  //   excludedEnvelopes and subtracted from nothing — their money is not in
+  //   `total` either (decision #41). Projected spending draws down the
+  //   envelope it belongs to before it reaches spendable; see the clamp at
+  //   the aggregation step.
   // - spendable: total − envelopeTotal, i.e. how much of the selected
   //   accounts' projected balance is NOT earmarked by any envelope.
   opts = opts || {};
@@ -2323,10 +2359,21 @@ function forecastAccountBalances(accountIds, days, opts) {
   // recurring that drains an envelope every month used to walk the envelope
   // total to -∞ over a long horizon, which pinned spendable flat and pretended
   // the bill was free.
+  //
+  // Envelopes backed by an account outside `accountIds` are skipped here: the
+  // cash behind them is not in `total`, so charging them against it would
+  // understate spendable by money that was never selected (the old
+  // "envelopes are global allocations" rule did exactly that for a per-person
+  // forecast profile — decision #41).
   const envelopeTotal = new Array(days + 1).fill(0);
+  const excludedEnvelopes = [];
   for (const e of data.envelopes) {
     const s = envSeries[e.id];
     for (let i = 1; i <= days; i++) s[i] += s[i - 1];
+    if (!envelopeCountsFor(e, accountIds)) {
+      excludedEnvelopes.push({ id: e.id, name: e.name, accountName: envelopeBackingAccount(e).name, balance: s[0] });
+      continue;
+    }
     for (let i = 0; i <= days; i++) if (s[i] > 0) envelopeTotal[i] += s[i];
   }
 
@@ -2336,7 +2383,7 @@ function forecastAccountBalances(accountIds, days, opts) {
   const spendable = new Array(days + 1);
   for (let i = 0; i <= days; i++) spendable[i] = total[i] - envelopeTotal[i];
 
-  return { dates, series, total, envelopeTotal, spendable, allowanceInfo };
+  return { dates, series, total, envelopeTotal, spendable, allowanceInfo, excludedEnvelopes };
 }
 
 // Lowest point of a forecast's spendable line, with the date it falls on.
@@ -2759,7 +2806,7 @@ function renderDashboard() {
         if (dashFc.primaryIsSpendable) {
           return `
             <div class="dash-fc-cell" style="border-color:var(--warn);">
-              <div class="dash-fc-label">Lowest spendable in period <span class="help-tip" tabindex="0" title="The lowest your SPENDABLE cash dips to in the horizon — total of your accounts minus all envelope balances (Available-to-Budget). Funding envelopes pulls money into buckets, which reduces spendable but leaves your account totals unchanged. Projected envelope spending is paid out of that envelope's own balance first and only reduces spendable once the envelope runs dry. Due-but-unapplied recurrings are folded in, so this is the realistic worst case.">?</span></div>
+              <div class="dash-fc-label">Lowest spendable in period <span class="help-tip" tabindex="0" title="The lowest your SPENDABLE cash dips to in the horizon — total of your accounts minus the envelope balances they hold (Available-to-Budget; an envelope backed by an account outside the forecast is left out). Funding envelopes pulls money into buckets, which reduces spendable but leaves your account totals unchanged. Projected envelope spending is paid out of that envelope's own balance first and only reduces spendable once the envelope runs dry. Due-but-unapplied recurrings are folded in, so this is the realistic worst case.">?</span></div>
               <div class="dash-fc-value ${dashFc.spendMin < 0 ? 'neg' : ''}" style="color:var(--warn);">${fmt(dashFc.spendMin)}</div>
               <div class="dash-fc-delta" style="color:var(--text-dim);">on ${fmtDate(dashFc.spendMinDate)}</div>
               <div class="dash-fc-spend" style="font-style:italic;color:var(--text-dim);">if you fund nothing · Fund the month shows the effect of a proposal</div>
@@ -3276,9 +3323,16 @@ Delete or reassign those first (open the Transactions / ` +
     return;
   }
   const bal = accountBalance(a);
-  if (!confirm(`Delete account "${a.name}" (balance ${fmt(bal)})?`)) return;
+  const backed = data.envelopes.filter(e => e.accountId === id);
+  const backedNote = backed.length
+    ? `\n\n${plural(backed.length, 'envelope is', 'envelopes are')} backed by it (${backed.map(e => e.name).join(', ')}) and will become household-wide.`
+    : '';
+  if (!confirm(`Delete account "${a.name}" (balance ${fmt(bal)})?${backedNote}`)) return;
   pushUndo(`Delete account "${a.name}"`);
   data.accounts = data.accounts.filter(x => x.id !== id);
+  // Envelopes it backed degrade to household-wide (migrate would treat a
+  // dangling id the same way — this just keeps the file clean).
+  for (const e of backed) delete e.accountId;
   // Scrub the deleted account from forecast selections and saved profiles so
   // the projection (Forecast tab + Dashboard card) never indexes a now-missing
   // account — that would throw and blank out both views.
@@ -3540,6 +3594,15 @@ function editEnvelope(id) {
       </select>
       <div class="micro" style="margin-top:4px;">Sweep needs a reserve envelope${(otherReserve || e.isReserve) ? '' : ' — tick “Reserve envelope” on one envelope first'}.</div>
     </div>
+    <div class="field" id="f_acc_field" ${e.isReserve ? 'style="display:none;"' : ''}>
+      <label>Backed by account <span class="help-tip" tabindex="0" title="Which account holds this envelope's money. It only matters when a forecast selects some accounts and not others: a backed envelope counts against spendable cash only in forecasts that include its account, and its allowance drains from that account. Household means any account — the envelope counts in every forecast, which is how all envelopes behaved before this field existed.">?</span></label>
+      <select id="f_acc">
+        <option value="">Household — any account</option>
+        ${data.accounts.filter(a => !a.isInvestment).map(a =>
+          `<option value="${a.id}" ${e.accountId === a.id ? 'selected' : ''}>${esc(a.name)}${a.owner && a.owner !== 'joint' ? ` (${esc(a.owner === 'you' ? (data.settings.household?.[0] || 'You') : (data.settings.household?.[1] || 'Partner'))})` : ''}</option>`
+        ).join('')}
+      </select>
+    </div>
     <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(e.notes || '')}</textarea></div>
     ${id ? `
     <div class="field" style="background:var(--bg-3);padding:10px 12px;border-radius:6px;border:1px solid var(--border);">
@@ -3592,6 +3655,7 @@ function editEnvelope(id) {
     // allowance projection (budgetAmount 0 → envMonthlyEquiv 0 → skipped) and
     // out of the Fund modal, rather than a second set of guards everywhere.
     document.getElementById("f_budget_row").style.display = on ? "none" : "";
+    document.getElementById("f_acc_field").style.display = on ? "none" : "";
     document.getElementById("f_roll_field").style.display =
       (on || document.getElementById("f_cad").value === "annual") ? "none" : "";
   };
@@ -3674,6 +3738,10 @@ function editEnvelope(id) {
       e.cadence = "monthly";
       e.rolloverPolicy = "rollover";
     }
+    // Backing account: a real id or nothing at all (never null/"") so the
+    // field reads as absent in exports. A reserve is always household-wide.
+    const backedBy = e.isReserve ? "" : (document.getElementById("f_acc").value || "");
+    if (backedBy && accountById(backedBy)) e.accountId = backedBy; else delete e.accountId;
     // A sweep policy with no reserve envelope to sweep into is a no-op that
     // would silently behave like rollover at close-out; degrade it explicitly.
     if (e.rolloverPolicy === "sweep" && !data.envelopes.some(x => x.isReserve && x.id !== e.id)) {
@@ -3898,7 +3966,7 @@ function refillEnvelopes() {
           <div style="font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;">${fmt(headroom.spendNow)}</div>
         </div>
         <div>
-          <div class="stat-label">Spendable min in horizon <span class="help-tip" tabindex="0" title="Spendable = total of your accounts − sum of all envelope balances (the YNAB Available-to-Budget concept). Funding envelopes moves money INTO buckets, so spendable drops even though your total account balance is unchanged — but not always one-for-one: funding an overspent envelope first fills its hole, and money in an envelope with an allowance gets spent from that envelope inside the horizon. That is why the figure below the list is a real re-forecast with your proposal applied, not this number minus the total.">?</span></div>
+          <div class="stat-label">Spendable min in horizon <span class="help-tip" tabindex="0" title="Spendable = total of your accounts − the envelope balances they hold (the YNAB Available-to-Budget concept; envelopes backed by accounts outside the forecast are left out). Funding envelopes moves money INTO buckets, so spendable drops even though your total account balance is unchanged — but not always one-for-one: funding an overspent envelope first fills its hole, and money in an envelope with an allowance gets spent from that envelope inside the horizon. That is why the figure below the list is a real re-forecast with your proposal applied, not this number minus the total.">?</span></div>
           <div style="font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--warn);">
             ${fmt(headroom.spendMin)}
             <span style="font-size:12px;font-weight:400;color:var(--text-dim);">on ${fmtDate(headroom.spendMinDate)}</span>
@@ -5593,7 +5661,7 @@ function renderForecast() {
             Include envelope allowances as projected spending
             <span class="help-tip" tabindex="0" title="Projects envelope budgets as smoothed daily outflows against their spending account — even if you haven't logged the real transactions yet. Useful for an honest end-of-month forecast that includes the spending you KNOW is coming but hasn't been booked.">?</span>
           </label>
-          <label title="Show the portion of your projected balance that is NOT earmarked by any envelope. Spendable = total − sum of all envelope balances."
+          <label title="Show the portion of your projected balance that is NOT earmarked by any envelope. Spendable = total − the envelope balances held in the selected accounts."
                  style="${forecastState.chartLines==='spendable'?'opacity:0.5;':''}">
             <input type="checkbox" id="fcSpend" ${forecastState.showSpendable||forecastState.chartLines==='spendable'?'checked':''} ${forecastState.chartLines==='spendable'?'disabled':''}>
             Show spendable cash line (total − envelopes)${forecastState.chartLines==='spendable'?' <span style="font-size:11px;color:var(--text-dim);">(implied)</span>':''}
@@ -5840,7 +5908,7 @@ function setupForecastSplitter() {
 }
 
 function drawForecast() {
-  const { dates, series, total, envelopeTotal, spendable, allowanceInfo } = forecastAccountBalances(
+  const { dates, series, total, envelopeTotal, spendable, allowanceInfo, excludedEnvelopes } = forecastAccountBalances(
     forecastState.accountIds, forecastState.days,
     { includeAllowances: forecastState.includeAllowances }
   );
@@ -5943,13 +6011,17 @@ function drawForecast() {
           <td class="num">${fmt(envE)}</td>
           <td class="num">${envE-envS>=0?'+':''}${fmt(envE-envS)}</td>
         </tr>
-        <tr style="color:var(--warn);"><td><strong>Spendable</strong> <span class="help-tip" tabindex="0" title="Account total minus the sum of all envelope balances — money not yet earmarked for any envelope. YNAB calls this Available-to-Budget. If you fully assign every euro to an envelope, spendable hits zero. Projected spending draws each envelope down to zero before it starts eating into spendable, so setting money aside is never charged twice.">?</span></td>
+        <tr style="color:var(--warn);"><td><strong>Spendable</strong> <span class="help-tip" tabindex="0" title="Account total minus the envelope balances held in the selected accounts — money not yet earmarked for any envelope. YNAB calls this Available-to-Budget. Household envelopes always count; an envelope backed by an account outside this selection is left out, because its money is not in the total either. If you fully assign every euro to an envelope, spendable hits zero. Projected spending draws each envelope down to zero before it starts eating into spendable, so setting money aside is never charged twice.">?</span></td>
           <td class="num"><strong>${fmt(spS)}</strong></td>
           <td class="num"><strong>${fmt(spE)}</strong></td>
           <td class="num ${spE-spS>=0?'pos':'neg'}"><strong>${spE-spS>=0?'+':''}${fmt(spE-spS)}</strong></td>
         </tr>
       </tbody>
     </table>
+    ${(excludedEnvelopes || []).length ? `<p class="micro" style="margin:8px 0 0;">
+      Not counted here — backed by accounts outside this selection:
+      ${excludedEnvelopes.map(x => `<strong>${esc(x.name)}</strong> (${esc(x.accountName)}, ${fmt(x.balance)})`).join(', ')}.
+    </p>` : ''}
   `;
 
   // Allowance breakdown panel
@@ -5974,7 +6046,7 @@ function drawForecast() {
           </p>` : '';
       const unaList = una.length
         ? `<p style="color:var(--warn,#f0a64a);font-size:13px;margin:10px 0 0;">
-            <strong>Unassigned (no spending account found):</strong> ${una.map(x=>esc(x.name)+' ('+fmt(x.monthly)+')').join(', ')}
+            <strong>Unassigned (spending account not in this selection):</strong> ${una.map(x=>esc(x.name)+' ('+fmt(x.monthly)+')').join(', ')}
           </p>` : '';
       const incTable = inc.length
         ? `<table>
@@ -6559,7 +6631,7 @@ function renderHelp() {
       <dt>Total balance</dt>
       <dd>The sum of your accounts' real balances. This is the actual money you have.</dd>
       <dt>Spendable cash</dt>
-      <dd>Total balance minus the sum of your envelope balances. This is the money <em>not yet claimed</em> by any envelope — what's free to allocate or spend on uncategorised things.</dd>
+      <dd>Total balance minus the sum of your envelope balances. This is the money <em>not yet claimed</em> by any envelope — what's free to allocate or spend on uncategorised things. When a forecast selects only some accounts, only the envelopes those accounts hold are subtracted: each envelope can name the account it is <strong>backed by</strong> (envelope dialog); one that names none is household-wide and counts everywhere.</dd>
       <dt>Allowances</dt>
       <dd>A forecasting smoothing option: subtract each envelope's monthly equivalent from accounts daily, simulating the intent to spend the budget evenly over time. Toggled on the Forecast tab.</dd>
       <dt>Headroom / "lowest in period"</dt>
@@ -6624,6 +6696,10 @@ function renderHelp() {
 
     <details class="faq"><summary>What's the difference between rollover and reset envelopes?</summary>
     <div>At month close-out, a <strong>rollover</strong> envelope keeps its leftover balance — useful for irregular expenses like car maintenance where unspent money should stay reserved. A <strong>reset</strong> envelope's leftover returns to spendable cash at close-out — useful for "use it or lose it" categories like fun money or groceries where you don't want unspent budget to accumulate. A <strong>sweep</strong> envelope's leftover moves into the reserve envelope instead, so it stays set aside rather than going back into circulation. Annual envelopes always rollover regardless of policy.</div>
+    </details>
+
+    <details class="faq"><summary>What does "Backed by account" do?</summary>
+    <div>It tells the forecast which account holds an envelope's money. Nothing changes while a forecast selects all your cash accounts. But a per-person forecast profile — one partner's accounts only — used to subtract <em>every</em> envelope from that partner's total, including envelopes funded from the other partner's account, so spendable came out too low and <strong>Fund the month</strong> warned against money that was there. Set <strong>Backed by</strong> on each envelope and a filtered forecast subtracts only the envelopes its accounts hold, and drains each allowance from the right account; the summary table lists what it left out. <strong>Household</strong> (the default) keeps the old behaviour for that envelope. The field is advisory: moving money between two envelopes backed by different accounts does not move cash between the accounts, so keep the backing in step with where the money really sits. A reserve envelope is always household-wide.</div>
     </details>
 
     <details class="faq"><summary>What is a reserve envelope?</summary>

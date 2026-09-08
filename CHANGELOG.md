@@ -5,6 +5,20 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **Envelopes can be backed by an account (accounting, forecast only).**
+  A new *Backed by account* field in the envelope dialog names the account
+  that holds an envelope's money. A forecast that selects only some accounts
+  now subtracts only the envelopes those accounts hold (plus every
+  *Household* envelope, the default), and drains a backed envelope's
+  allowance from that account. Before, a per-person forecast profile charged
+  every envelope in the file against one partner's cash, so spendable came
+  out too low and Fund the month warned against money that was there. With
+  every cash account selected, or with no backing set, the figures are
+  unchanged to the cent. The Forecast tab lists what a selection left out.
+  The reserve envelope is always household-wide.
+
 ## 2026-09-08 — v0.4.0, skips, month-aware envelopes, a stronger Transactions tab
 
 - **Skip an occurrence** in the due-recurring review. Each due row now has
