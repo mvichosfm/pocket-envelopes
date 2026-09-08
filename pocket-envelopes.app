@@ -46,7 +46,6 @@
     --on-fill: #08110d;     /* ink on a solid accent/warn/bad/good fill */
     --manila: #d9c89e;      /* the paper — structural, never semantic */
     --manila-soft: rgba(217, 200, 158, .13);
-    --tint-ink: rgba(147, 187, 224, .13);  /* printed hatch — texture only */
     --shadow: 0 4px 16px rgba(0,0,0,.35);
     --radius: 10px;
     --chart-grid: rgba(255,255,255,.06);
@@ -55,16 +54,22 @@
        way they would in a ledger. Body copy stays in the UI sans. */
     --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, monospace;
   }
-  /* Light is paper-forward rather than an inversion of the dark theme: the
-     page becomes the envelope stock, cards are the lighter sheet inside. */
+  /* Light: white sheets on a cool light-grey desk. The first light theme was
+     manila stock with a barely lighter sheet on it; cards had almost no
+     separation from the page and the secondary buttons vanished into it.
+     Cards now lift off the ground with a faint shadow (--shadow-card, light
+     only), inputs and buttons sit on a distinct inset tone, and borders are
+     a full step darker than the surfaces they divide. Ink and the darker
+     semantic tones are unchanged — they already passed AA on white. */
   [data-theme="light"] {
-    --bg: #e7e4db;          /* manila stock */
-    --bg-2: #f4f2ec;        /* the sheet */
-    --bg-3: #dedad0;
-    --border: #c3bcac;
+    --bg: #eceef2;          /* the desk */
+    --bg-2: #ffffff;        /* the sheet */
+    --bg-3: #eef1f5;        /* insets: inputs, buttons, tiles, badges */
+    --border: #c9d2dd;
     --text: #1b222e;        /* ink */
     --text-dim: #5c6472;
-    --shadow: 0 2px 8px rgba(60,50,30,.12);
+    --shadow: 0 6px 20px rgba(20,30,50,.14);
+    --shadow-card: 0 1px 2px rgba(20,30,50,.05), 0 3px 10px rgba(20,30,50,.06);
     /* Darker semantic tones — the dark-mode hues fail WCAG AA on paper. */
     --accent: #1f5f94;
     --accent-2: #0f4c81;
@@ -73,8 +78,7 @@
     --good: #2e7d4f;
     --on-fill: #ffffff;     /* the light fills are dark, so the ink on them is white */
     --manila: #8a7c58;
-    --manila-soft: rgba(138, 124, 88, .12);
-    --tint-ink: rgba(31, 95, 148, .13);
+    --manila-soft: rgba(20, 30, 50, .06);
     --chart-grid: rgba(0,0,0,.07);
     --chart-total: #8a6516;
   }
@@ -144,8 +148,12 @@
   .btn.danger:hover { color: var(--bad); border-color: var(--bad); background: rgba(224,108,117,.08); }
   .btn.danger.solid { background: var(--bad); border-color: var(--bad); color: var(--on-fill); font-weight: 600; }
   .btn.danger.solid:hover { filter: brightness(1.08); background: var(--bad); color: var(--on-fill); }
-  .btn.ghost { background: transparent; border: none; color: var(--text-dim); }
+  .btn.ghost { background: transparent; border: 1px solid transparent; color: var(--text-dim); }
   .btn.ghost:hover { color: var(--text); background: var(--bg-3); }
+  [data-theme="light"] .btn.ghost:hover,
+  [data-theme="light"] .btn.ghost:focus-visible { border-color: var(--border); }
+  [data-theme="light"] .btn:not(.primary):not(.ghost) { background: var(--bg-2); }
+  [data-theme="light"] .btn:not(.primary):not(.ghost):hover { background: var(--bg-3); }
   .btn.sm { padding: 4px 8px; font-size: 12px; min-height: 24px; }
   .btn.icon { padding: 4px 6px; font-size: 14px; line-height: 1; min-width: 24px; min-height: 24px; }
   /* WCAG 2.5.8 wants ≥24px targets; touch (coarse) pointers want roomier ones. */
@@ -173,7 +181,7 @@
   h3 { margin: 0 0 10px 0; font-size: 15px; font-weight: 700; color: var(--text); }
 
   .card { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
-    padding: 14px; }
+    padding: 14px; box-shadow: var(--shadow-card, none); }
   /* Scroll-shadow hint: when a card's content overflows horizontally, soft
      shadows fade in at the left/right edges so users see scrollable content
      exists. The first two gradients mask the shadows when the card is at
@@ -217,6 +225,14 @@
   .dash-fc-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
   .dash-fc-value { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
   .dash-fc-value.neg { color: var(--bad); }
+  /* Low-point tiles carry a tone only when there is something to say. */
+  .dash-fc-cell.tone-warn { border-color: var(--warn); }
+  .dash-fc-cell.tone-warn .dash-fc-value { color: var(--warn); }
+  .dash-fc-cell.tone-bad { border-color: var(--bad); }
+  .dash-fc-cell.tone-bad .dash-fc-value { color: var(--bad); }
+  .dash-fc-note { font-size: 11px; margin-top: 4px; }
+  .tone-warn .dash-fc-note { color: var(--warn); }
+  .tone-bad .dash-fc-note { color: var(--bad); }
   .dash-fc-delta { font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .dash-fc-delta.up { color: var(--good); }
   .dash-fc-delta.down { color: var(--bad); }
@@ -284,49 +300,22 @@
   .env-cat-head h3 { margin: 0; }
   .env-cat-summary { font-size: 13px; font-variant-numeric: tabular-nums; }
   /* ── The envelope ────────────────────────────────────────────────────────
-     The signature element. Rather than a card with a progress bar bolted on,
-     the card IS the envelope and fills bodily with the security tint printed
-     inside a real one. Fill height = balance / budget, so the pattern is the
-     gauge, not decoration: a full envelope is densely printed, a spent one is
-     bare stock. --ev-fill is set per card from JS (a percentage, never a
-     colour — the colours stay here, per the no-hex-in-JS rule).             */
-  .envelope { padding: 14px; position: relative; overflow: hidden; isolation: isolate; }
-  /* The printed tint, at the intensity of a real one: barely-there hatching
-     over a soft wash, with a crisp rule at the fill line. The rule is what
-     you actually read the level off; the wash gives it volume; the hatch is
-     texture only and must never compete with the figures sitting on it. An
-     earlier pass hatched at 6px/30% and the meta line became unreadable. */
-  .envelope::before {
-    content: ""; position: absolute; left: 0; right: 0; bottom: 0; z-index: -1;
-    height: var(--ev-fill, 0%);
-    background-color: var(--ev-wash, transparent);
-    background-image:
-      repeating-linear-gradient( 45deg, var(--tint-ink) 0 1px, transparent 1px 11px),
-      repeating-linear-gradient(-45deg, var(--tint-ink) 0 1px, transparent 1px 11px);
-    transition: height .35s cubic-bezier(.4,0,.2,1);
-  }
-  /* The level gauge, on the spine. A full-width rule at the fill height read
-     as a strikethrough whenever it landed on the meta row; moving the precise
-     reading to the left edge keeps it exact and off the text. The wash above
-     carries the volume, this carries the number. */
-  .envelope::after {
-    content: ""; position: absolute; left: 0; bottom: 0; width: 3px; z-index: -1;
-    height: var(--ev-fill, 0%);
-    background: var(--ev-line, transparent);
-    transition: height .35s cubic-bezier(.4,0,.2,1);
-  }
-  @media (prefers-reduced-motion: reduce) { .envelope::after { transition: none; } }
-  .envelope { --ev-wash: color-mix(in srgb, var(--accent) 9%, transparent);
-              --ev-line: color-mix(in srgb, var(--accent) 55%, transparent); }
-  /* Overspent: past empty, so the whole face carries the stamp red. */
-  .envelope[data-state="over"]::before,
-  .envelope[data-state="over"]::after { height: 100%; }
-  .envelope[data-state="over"] { --tint-ink: color-mix(in srgb, var(--bad) 16%, transparent);
-    --ev-wash: color-mix(in srgb, var(--bad) 10%, transparent);
-    --ev-line: color-mix(in srgb, var(--bad) 60%, transparent); }
-  .envelope[data-state="low"] { --tint-ink: color-mix(in srgb, var(--warn) 13%, transparent);
-    --ev-wash: color-mix(in srgb, var(--warn) 8%, transparent);
-    --ev-line: color-mix(in srgb, var(--warn) 65%, transparent); }
+     Until 2026-09-08 the card filled bodily with a printed security tint
+     (hatching whose height was balance / budget). It looked like the object
+     but it read as texture: the level was hard to see, the hatch competed
+     with the figures, and it answered "how full is the envelope" when the
+     question an envelope budgeter asks mid-month is "how is the month going".
+     The card now carries a pace bar (.ev-bar): this month's spending against
+     this month's budget, with a tick at how far through the month we are.
+     Spending ahead of the calendar turns the bar ochre; past the budget, red.
+     A 3px spine on the left keeps the old at-a-glance state: red when the
+     balance is negative, ochre when it is under a quarter of the budget. The
+     colours stay in CSS via data attributes — no hex reaches JS.           */
+  /* overflow: visible overrides the card's scroll-shadow overflow:auto — the
+     "⋯" menu drops below the card edge and must not be clipped. */
+  .envelope { padding: 14px; position: relative; border-left: 3px solid transparent; overflow: visible; }
+  .envelope[data-state="over"] { border-left-color: var(--bad); }
+  .envelope[data-state="low"]  { border-left-color: var(--warn); }
   .envelope .ev-head { display: flex; justify-content: space-between; align-items: baseline;
     margin-bottom: 6px; gap: 10px; }
   .envelope .ev-name { font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
@@ -335,22 +324,42 @@
   .envelope .ev-meta { display: flex; justify-content: space-between; font-size: 11px;
     color: var(--text-dim); font-family: var(--font-mono); letter-spacing: .04em;
     margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+  /* The pace bar. Track = this month's budget; fill = what is spent of it;
+     tick = today's position in the month. Fill ahead of the tick means the
+     month is being spent faster than the calendar. */
+  .envelope .ev-bar { position: relative; height: 6px; border-radius: 3px; margin-top: 10px;
+    background: var(--bg-3); }
+  .envelope .ev-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px;
+    background: var(--accent); transition: width .35s cubic-bezier(.4,0,.2,1); }
+  .envelope .ev-bar[data-pace="ahead"] .ev-bar-fill { background: var(--warn); }
+  .envelope .ev-bar[data-pace="over"]  .ev-bar-fill { background: var(--bad); }
+  .envelope .ev-bar-tick { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
+    background: var(--text-dim); border-radius: 1px; }
+  @media (prefers-reduced-motion: reduce) { .envelope .ev-bar-fill { transition: none; } }
   /* This month's spending against the budget — the figure an envelope
      budgeter checks most, and the one the balance alone doesn't tell you. */
   .envelope .ev-month { display: flex; justify-content: space-between; font-size: 11px;
     color: var(--text-dim); font-family: var(--font-mono); letter-spacing: .04em; margin-top: 4px; }
   .envelope .ev-month .over { color: var(--bad); }
-  /* Five equal buttons per card read as clutter. The three money actions are
-     what you came for; Edit and delete step back until hover/focus. They stay
-     fully keyboard-reachable and never drop below AA contrast. */
+  /* Three money actions you came for, then a "⋯" menu for the rare ones
+     (Edit, Archive, Delete). Six buttons per card read as clutter, and the
+     dimmed ghost buttons they replaced were near-invisible in the light
+     theme; on a phone the delete button wrapped onto its own line. */
   .envelope .ev-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
-  .envelope .ev-actions .btn.ghost,
-  .envelope .ev-actions .btn.danger { opacity: .55; transition: opacity .15s; }
-  .envelope:hover .ev-actions .btn.ghost,
-  .envelope:hover .ev-actions .btn.danger,
-  .envelope .ev-actions .btn:focus-visible { opacity: 1; }
-  .envelope .ev-actions .btn.danger { margin-left: auto; }
-  @media (prefers-reduced-motion: reduce) { .envelope::before { transition: none; } }
+  .ev-more { position: relative; margin-left: auto; }
+  .ev-more > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center;
+    justify-content: center; min-width: 28px; font-size: 16px; line-height: 1; letter-spacing: .1em; }
+  .ev-more > summary::-webkit-details-marker { display: none; }
+  .ev-more[open] > summary { color: var(--text); background: var(--bg-3); }
+  .ev-more .menu { position: absolute; right: 0; top: calc(100% + 4px); min-width: 150px; z-index: 20;
+    background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .menu-item { display: block; width: 100%; text-align: left; background: none; border: none;
+    color: var(--text); padding: 7px 10px; border-radius: 4px; font: inherit; font-size: 13px; cursor: pointer; }
+  .menu-item:hover, .menu-item:focus-visible { background: var(--bg-3); }
+  .menu-item.danger { color: var(--bad); }
+  /* An open menu must paint over the neighbouring cards. */
+  .envelope:has(.ev-more[open]) { z-index: 5; }
 
   /* Modal */
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100;
@@ -2410,6 +2419,23 @@ function forecastAccountBalances(accountIds, days, opts) {
 }
 
 // Lowest point of a forecast's spendable line, with the date it falls on.
+// Tone of a projected low point, for the dashboard tiles (decision #44):
+// 'bad' below zero, 'warn' under the user's floor (settings.forecastWarnBelow,
+// unset = no floor), '' otherwise. A healthy low should look healthy.
+function lowTone(value) {
+  if (value === null || value === undefined || !isFinite(value)) return '';
+  if (value < 0) return 'bad';
+  const floor = data?.settings?.forecastWarnBelow;
+  if (typeof floor === 'number' && isFinite(floor) && value < floor) return 'warn';
+  return '';
+}
+function lowToneNote(value) {
+  const t = lowTone(value);
+  if (t === 'bad') return '⚠ goes below zero';
+  if (t === 'warn') return `⚠ under your ${fmt(data.settings.forecastWarnBelow)} floor`;
+  return '';
+}
+
 function spendableLow(fc) {
   let min = Infinity, idx = 0;
   for (let i = 0; i < fc.spendable.length; i++) {
@@ -2828,18 +2854,20 @@ function renderDashboard() {
         // spendable low tucked beneath when both lines are visible).
         if (dashFc.primaryIsSpendable) {
           return `
-            <div class="dash-fc-cell" style="border-color:var(--warn);">
+            <div class="dash-fc-cell ${lowTone(dashFc.spendMin) ? 'tone-' + lowTone(dashFc.spendMin) : ''}">
               <div class="dash-fc-label">Lowest spendable in period <span class="help-tip" tabindex="0" title="The lowest your SPENDABLE cash dips to in the horizon — total of your accounts minus the envelope balances they hold (Available-to-Budget; an envelope backed by an account outside the forecast is left out). Funding envelopes pulls money into buckets, which reduces spendable but leaves your account totals unchanged. Projected envelope spending is paid out of that envelope's own balance first and only reduces spendable once the envelope runs dry. Due-but-unapplied recurrings are folded in, so this is the realistic worst case.">?</span></div>
-              <div class="dash-fc-value ${dashFc.spendMin < 0 ? 'neg' : ''}" style="color:var(--warn);">${fmt(dashFc.spendMin)}</div>
+              <div class="dash-fc-value">${fmt(dashFc.spendMin)}</div>
               <div class="dash-fc-delta" style="color:var(--text-dim);">on ${fmtDate(dashFc.spendMinDate)}</div>
+              ${lowToneNote(dashFc.spendMin) ? `<div class="dash-fc-note">${lowToneNote(dashFc.spendMin)}</div>` : ''}
               <div class="dash-fc-spend" style="font-style:italic;color:var(--text-dim);">if you fund nothing · Fund the month shows the effect of a proposal</div>
             </div>`;
         }
         return `
-          <div class="dash-fc-cell" style="border-color:var(--bad);">
+          <div class="dash-fc-cell ${lowTone(dashFc.totalMin) ? 'tone-' + lowTone(dashFc.totalMin) : ''}">
             <div class="dash-fc-label">Lowest total in period <span class="help-tip" tabindex="0" title="The lowest your TOTAL account balance dips to in the horizon — sum of selected accounts, ignoring envelope allocations. Note: funding envelopes does NOT change this number (it just moves money into virtual buckets). For "how much is safe to fund?" look at the Spendable line.">?</span></div>
-            <div class="dash-fc-value ${dashFc.totalMin < 0 ? 'neg' : ''}">${fmt(dashFc.totalMin)}</div>
+            <div class="dash-fc-value">${fmt(dashFc.totalMin)}</div>
             <div class="dash-fc-delta" style="color:var(--text-dim);">on ${fmtDate(dashFc.totalMinDate)}</div>
+            ${lowToneNote(dashFc.totalMin) ? `<div class="dash-fc-note">${lowToneNote(dashFc.totalMin)}</div>` : ''}
             ${dashFc.showSpendLine ? `
               <div class="dash-fc-spend">
                 Lowest spendable <strong>${fmt(dashFc.spendMin)}</strong>
@@ -3625,10 +3653,27 @@ function envelopeCard(e, bal, spent) {
   const isReserve = !!e.isReserve;
   const isPinned = !!e.pinned;
   const pct = budget ? Math.max(0, Math.min(100, (bal / budget) * 100)) : 0;
-  // The fill level and the state drive the printed tint; the colours for each
-  // state live in CSS (.envelope[data-state]) so no hex ever reaches JS.
+  // The state drives the card's spine colour; the colours live in CSS
+  // (.envelope[data-state]) so no hex ever reaches JS.
   const state = bal < 0 ? "over" : (e.isReserve || pct >= 25) ? "ok" : "low";
-  return `<div class="card envelope" data-state="${state}" style="--ev-fill:${pct.toFixed(1)}%;">
+  // Pace bar: this month's spending against this month's budget, with a tick
+  // at how far through the month we are. "ahead" = spending is running ahead
+  // of the calendar; "over" = past the budget. Reserve and unbudgeted
+  // envelopes have no month to pace, so they get no bar.
+  let bar = '';
+  if (!e.isReserve && monthly > 0) {
+    const now = new Date();
+    const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const monthPct = (now.getDate() / dim) * 100;
+    const spentPct = Math.min(100, ((spent || 0) / monthly) * 100);
+    const pace = spentPct >= 100 ? 'over' : spentPct > monthPct + 0.5 ? 'ahead' : 'ok';
+    const label = `${Math.round(spentPct)}% of this month's budget spent, ${Math.round(monthPct)}% of the month gone`;
+    bar = `<div class="ev-bar" data-pace="${pace}" role="img" aria-label="${label}" title="${label}">
+      <span class="ev-bar-fill" style="width:${spentPct.toFixed(1)}%"></span>
+      <span class="ev-bar-tick" style="left:${monthPct.toFixed(1)}%"></span>
+    </div>`;
+  }
+  return `<div class="card envelope" data-state="${state}">
     <div class="ev-head">
       <div class="ev-name">${isPinned ? '<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">📌</span>' : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — never funded by Fund the month; receives close-out sweeps">reserve</span>' : ''}</div>
       <div class="ev-bal ${bal<0?'neg':''}">${fmt(bal)}</div>
@@ -3639,14 +3684,20 @@ function envelopeCard(e, bal, spent) {
         : `<span>${pct.toFixed(0)}% of ${isAnnual ? 'annual' : 'monthly'}</span>
       <span>${fmt(budget)} / ${isAnnual ? 'yr' : 'mo'}</span>`}
     </div>
+    ${bar}
     ${monthLine}
     <div class="ev-actions">
       <button class="btn sm" data-spend="${e.id}">Spend</button>
       <button class="btn sm" data-fund="${e.id}">Fund</button>
       <button class="btn sm" data-return="${e.id}" title="Un-earmark money from this envelope and return it to spendable cash (no account is touched)" ${bal <= 0 ? 'disabled' : ''}>↩ Return</button>
-      <button class="btn sm ghost" data-edit-env="${e.id}">Edit</button>
-      <button class="btn sm ghost" data-archive-env="${e.id}" aria-label="Archive envelope ${esc(e.name)}" title="Archive — drop it from the budget and the pickers, keep its history">Archive</button>
-      <button class="btn sm danger" data-del-env="${e.id}" aria-label="Delete envelope ${esc(e.name)}" title="Delete envelope">×</button>
+      <details class="ev-more">
+        <summary class="btn sm ghost" aria-label="More actions for ${esc(e.name)}" title="Edit, archive or delete">⋯</summary>
+        <div class="menu" role="menu">
+          <button class="menu-item" role="menuitem" data-edit-env="${e.id}">Edit…</button>
+          <button class="menu-item" role="menuitem" data-archive-env="${e.id}" title="Drop it from the budget and the pickers, keep its history">Archive</button>
+          <button class="menu-item danger" role="menuitem" data-del-env="${e.id}">Delete…</button>
+        </div>
+      </details>
     </div>
   </div>`;
 }
@@ -3668,7 +3719,23 @@ function bindEnvelopes() {
     b.onclick = () => archiveEnvelope(b.dataset.archiveEnv));
   document.querySelectorAll("[data-unarchive-env]").forEach(b =>
     b.onclick = () => unarchiveEnvelope(b.dataset.unarchiveEnv));
+  // A menu item closes its menu before acting (Edit opens a modal without a
+  // re-render, so the menu would otherwise stay open behind it).
+  document.querySelectorAll(".ev-more .menu-item").forEach(b =>
+    b.addEventListener('click', () => { b.closest('details').open = false; }, true));
   wireDrillLinks();
+}
+// One-time: an open "⋯" menu closes on a click anywhere else or on Escape.
+if (!window._evMoreWired) {
+  window._evMoreWired = true;
+  document.addEventListener('click', ev => {
+    document.querySelectorAll('.ev-more[open]').forEach(d => { if (!d.contains(ev.target)) d.open = false; });
+  });
+  document.addEventListener('keydown', ev => {
+    if (ev.key !== 'Escape') return;
+    const open = document.querySelector('.ev-more[open]');
+    if (open) { open.open = false; open.querySelector('summary').focus(); }
+  });
 }
 
 // Archive = out of the budget, not out of the books. The envelope keeps its
@@ -6058,6 +6125,57 @@ function setupForecastSplitter() {
   });
 }
 
+// Inline Chart.js plugin for the Forecast chart (decision #44): a dashed zero
+// line whenever the y-range crosses zero, and a label at the featured line's
+// low point ("Lowest €13,403 · 10 Sep"). The dot itself is a native point
+// (pointRadius array on the dataset) so hover and tooltip work on it; only
+// the text is drawn by hand. Colours come from themeColor(), never literals.
+function forecastMarksPlugin(m) {
+  return {
+    id: 'forecastMarks',
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      if (!chartArea) return;
+      const y = scales.y;
+      // Zero line, only when 0 is inside the visible range (a positive-only
+      // chart must not be stretched down to show it).
+      if (y && y.min < 0 && y.max > 0) {
+        const py = y.getPixelForValue(0);
+        ctx.save();
+        ctx.strokeStyle = themeColor("--text-dim", "#8e9bad");
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py); ctx.stroke();
+        ctx.restore();
+      }
+      if (m.featuredDatasetIdx < 0 || m.lowIdx < 0) return;
+      const meta = chart.getDatasetMeta(m.featuredDatasetIdx);
+      if (!meta || meta.hidden) return;
+      const pt = meta.data[m.lowIdx];
+      if (!pt) return;
+      const label = `Lowest ${fmt(m.lowValue)} · ${fmtDate(m.lowDate)}`;
+      ctx.save();
+      ctx.font = `600 11px ${getComputedStyle(document.body).fontFamily}`;
+      const w = ctx.measureText(label).width + 12, h = 20;
+      // Above the point when it sits in the lower half of the plot, else below;
+      // clamped so the box never leaves the plot area.
+      let bx = Math.min(Math.max(pt.x - w / 2, chartArea.left + 2), chartArea.right - w - 2);
+      let by = pt.y > (chartArea.top + chartArea.bottom) / 2 ? pt.y - h - 10 : pt.y + 10;
+      by = Math.min(Math.max(by, chartArea.top + 2), chartArea.bottom - h - 2);
+      ctx.fillStyle = themeColor("--bg-3", "#1e2836");
+      ctx.strokeStyle = themeColor("--border", "#2c3746");
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(bx, by, w, h, 5); else ctx.rect(bx, by, w, h);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = themeColor("--text", "#e8edf4");
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, bx + 6, by + h / 2);
+      ctx.restore();
+    }
+  };
+}
+
 function drawForecast() {
   const { dates, series, total, envelopeTotal, spendable, allowanceInfo, excludedEnvelopes } = forecastAccountBalances(
     forecastState.accountIds, forecastState.days,
@@ -6086,33 +6204,63 @@ function drawForecast() {
     fill: false,
     pointRadius: 0
   })) : [];
+  // The featured line — the one whose low point gets marked, and whose area
+  // is shaded (only when it is the sole line; several shaded areas would
+  // muddle). Spendable wins whenever it is drawn, because "lowest spendable"
+  // is the figure the dashboard leads with.
+  const showSpendLine = (forecastState.showSpendable || spendableImplied) && liveAccountIds.length > 0;
+  const featured = showSpendLine ? 'spendable' : (showTotalLine ? 'total' : null);
+  const minIdx = arr => { let m = Infinity, k = 0; for (let i = 0; i < arr.length; i++) if (arr[i] < m) { m = arr[i]; k = i; } return k; };
+  const lowIdx = featured === 'spendable' ? minIdx(spendable) : featured === 'total' ? minIdx(total) : -1;
+  const dotAt = (n, i) => Array.from({ length: n }, (_, k) => k === i ? 4 : 0);
+  const withAlpha = (hex, a) => /^#[0-9a-f]{6}$/i.test(hex) ? hex + a : hex;
   if (showTotalLine) {
+    const col = totalOnly ? themeColor("--accent", "#4fc3a1") : themeColor("--chart-total", "#fff9b8");
     datasets.push({
       label: "Combined total",
       data: total,
-      borderColor: totalOnly ? themeColor("--accent", "#4fc3a1") : themeColor("--chart-total", "#fff9b8"),
+      borderColor: col,
+      backgroundColor: withAlpha(col, "22"),
       borderWidth: 2.5,
       borderDash: totalOnly ? [] : [4, 4],
       tension: 0.15,
-      fill: false,
-      pointRadius: 0
+      fill: (totalOnly && featured === 'total') ? 'origin' : false,
+      pointRadius: featured === 'total' ? dotAt(total.length, lowIdx) : 0,
+      pointBackgroundColor: col,
+      pointBorderColor: themeColor("--bg-2", "#141c29"),
+      pointBorderWidth: 2,
+      pointHoverRadius: 5
     });
   }
-  if ((forecastState.showSpendable || spendableImplied) && liveAccountIds.length > 0) {
+  if (showSpendLine) {
+    const col = themeColor("--warn", "#f0a64a");
     datasets.push({
       label: "Spendable (total − envelopes)",
       data: spendable,
-      borderColor: themeColor("--warn", "#f0a64a"),
+      borderColor: col,
+      backgroundColor: withAlpha(col, "22"),
       borderWidth: spendableImplied ? 2.5 : 2,
       // In spendable-only mode it's the sole line on the chart, so render it
       // solid rather than dotted — the dotted style only earns its keep when
       // overlaid on top of total/per-account lines to distinguish them.
       borderDash: spendableImplied ? [] : [2, 4],
       tension: 0.15,
-      fill: false,
-      pointRadius: 0
+      fill: spendableImplied ? 'origin' : false,
+      pointRadius: dotAt(spendable.length, lowIdx),
+      pointBackgroundColor: col,
+      pointBorderColor: themeColor("--bg-2", "#141c29"),
+      pointBorderWidth: 2,
+      pointHoverRadius: 5
     });
   }
+  const featuredDatasetIdx = featured ? datasets.length - 1 : -1;
+  const lowValue = featured === 'spendable' ? spendable[lowIdx] : featured === 'total' ? total[lowIdx] : null;
+
+  // Axis labels: "16 Sep" rather than a rotated ISO date; the year joins in
+  // only when the horizon crosses into another year.
+  const spansYears = dates.length > 1 && dates[0].slice(0, 4) !== dates[dates.length - 1].slice(0, 4);
+  const axisFmt = new Intl.DateTimeFormat(data?.settings?.locale || DEFAULT_LOCALE,
+    spansYears ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' });
 
   if (currentChart) currentChart.destroy();
   const ctx = document.getElementById("fcChart").getContext("2d");
@@ -6125,13 +6273,21 @@ function drawForecast() {
       scales: {
         y: { ticks: { callback: v => fmt(v).replace(/[^\d\-.,€$]/g,'') },
              grid: { color: themeColor("--chart-grid", "rgba(255,255,255,.05)") } },
-        x: { ticks: { maxTicksLimit: 12 }, grid: { color: themeColor("--chart-grid", "rgba(255,255,255,.05)") } }
+        x: { ticks: { maxTicksLimit: 12, maxRotation: 0, autoSkipPadding: 12,
+                      callback: function (v) { const iso = this.getLabelForValue(v); return iso ? axisFmt.format(parseDate(iso)) : ''; } },
+             grid: { color: themeColor("--chart-grid", "rgba(255,255,255,.05)") } }
       },
       plugins: {
         legend: { position: "bottom" },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } }
+        tooltip: { callbacks: {
+          title: items => items.length ? fmtDate(items[0].label) : '',
+          label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}`
+        } }
       }
-    }
+    },
+    plugins: [forecastMarksPlugin({
+      featuredDatasetIdx, lowIdx, lowValue, lowDate: lowIdx >= 0 ? dates[lowIdx] : null
+    })]
   });
 
   // Summary table
@@ -6602,6 +6758,11 @@ function renderSettings() {
       <input id="s_loc" value="${esc(data.settings.locale)}" style="width:120px;text-align:center;">
     </div>
     <div class="setting-row">
+      <div><div class="label">Forecast warning floor</div>
+        <div class="desc">The dashboard's "lowest in period" tile turns amber when the projected low dips under this amount, and red when it goes below zero. Leave empty for red-only.</div></div>
+      <input id="s_fcfloor" type="text" inputmode="decimal" value="${typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''}" placeholder="none" style="width:120px;text-align:right;">
+    </div>
+    <div class="setting-row">
       <div><div class="label">Theme</div></div>
       <select id="s_theme">
         <option value="auto" ${(data.settings.theme||'auto')==='auto'?'selected':''}>Auto (system)</option>
@@ -6669,6 +6830,14 @@ function renderSettings() {
 function bindSettings() {
   document.getElementById("s_curr").onchange = e => { data.settings.currency = e.target.value || "EUR"; saveDirty(); render(); };
   document.getElementById("s_loc").onchange = e => { data.settings.locale = e.target.value || DEFAULT_LOCALE; saveDirty(); render(); };
+  document.getElementById("s_fcfloor").onchange = e => {
+    const raw = e.target.value.trim();
+    if (!raw) { delete data.settings.forecastWarnBelow; saveDirty(); render(); return; }
+    const v = evalAmount(raw);
+    if (isNaN(v) || v < 0) { toast("Warning floor: enter a non-negative amount, or leave it empty", 3500, 'error'); e.target.value = typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''; return; }
+    data.settings.forecastWarnBelow = Math.round(v * 100) / 100;
+    saveDirty(); render();
+  };
   document.getElementById("s_theme").onchange = e => {
     data.settings.theme = e.target.value;   // 'auto' | 'dark' | 'light'
     applyTheme();

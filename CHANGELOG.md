@@ -5,6 +5,36 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **Envelope cards show the month's pace.** The printed-tint fill (a hatch
+  whose height was balance ÷ budget) is replaced by a small bar of this
+  month's spending against this month's budget, with a tick at how far
+  through the month we are. Ochre when spending runs ahead of the calendar,
+  red once past the budget. A coloured spine on the card's left edge keeps
+  the old warning: red for a negative balance, ochre for under a quarter of
+  the budget. No figures changed.
+- **The forecast chart marks its low point.** A dot and a "Lowest … · date"
+  label on the featured line (spendable when it is drawn, otherwise the
+  combined total), the area under a sole line is shaded, a dashed zero line
+  appears whenever the chart crosses zero, and the axis reads "16 Sep" instead
+  of a rotated ISO date (the year joins in only when the horizon crosses into
+  another year).
+- **The dashboard's "lowest in period" tile is coloured by meaning.** It used
+  to carry a red or amber border whatever the figure was. Now it is neutral
+  when the low is fine, amber with "under your … floor" when it dips under a
+  new *Forecast warning floor* in Settings (optional), and red with "goes
+  below zero" when it does.
+- **The light theme lifts off the page.** Cards are white sheets with a
+  faint shadow on a cool light-grey ground instead of a slightly lighter
+  manila on manila; inputs, buttons and tiles sit on a distinct inset tone,
+  borders are a step darker, and secondary buttons keep a visible edge on
+  hover. Ink and the darker semantic colours are unchanged.
+- **Three buttons per card, not six.** Spend, Fund and Return stay; Edit,
+  Archive and Delete move under a "⋯" menu (Escape or a click elsewhere
+  closes it). The dimmed buttons they replace were near-invisible in the
+  light theme and wrapped onto a second line on phones.
+
 ## 2026-09-08 — v0.5.0, backed envelopes and archiving
 
 - **Archive instead of delete.** Accounts and envelopes gain an Archive
