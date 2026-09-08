@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions, ideas and "how do I…"
+    url: https://github.com/mvichosfm/pocket-envelopes/discussions
+    about: Anything that is not a bug goes in Discussions.
+  - name: Security — anything that could expose financial data
+    url: https://github.com/mvichosfm/pocket-envelopes/security/advisories/new
+    about: Report privately; do not open a public issue.

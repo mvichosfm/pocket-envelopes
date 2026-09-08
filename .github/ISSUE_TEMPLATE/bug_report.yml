@@ -1,0 +1,56 @@
+name: Bug report
+description: Something is wrong, or a figure looks off.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste a real budget here** — reproduce on the demo data (`?demo=1`) or change the figures. Anything that could expose financial data goes through the Security tab instead (see `SECURITY.md`).
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: The release tag (e.g. v0.4.0), or the commit if you run from source. The Windows installer shows it in Settings → Apps.
+      placeholder: v0.4.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run it?
+      options:
+        - Windows installer
+        - launch.bat / launch.sh (source checkout)
+        - Behind tailscale serve or another reverse proxy
+        - Other (say below)
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 140 on Windows 11 / Safari on iOS 19
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Only if you run from source (`python --version`). The installer bundles its own.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: If a figure is wrong, say which screen shows it and what the right number would be. Steps to reproduce on the demo data are the most useful thing you can give.
+      placeholder: |
+        1. Open Envelopes with the demo data
+        2. Fund the month, then …
+        3. The card shows … but the Transactions tab shows …
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Browser console errors (optional)
+      description: F12 → Console. Paste anything red.
+      render: text
