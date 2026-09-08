@@ -23,6 +23,8 @@
 //        - a funded monthly allowance is charged once, not twice
 //        - backed envelopes: a full account selection forecasts exactly as before,
 //          a filtered one subtracts only the envelopes its accounts hold
+//        - archived envelopes keep their balance but carry no budget; pickers keep
+//          an archived record only while the edited entry still names it
 //        - "fund one month" assigns the budget, not the overspend gap
 //        - envelope-only adjustments are not cashflow
 //   4. sw.js compiles, never intercepts /data, and keeps the shell network-first.
@@ -141,7 +143,7 @@ function logicApi() {
     "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
     "dueRecurringOccurrences", "recurringToTx", "recurringResumeDate",
     "recurringMonthlyEquiv", "recurringMonthlyForEnvelope",
-    "envelopeBackingAccount", "envelopeCountsFor",
+    "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
   ];
@@ -319,6 +321,37 @@ if (api) {
     assert.equal(onlyMine.allowanceInfo.included.length, 0);
     assert.deepEqual(arr(onlyMine.allowanceInfo.unassigned).map((x) => x.name), ["Rent"]);
     assert.ok(Math.abs(onlyMine.total.at(-1) - 1990) < 0.005, "a forecast without the backing account sees no drain");
+  });
+
+  check("Archived envelopes keep their balance but carry no budget", () => {
+    const now = new Date();
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const daysToMonthEnd = Math.round((monthEnd - midnight) / 86400000);
+    api.setData({
+      accounts: [
+        { id: "cash", name: "Cash", openingBalance: 1000, includeInNetWorth: true },
+        { id: "old", name: "Old", openingBalance: 25, includeInNetWorth: true, archived: true },
+      ],
+      envelopes: [
+        { id: "live", name: "Live", openingBalance: 0, budgetAmount: 300, cadence: "monthly" },
+        { id: "gone", name: "Gone", openingBalance: 100, budgetAmount: 300, cadence: "monthly", archived: true },
+      ],
+      transactions: [], recurring: [],
+    });
+    assert.equal(api.envMonthlyEquiv(api.getData().envelopes[1]), 0);
+    const fc = api.forecastAccountBalances(["cash"], daysToMonthEnd, { includeAllowances: true });
+    assert.equal(fc.envelopeTotal[0], 100, "an archived envelope's balance is still earmarked");
+    assert.equal(fc.spendable[0], 900);
+    assert.deepEqual(arr(fc.allowanceInfo.included).map((x) => x.name), ["Live"], "no allowance drains from an archived envelope");
+    // The archived account keeps counting wherever balances are summed …
+    assert.equal(api.accountBalance(api.getData().accounts[1]), 25);
+    // … but it is not an "active" account, and a picker only keeps it while selected.
+    assert.deepEqual(arr(api.activeAccounts()).map((a) => a.id), ["cash"]);
+    assert.deepEqual(arr(api.activeEnvelopes()).map((e) => e.id), ["live"]);
+    assert.deepEqual(arr(api.pickerList(api.getData().accounts, "old")).map((a) => a.id), ["cash", "old"]);
+    assert.deepEqual(arr(api.pickerList(api.getData().accounts, null)).map((a) => a.id), ["cash"]);
+    assert.deepEqual(arr(api.pickerList(api.getData().envelopes, ["gone", "live"])).map((e) => e.id), ["live", "gone"]);
   });
 
   check("Fund-one-month does not silently repay overspending", () => {

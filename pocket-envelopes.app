@@ -558,6 +558,8 @@
   .checkbox-list input { margin-right: 8px; }
 
   .fc-acc-picker { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+  details.archived-list > summary { cursor: pointer; color: var(--text-dim); font-size: 13px; padding: 6px 0; }
+  details.archived-list[open] > summary { color: var(--text); }
   .fc-acc-picker summary { padding: 8px 10px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; list-style: none; user-select: none; font-size: 13px; }
   .fc-acc-picker summary::-webkit-details-marker { display: none; }
   .fc-acc-picker summary::marker { content: ""; }
@@ -1475,6 +1477,26 @@ document.getElementById("modalBg").addEventListener("keydown", e => {
 function accountById(id) { return data.accounts.find(a => a.id === id); }
 function envelopeById(id) { return data.envelopes.find(e => e.id === id); }
 
+// ARCHIVED ACCOUNTS AND ENVELOPES (decision #42). `archived: true` hides a
+// record from lists, pickers, Fund the month, close-out and the forecast's
+// default selection while every transaction that references it stays put:
+// balances, net worth and history do not move. An archived envelope also has
+// no budget (envMonthlyEquiv returns 0), which is what keeps it out of the
+// allowance projection and the monthly-budget totals. Pickers still list an
+// archived record when the entry being edited already points at it, marked
+// "(archived)", so re-saving an old transaction can't silently drop it.
+function activeAccounts() { return data.accounts.filter(a => !a.archived); }
+function activeEnvelopes() { return data.envelopes.filter(e => !e.archived); }
+// A picker's list: the active records plus whichever archived ones the
+// current selection names (`selected` = one id or an array of ids).
+function pickerList(list, selected) {
+  const keep = new Set([].concat(selected || []).filter(Boolean));
+  return list.filter(x => !x.archived || keep.has(x.id));
+}
+const pickAccounts = sel => pickerList(data.accounts, sel);
+const pickEnvelopes = sel => pickerList(data.envelopes, sel);
+const archSuffix = x => x.archived ? ' (archived)' : '';
+
 // Suggest envelope + account defaults for a payee based on history. Used by
 // editTransaction to pre-fill the form when the user types a payee they've
 // used before. Case-insensitive exact match on the trimmed payee string;
@@ -1750,6 +1772,7 @@ function envelopeBalance(env) {
 // to dashboard burn-rate totals and forecast smoothing. Monthly envelopes
 // contribute their full amount.
 function envMonthlyEquiv(e) {
+  if (e.archived) return 0;   // out of the budget: no allowance, no totals, no close-out variance
   const b = e.budgetAmount || 0;
   return e.cadence === "annual" ? b / 12 : b;
 }
@@ -2051,7 +2074,7 @@ function envelopeSpendingAccount(env, candidateAccountIds) {
   }
   for (const id of candidateAccountIds) {
     const a = accountById(id);
-    if (a && !a.isInvestment) return a;
+    if (a && !a.isInvestment && !a.archived) return a;
   }
   return null;
 }
@@ -2613,14 +2636,14 @@ function renderDashboard() {
   // added first) so a freshly logged entry tops today's block in both places.
   const recentTx = sortTxsDesc(data.transactions).slice(0, 8);
 
-  const envSummary = data.envelopes.map(e => ({
+  const envSummary = activeEnvelopes().map(e => ({
     e, bal: envelopeBalance(e)
   })).sort((a,b) => a.bal - b.bal).slice(0, 5);
 
   // Pinned accounts strip — preserves the order of data.accounts itself, so
   // drag-to-reorder on the dashboard mutates the array directly. Card is
   // hidden entirely when nothing is pinned (no empty placeholder).
-  const pinnedAccs = data.accounts.filter(x => x.pinned).map(a => ({ a, b: accountBalance(a) }));
+  const pinnedAccs = activeAccounts().filter(x => x.pinned).map(a => ({ a, b: accountBalance(a) }));
 
   // Dashboard forecast horizons (1mo, 3mo, 6mo, 12mo, 2yr).
   // Mirrors the Forecast tab so the two views agree: same account selection
@@ -2628,7 +2651,7 @@ function renderDashboard() {
   // accounts that count toward net worth when nothing is selected yet.
   const fcAccountIds = (forecastState.accountIds && forecastState.accountIds.length)
     ? forecastState.accountIds
-    : data.accounts.filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
+    : activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
   // Resolve the active forecast profile (if one is selected on the Forecast
   // tab) so the dashboard can label its forecast block with the profile name.
   const activeProfile = forecastState.selectedProfileId
@@ -3159,12 +3182,15 @@ function renderAccounts() {
   // excludes (accountBalance stops at today). Shown under the balance so a
   // future-dated entry can't make the figure look wrong next to its own list.
   const today = todayISO();
-  const accs = data.accounts.map(a => {
+  const allAccs = data.accounts.map(a => {
     let sched = 0;
     for (const tx of data.transactions) if (tx.date > today) sched += txAccountDelta(tx, a.id);
     return { a, b: accountBalance(a), sched };
   });
-  const total = accs.filter(x => x.a.includeInNetWorth !== false).reduce((s,x) => s + x.b, 0);
+  const accs = allAccs.filter(x => !x.a.archived);
+  const archived = allAccs.filter(x => x.a.archived);
+  // Archived accounts keep counting: archiving hides, it does not close.
+  const total = allAccs.filter(x => x.a.includeInNetWorth !== false).reduce((s,x) => s + x.b, 0);
   return `
   <h2>Accounts</h2>
   <div class="toolbar">
@@ -3199,12 +3225,33 @@ function renderAccounts() {
           <td class="actions">
             <button class="btn sm" data-edit="${a.id}">Edit</button>
             ${a.isInvestment ? `<button class="btn sm" data-update="${a.id}">Update value</button>` : ''}
+            <button class="btn sm ghost" data-archive="${a.id}" aria-label="Archive account ${esc(a.name)}" title="Archive — hide from lists and pickers, keep every transaction">Archive</button>
             <button class="btn sm danger" data-del="${a.id}" aria-label="Delete account ${esc(a.name)}" title="Delete account">×</button>
           </td>
         </tr>`).join('')}
       </tbody>
     </table>
   </div>
+  ${archived.length ? `
+  <details class="archived-list" style="margin-top:14px;">
+    <summary>${plural(archived.length, 'archived account')} <span class="micro" style="margin-left:6px;">— hidden from pickers and the forecast; balances still count</span></summary>
+    <div class="card" style="padding:0;margin-top:8px;">
+      <table>
+        <tbody>
+          ${archived.map(({a, b}) => `<tr>
+            <td><strong><a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a></strong> <span class="badge">archived</span></td>
+            <td>${esc(a.type || '')}</td>
+            <td class="num ${b < 0 ? 'neg' : ''}"><strong>${fmt(b)}</strong></td>
+            <td class="actions">
+              <button class="btn sm" data-unarchive="${a.id}">Unarchive</button>
+              <button class="btn sm ghost" data-edit="${a.id}">Edit</button>
+              <button class="btn sm danger" data-del="${a.id}" aria-label="Delete account ${esc(a.name)}" title="Delete account">×</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </details>` : ''}
   `;
 }
 function bindAccounts() {
@@ -3213,8 +3260,47 @@ function bindAccounts() {
   document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => deleteAccount(b.dataset.del));
   document.querySelectorAll("[data-update]").forEach(b => b.onclick = () => updateInvestmentValue(b.dataset.update));
   document.querySelectorAll("[data-pin-acc]").forEach(b => b.onclick = () => toggleAccountPin(b.dataset.pinAcc));
+  document.querySelectorAll("[data-archive]").forEach(b => b.onclick = () => archiveAccount(b.dataset.archive));
+  document.querySelectorAll("[data-unarchive]").forEach(b => b.onclick = () => unarchiveAccount(b.dataset.unarchive));
   wireDrillLinks();
   wireAccountDragReorder();
+}
+
+// Archive = hide, not close. The account's transactions stay and keep counting
+// in balances and net worth; it just leaves the lists, the pickers, the pinned
+// strip and the forecast's account selection. Refused while an ACTIVE
+// recurring entry still posts to it — that would keep generating transactions
+// into an account the user has said is retired.
+function archiveAccount(id) {
+  const a = accountById(id); if (!a) return;
+  const recs = data.recurring.filter(r => r.active !== false &&
+    (r.accountId === id || r.fromAccountId === id || r.toAccountId === id));
+  if (recs.length) {
+    alert(`Cannot archive account "${a.name}" — ${plural(recs.length, 'active recurring entry', 'active recurring entries')} still ` +
+      `${recs.length === 1 ? 'posts' : 'post'} to it (${recs.map(r => r.name).join(', ')}).\n\nDeactivate or reassign ${recs.length === 1 ? 'it' : 'them'} first.`);
+    return;
+  }
+  const bal = accountBalance(a);
+  const note = Math.abs(bal) >= 0.005
+    ? `\n\nIts balance of ${fmt(bal)} stays in your totals — archiving hides the account, it does not close it.`
+    : '';
+  if (!confirm(`Archive account "${a.name}"?${note}`)) return;
+  pushUndo(`Archive account "${a.name}"`);
+  a.archived = true;
+  a.pinned = false;
+  if (Array.isArray(forecastState.accountIds))
+    forecastState.accountIds = forecastState.accountIds.filter(x => x !== id);
+  for (const p of data.forecastProfiles)
+    if (Array.isArray(p.accountIds)) p.accountIds = p.accountIds.filter(x => x !== id);
+  saveDirty(); render();
+  toast(`Archived "${a.name}"`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+}
+function unarchiveAccount(id) {
+  const a = accountById(id); if (!a) return;
+  pushUndo(`Unarchive account "${a.name}"`);
+  delete a.archived;
+  saveDirty(); render();
+  toast(`Restored "${a.name}"`, 3000, 'success');
 }
 
 // Pin / unpin an account from the Dashboard's pinned-accounts strip. Order on
@@ -3318,7 +3404,9 @@ function deleteAccount(id) {
       `pointing at it.
 
 Delete or reassign those first (open the Transactions / ` +
-      `Recurring tabs and filter by this account), then try again.`
+      `Recurring tabs and filter by this account), then try again.
+
+If you only want it out of the way, use Archive instead — the history stays.`
     );
     return;
   }
@@ -3451,7 +3539,8 @@ function renderEnvelopes() {
   // Precompute the activity tier once per envelope — calling it inside the sort
   // comparator below re-ran an O(transactions) scan O(n log n) times.
   const spentMap = envelopeMonthSpendMap(todayISO().slice(0, 7));
-  const envs = data.envelopes.map(e => ({ e, bal: envelopeBalance(e), tier: envelopeActivityTier(e), spent: spentMap[e.id] || 0 }));
+  const envs = activeEnvelopes().map(e => ({ e, bal: envelopeBalance(e), tier: envelopeActivityTier(e), spent: spentMap[e.id] || 0 }));
+  const archivedEnvs = data.envelopes.filter(e => e.archived).map(e => ({ e, bal: envelopeBalance(e) }));
   const groups = {};
   for (const x of envs) {
     const cat = x.e.category || "Uncategorized";
@@ -3498,6 +3587,26 @@ function renderEnvelopes() {
         ${items.map(({e, bal, spent}) => envelopeCard(e, bal, spent)).join('')}
       </div>
     `;}).join('')}
+  ${archivedEnvs.length ? `
+  <details class="archived-list">
+    <summary>${plural(archivedEnvs.length, 'archived envelope')} <span class="micro" style="margin-left:6px;">— no budget, hidden from pickers and Fund the month; any balance stays earmarked</span></summary>
+    <div class="card" style="padding:0;margin-top:8px;">
+      <table>
+        <tbody>
+          ${archivedEnvs.map(({e, bal}) => `<tr>
+            <td><strong><a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a></strong> <span class="badge">archived</span>${e.category ? ` <span class="micro">${esc(e.category)}</span>` : ''}</td>
+            <td class="num ${bal < 0 ? 'neg' : ''}"><strong>${fmt(bal)}</strong></td>
+            <td class="actions">
+              <button class="btn sm" data-unarchive-env="${e.id}">Unarchive</button>
+              ${bal > 0 ? `<button class="btn sm" data-return="${e.id}" title="Un-earmark the balance back to spendable cash">↩ Return</button>` : ''}
+              <button class="btn sm ghost" data-edit-env="${e.id}">Edit</button>
+              <button class="btn sm danger" data-del-env="${e.id}" aria-label="Delete envelope ${esc(e.name)}" title="Delete envelope">×</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </details>` : ''}
   `;
 }
 function envelopeCard(e, bal, spent) {
@@ -3536,6 +3645,7 @@ function envelopeCard(e, bal, spent) {
       <button class="btn sm" data-fund="${e.id}">Fund</button>
       <button class="btn sm" data-return="${e.id}" title="Un-earmark money from this envelope and return it to spendable cash (no account is touched)" ${bal <= 0 ? 'disabled' : ''}>↩ Return</button>
       <button class="btn sm ghost" data-edit-env="${e.id}">Edit</button>
+      <button class="btn sm ghost" data-archive-env="${e.id}" aria-label="Archive envelope ${esc(e.name)}" title="Archive — drop it from the budget and the pickers, keep its history">Archive</button>
       <button class="btn sm danger" data-del-env="${e.id}" aria-label="Delete envelope ${esc(e.name)}" title="Delete envelope">×</button>
     </div>
   </div>`;
@@ -3554,7 +3664,46 @@ function bindEnvelopes() {
     b.onclick = () => quickTx("income", { envelopeId: b.dataset.fund }));
   document.querySelectorAll("[data-return]").forEach(b =>
     b.onclick = () => returnEnvelopeFunds(b.dataset.return));
+  document.querySelectorAll("[data-archive-env]").forEach(b =>
+    b.onclick = () => archiveEnvelope(b.dataset.archiveEnv));
+  document.querySelectorAll("[data-unarchive-env]").forEach(b =>
+    b.onclick = () => unarchiveEnvelope(b.dataset.unarchiveEnv));
   wireDrillLinks();
+}
+
+// Archive = out of the budget, not out of the books. The envelope keeps its
+// transactions and its balance (still earmarked — Return it first if the money
+// should go back to spendable), but it has no budget any more (envMonthlyEquiv
+// → 0), so it leaves the allowance projection, the monthly totals, Fund the
+// month, close-out and every picker. The reserve can't be archived: the flag
+// is the sweep destination. Refused while an active recurring still feeds it.
+function archiveEnvelope(id) {
+  const e = envelopeById(id); if (!e) return;
+  if (e.isReserve) { alert(`"${e.name}" is the reserve envelope. Untick "Reserve envelope" in Edit first, then archive it.`); return; }
+  const recs = data.recurring.filter(r => r.active !== false &&
+    (r.envelopeId === id || r.fromEnvelopeId === id || r.toEnvelopeId === id));
+  if (recs.length) {
+    alert(`Cannot archive envelope "${e.name}" — ${plural(recs.length, 'active recurring entry', 'active recurring entries')} still ` +
+      `${recs.length === 1 ? 'uses' : 'use'} it (${recs.map(r => r.name).join(', ')}).\n\nDeactivate or reassign ${recs.length === 1 ? 'it' : 'them'} first.`);
+    return;
+  }
+  const bal = envelopeBalance(e);
+  const note = Math.abs(bal) >= 0.005
+    ? `\n\nIts balance of ${fmt(bal)} stays earmarked in the envelope. Use ↩ Return first if that money should go back to spendable cash.`
+    : '';
+  if (!confirm(`Archive envelope "${e.name}"?${note}`)) return;
+  pushUndo(`Archive envelope "${e.name}"`);
+  e.archived = true;
+  e.pinned = false;
+  saveDirty(); render();
+  toast(`Archived "${e.name}"`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+}
+function unarchiveEnvelope(id) {
+  const e = envelopeById(id); if (!e) return;
+  pushUndo(`Unarchive envelope "${e.name}"`);
+  delete e.archived;
+  saveDirty(); render();
+  toast(`Restored "${e.name}"`, 3000, 'success');
 }
 
 function editEnvelope(id) {
@@ -3598,8 +3747,8 @@ function editEnvelope(id) {
       <label>Backed by account <span class="help-tip" tabindex="0" title="Which account holds this envelope's money. It only matters when a forecast selects some accounts and not others: a backed envelope counts against spendable cash only in forecasts that include its account, and its allowance drains from that account. Household means any account — the envelope counts in every forecast, which is how all envelopes behaved before this field existed.">?</span></label>
       <select id="f_acc">
         <option value="">Household — any account</option>
-        ${data.accounts.filter(a => !a.isInvestment).map(a =>
-          `<option value="${a.id}" ${e.accountId === a.id ? 'selected' : ''}>${esc(a.name)}${a.owner && a.owner !== 'joint' ? ` (${esc(a.owner === 'you' ? (data.settings.household?.[0] || 'You') : (data.settings.household?.[1] || 'Partner'))})` : ''}</option>`
+        ${pickAccounts(e.accountId).filter(a => !a.isInvestment).map(a =>
+          `<option value="${a.id}" ${e.accountId === a.id ? 'selected' : ''}>${esc(a.name)}${archSuffix(a)}${a.owner && a.owner !== 'joint' ? ` (${esc(a.owner === 'you' ? (data.settings.household?.[0] || 'You') : (data.settings.household?.[1] || 'Partner'))})` : ''}</option>`
         ).join('')}
       </select>
     </div>
@@ -3778,7 +3927,9 @@ function deleteEnvelope(id) {
       `pointing at it.
 
 Delete or reassign those first (open the Transactions / ` +
-      `Recurring tabs and filter by this envelope), then try again.`
+      `Recurring tabs and filter by this envelope), then try again.
+
+If you only want it out of the way, use Archive instead — the history stays.`
     );
     return;
   }
@@ -3907,7 +4058,7 @@ function refillEnvelopes() {
   // Reserve envelopes are deliberately absent from this modal: they hold money
   // that has already been budgeted once (swept out of other envelopes at
   // close-out), so proposing to fund them again would double-allocate it.
-  const fundable = data.envelopes.filter(e => !e.isReserve);
+  const fundable = data.envelopes.filter(e => !e.isReserve && !e.archived);
   if (data.envelopes.length === 0) {
     toast("No envelopes to fund yet");
     return;
@@ -3927,7 +4078,7 @@ function refillEnvelopes() {
   // back inside the horizon.
   const fcAccountIds = (forecastState.accountIds && forecastState.accountIds.length)
     ? forecastState.accountIds
-    : data.accounts.filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
+    : activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
   const fcDays = forecastState.days || 90;
   const fcOpts = { includeAllowances: forecastState.includeAllowances };
   let headroom = null;
@@ -4230,7 +4381,7 @@ function showCloseOut(forcedYM) {
   // The sweep destination. With no reserve envelope the sweep action is simply
   // absent from the dropdowns and nothing else in this modal changes.
   const reserve = reserveEnvelope();
-  const rows = data.envelopes.map(env => {
+  const rows = activeEnvelopes().map(env => {
     const s = envelopeMonthSummary(env, ym);
     const monthlyBudget = envMonthlyEquiv(env);
     const variance = s.spent - monthlyBudget; // positive = over, negative = under
@@ -4387,8 +4538,8 @@ function showCloseOut(forcedYM) {
 }
 
 function transferEnvelopes(fromId) {
-  const opts = data.envelopes.map(e =>
-    `<option value="${e.id}">${esc(e.name)} (${fmt(envelopeBalance(e))})</option>`).join('');
+  const opts = pickEnvelopes(fromId).map(e =>
+    `<option value="${e.id}">${esc(e.name)}${archSuffix(e)} (${fmt(envelopeBalance(e))})</option>`).join('');
   openModal(`
     <h2>Move funds between envelopes</h2>
     <div class="field-row">
@@ -4520,11 +4671,11 @@ function renderTransactions() {
       </select>
       <select class="filter-input" id="txAccFilter" aria-label="Filter by account">
         <option value="">All accounts</option>
-        ${data.accounts.map(a => `<option value="${a.id}" ${f.acc === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}
+        ${pickAccounts(f.acc).map(a => `<option value="${a.id}" ${f.acc === a.id ? 'selected' : ''}>${esc(a.name)}${archSuffix(a)}</option>`).join('')}
       </select>
       <select class="filter-input" id="txEnvFilter" aria-label="Filter by envelope">
         <option value="">All envelopes</option>
-        ${data.envelopes.map(e => `<option value="${e.id}" ${f.env === e.id ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}
+        ${pickEnvelopes(f.env).map(e => `<option value="${e.id}" ${f.env === e.id ? 'selected' : ''}>${esc(e.name)}${archSuffix(e)}</option>`).join('')}
       </select>
       <select class="filter-input" id="txTagFilter" aria-label="Filter by tag">
         <option value="">All tags</option>
@@ -4545,7 +4696,7 @@ function renderTransactions() {
     <label style="display:flex;gap:6px;align-items:center;">Tag
       <select id="bulkTag"><option value="">(no change)</option><option value="__clear">— remove tag —</option>${tagList().map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select></label>
     <label style="display:flex;gap:6px;align-items:center;">Envelope
-      <select id="bulkEnv"><option value="">(no change)</option><option value="__clear">— none —</option>${data.envelopes.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>
+      <select id="bulkEnv"><option value="">(no change)</option><option value="__clear">— none —</option>${activeEnvelopes().map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select></label>
     <button class="btn sm primary" id="bulkApply">Apply to selected</button>
     <button class="btn sm danger" id="bulkDelete">Delete selected</button>
     <button class="btn sm ghost" id="bulkClear">Clear selection</button>
@@ -4835,7 +4986,7 @@ function csvShowMapping(text, filename) {
     id: null, name: '', delimiter: sniffDelimiter(text), hasHeader: true,
     dateOrder: 'dmy', amountMode: 'single',
     map: { date: 0, desc: 1, amount: 2, debit: null, credit: null },
-    accountId: (data.accounts[0] || {}).id || ''
+    accountId: (activeAccounts()[0] || {}).id || ''
   };
   _csvRenderMapping(base, filename || 'CSV');
 }
@@ -4855,7 +5006,7 @@ function _csvRenderMapping(p, filename) {
     preview.push({ iso, payee: (r[p.map.desc] || '').trim(), amt });
     if (preview.length >= 3) break;
   }
-  const accOpts = data.accounts.map(a => `<option value="${a.id}" ${p.accountId === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const accOpts = pickAccounts(p.accountId).map(a => `<option value="${a.id}" ${p.accountId === a.id ? 'selected' : ''}>${esc(a.name)}${archSuffix(a)}</option>`).join('');
   openModal(`
     <h2>Import CSV${filename ? ` — ${esc(filename)}` : ''}</h2>
     ${profiles.length ? `<div class="field"><label>Saved mapping</label>
@@ -4939,7 +5090,7 @@ function csvShowReview(profile, filename) {
       tag: (sug && sug.tag && tagIndex(sug.tag) >= 0) ? sug.tag : '', dup: _csvIsDup(iso, Math.abs(amt), payee) });
   }
   if (!cands.length) { toast("No valid rows to import — check the mapping", 3500, 'error'); return; }
-  const envOpts = sel => `<option value="">— none —</option>` + data.envelopes.map(e => `<option value="${e.id}" ${sel === e.id ? 'selected' : ''}>${esc(e.name)}</option>`).join('');
+  const envOpts = sel => `<option value="">— none —</option>` + pickEnvelopes(sel).map(e => `<option value="${e.id}" ${sel === e.id ? 'selected' : ''}>${esc(e.name)}${archSuffix(e)}</option>`).join('');
   const hasTags = tagList().length > 0;   // no tags defined → no Tag column, nothing to pick
   const dupCount = cands.filter(c => c.dup).length;
   const acc = accountById(profile.accountId);
@@ -5012,10 +5163,10 @@ function txFormModal(tx, isNew, opts) {
   // check at-a-glance whether the source has the funds (esp. for transfers).
   // The em-dash separator matches our existing label/value pattern.
   const accOpts = ['<option value="">(none)</option>'].concat(
-    data.accounts.map(a => `<option value="${a.id}" ${tx.accountId===a.id?'selected':''}>${esc(a.name)} — ${fmt(accountBalance(a))}</option>`)
+    pickAccounts(tx.accountId).map(a => `<option value="${a.id}" ${tx.accountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)} — ${fmt(accountBalance(a))}</option>`)
   ).join('');
   const envOpts = ['<option value="">(none)</option>'].concat(
-    data.envelopes.map(e => `<option value="${e.id}" ${tx.envelopeId===e.id?'selected':''}>${esc(e.name)} — ${fmt(envelopeBalance(e))}</option>`)
+    pickEnvelopes(tx.envelopeId).map(e => `<option value="${e.id}" ${tx.envelopeId===e.id?'selected':''}>${esc(e.name)}${archSuffix(e)} — ${fmt(envelopeBalance(e))}</option>`)
   ).join('');
   openModal(`
     <h2>${isNew ? 'Add' : 'Edit'} transaction</h2>
@@ -5055,18 +5206,18 @@ function txFormModal(tx, isNew, opts) {
     </div>
     <div id="t_xacc" style="display:none;">
       <div class="field"><label>From account</label>
-        <select id="t_facc">${data.accounts.map(a => `<option value="${a.id}" ${tx.fromAccountId===a.id?'selected':''}>${esc(a.name)} — ${fmt(accountBalance(a))}</option>`).join('')}</select>
+        <select id="t_facc">${pickAccounts(tx.fromAccountId).map(a => `<option value="${a.id}" ${tx.fromAccountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)} — ${fmt(accountBalance(a))}</option>`).join('')}</select>
       </div>
       <div class="field"><label>To account</label>
-        <select id="t_tacc">${data.accounts.map(a => `<option value="${a.id}" ${tx.toAccountId===a.id?'selected':''}>${esc(a.name)} — ${fmt(accountBalance(a))}</option>`).join('')}</select>
+        <select id="t_tacc">${pickAccounts(tx.toAccountId).map(a => `<option value="${a.id}" ${tx.toAccountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)} — ${fmt(accountBalance(a))}</option>`).join('')}</select>
       </div>
     </div>
     <div id="t_xenv" style="display:none;">
       <div class="field"><label>From envelope</label>
-        <select id="t_fenv">${data.envelopes.map(e => `<option value="${e.id}" ${tx.fromEnvelopeId===e.id?'selected':''}>${esc(e.name)} — ${fmt(envelopeBalance(e))}</option>`).join('')}</select>
+        <select id="t_fenv">${pickEnvelopes(tx.fromEnvelopeId).map(e => `<option value="${e.id}" ${tx.fromEnvelopeId===e.id?'selected':''}>${esc(e.name)}${archSuffix(e)} — ${fmt(envelopeBalance(e))}</option>`).join('')}</select>
       </div>
       <div class="field"><label>To envelope</label>
-        <select id="t_tenv">${data.envelopes.map(e => `<option value="${e.id}" ${tx.toEnvelopeId===e.id?'selected':''}>${esc(e.name)} — ${fmt(envelopeBalance(e))}</option>`).join('')}</select>
+        <select id="t_tenv">${pickEnvelopes(tx.toEnvelopeId).map(e => `<option value="${e.id}" ${tx.toEnvelopeId===e.id?'selected':''}>${esc(e.name)}${archSuffix(e)} — ${fmt(envelopeBalance(e))}</option>`).join('')}</select>
       </div>
     </div>
 
@@ -5137,7 +5288,7 @@ function txFormModal(tx, isNew, opts) {
   // --- Split across envelopes (expense/income only). Account side stays single
   // (debited by the total); the total is allocated across envelopes via splits[]. ---
   const _envOptsHtml = sel => ['<option value="">(envelope)</option>'].concat(
-    data.envelopes.map(e => `<option value="${e.id}" ${sel === e.id ? 'selected' : ''}>${esc(e.name)} — ${fmt(envelopeBalance(e))}</option>`)).join('');
+    pickEnvelopes(sel).map(e => `<option value="${e.id}" ${sel === e.id ? 'selected' : ''}>${esc(e.name)}${archSuffix(e)} — ${fmt(envelopeBalance(e))}</option>`)).join('');
   let splitMode = !!(tx.splits && tx.splits.length);
   function _splitReadRows() {
     return [...document.querySelectorAll('#t_split_rows [data-split-row]')].map(r => ({
@@ -5428,30 +5579,30 @@ function editRecurring(id) {
       <div class="field"><label>Account</label>
         <select id="r_acc">
           <option value="">(none)</option>
-          ${data.accounts.map(a => `<option value="${a.id}" ${r.accountId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}
+          ${pickAccounts(r.accountId).map(a => `<option value="${a.id}" ${r.accountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)}</option>`).join('')}
         </select>
       </div>
       <div class="field"><label>Envelope</label>
         <select id="r_env">
           <option value="">(none)</option>
-          ${data.envelopes.map(e => `<option value="${e.id}" ${r.envelopeId===e.id?'selected':''}>${esc(e.name)}</option>`).join('')}
+          ${pickEnvelopes(r.envelopeId).map(e => `<option value="${e.id}" ${r.envelopeId===e.id?'selected':''}>${esc(e.name)}${archSuffix(e)}</option>`).join('')}
         </select>
       </div>
     </div>
     <div id="r_xacc" style="display:${r.type==='transfer-account'?'':'none'};">
       <div class="field"><label>From account</label>
-        <select id="r_facc">${data.accounts.map(a => `<option value="${a.id}" ${r.fromAccountId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select>
+        <select id="r_facc">${pickAccounts(r.fromAccountId).map(a => `<option value="${a.id}" ${r.fromAccountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)}</option>`).join('')}</select>
       </div>
       <div class="field"><label>To account</label>
-        <select id="r_tacc">${data.accounts.map(a => `<option value="${a.id}" ${r.toAccountId===a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</select>
+        <select id="r_tacc">${pickAccounts(r.toAccountId).map(a => `<option value="${a.id}" ${r.toAccountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)}</option>`).join('')}</select>
       </div>
     </div>
     <div id="r_xenv" style="display:${r.type==='transfer-envelope'?'':'none'};">
       <div class="field"><label>From envelope</label>
-        <select id="r_fenv">${data.envelopes.map(e => `<option value="${e.id}" ${r.fromEnvelopeId===e.id?'selected':''}>${esc(e.name)}</option>`).join('')}</select>
+        <select id="r_fenv">${pickEnvelopes(r.fromEnvelopeId).map(e => `<option value="${e.id}" ${r.fromEnvelopeId===e.id?'selected':''}>${esc(e.name)}${archSuffix(e)}</option>`).join('')}</select>
       </div>
       <div class="field"><label>To envelope</label>
-        <select id="r_tenv">${data.envelopes.map(e => `<option value="${e.id}" ${r.toEnvelopeId===e.id?'selected':''}>${esc(e.name)}</option>`).join('')}</select>
+        <select id="r_tenv">${pickEnvelopes(r.toEnvelopeId).map(e => `<option value="${e.id}" ${r.toEnvelopeId===e.id?'selected':''}>${esc(e.name)}${archSuffix(e)}</option>`).join('')}</select>
       </div>
     </div>
 
@@ -5603,7 +5754,7 @@ function chartLinesFromLegacy(s) {
 
 function renderForecast() {
   if (forecastState.accountIds === null) {
-    forecastState.accountIds = data.accounts.filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
+    forecastState.accountIds = activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
   }
   return `
   <h2>Forecast</h2>
@@ -5628,11 +5779,11 @@ function renderForecast() {
         <h3>Accounts to forecast</h3>
         <details class="fc-acc-picker">
           <summary>
-            <span class="fc-acc-summary">${forecastState.accountIds.length} of ${data.accounts.length} accounts selected</span>
+            <span class="fc-acc-summary">${forecastState.accountIds.length} of ${activeAccounts().length} accounts selected</span>
             <span class="fc-acc-caret">▾</span>
           </summary>
           <div class="checkbox-list">
-            ${data.accounts.map(a => `
+            ${activeAccounts().map(a => `
               <label>
                 <input type="checkbox" data-fc-acc="${a.id}" ${forecastState.accountIds.includes(a.id)?'checked':''}>
                 <span style="flex:1;">${esc(a.name)}
@@ -5690,7 +5841,7 @@ function bindForecast() {
     if (e.target.checked && !forecastState.accountIds.includes(id)) forecastState.accountIds.push(id);
     if (!e.target.checked) forecastState.accountIds = forecastState.accountIds.filter(x => x !== id);
     const sum = document.querySelector('.fc-acc-summary');
-    if (sum) sum.textContent = `${forecastState.accountIds.length} of ${data.accounts.length} accounts selected`;
+    if (sum) sum.textContent = `${forecastState.accountIds.length} of ${activeAccounts().length} accounts selected`;
     markProfileDirty();
     drawForecast();
   });
@@ -6241,7 +6392,8 @@ function budgetVsActualHTML(ym) {
     const s = envelopeMonthSummary(env, ym);
     const budget = envMonthlyEquiv(env);
     return { env, ...s, budget, variance: s.spent - budget };
-  }).sort((a, b) => b.variance - a.variance);
+  }).filter(r => !r.env.archived || Math.abs(r.spent) >= 0.005 || Math.abs(r.funded) >= 0.005)   // archived: only months it was still in use
+    .sort((a, b) => b.variance - a.variance);
   if (!rows.length) return '<p style="color:var(--text-dim);">No envelopes yet.</p>';
   const tot = rows.reduce((t, r) => ({ budget: t.budget + r.budget, spent: t.spent + r.spent, funded: t.funded + r.funded, balance: t.balance + r.balance }), { budget: 0, spent: 0, funded: 0, balance: 0 });
   const varCell = v => Math.abs(v) < 0.005 ? '<span style="color:var(--text-dim);">—</span>' : `<span class="${v > 0 ? 'neg' : 'pos'}">${v > 0 ? '+' : ''}${fmt(v)}</span>`;
@@ -6249,7 +6401,7 @@ function budgetVsActualHTML(ym) {
     <thead><tr><th>Envelope</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Funded</th><th class="num">Over / under <span class="help-tip" tabindex="0" title="Spent minus budget for the month. Positive (red) = over budget. Annual envelopes count 1/12 of their yearly target as the month's budget.">?</span></th><th class="num">Balance at month end</th></tr></thead>
     <tbody>
       ${rows.map(r => `<tr>
-        <td><a href="#" class="drill" data-tx-env="${r.env.id}" title="Show this envelope's transactions">${esc(r.env.name)}</a>${r.env.cadence === 'annual' ? ' <span class="badge">annual</span>' : ''}${r.env.isReserve ? ' <span class="badge">reserve</span>' : ''}</td>
+        <td><a href="#" class="drill" data-tx-env="${r.env.id}" title="Show this envelope's transactions">${esc(r.env.name)}</a>${r.env.cadence === 'annual' ? ' <span class="badge">annual</span>' : ''}${r.env.isReserve ? ' <span class="badge">reserve</span>' : ''}${r.env.archived ? ' <span class="badge">archived</span>' : ''}</td>
         <td class="num" style="color:var(--text-dim);">${fmt(r.budget)}</td>
         <td class="num">${fmt(r.spent)}</td>
         <td class="num" style="color:var(--text-dim);">${fmt(r.funded)}</td>
@@ -6696,6 +6848,10 @@ function renderHelp() {
 
     <details class="faq"><summary>What's the difference between rollover and reset envelopes?</summary>
     <div>At month close-out, a <strong>rollover</strong> envelope keeps its leftover balance — useful for irregular expenses like car maintenance where unspent money should stay reserved. A <strong>reset</strong> envelope's leftover returns to spendable cash at close-out — useful for "use it or lose it" categories like fun money or groceries where you don't want unspent budget to accumulate. A <strong>sweep</strong> envelope's leftover moves into the reserve envelope instead, so it stays set aside rather than going back into circulation. Annual envelopes always rollover regardless of policy.</div>
+    </details>
+
+    <details class="faq"><summary>How do I retire an account or envelope I no longer use?</summary>
+    <div><strong>Archive</strong> it (the button on the Accounts row or the envelope card). Deleting is refused while any transaction still points at the record, and that is deliberate: dropping it would orphan history or destroy it. Archiving keeps every transaction and every figure — an archived account still counts in balances and net worth, an archived envelope keeps its balance earmarked — and only takes the record out of the way: out of the lists, the pickers, the dashboard strip and the forecast's account selection. An archived envelope also has <em>no budget</em> any more, so it drops out of Fund the month, close-out, the monthly totals and the forecast's allowances; if it still holds money you want back, click <strong>↩ Return</strong> first. Archived records sit in a collapsed list at the bottom of their tab with an <strong>Unarchive</strong> button, and Reports still shows an archived envelope for any month it was in use. You cannot archive the reserve envelope, or anything an <em>active</em> recurring entry still posts to — deactivate or reassign that first. Editing an old transaction still offers its archived account or envelope, marked "(archived)", so re-saving never loses it.</div>
     </details>
 
     <details class="faq"><summary>What does "Backed by account" do?</summary>

@@ -7,6 +7,19 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Archive instead of delete.** Accounts and envelopes gain an Archive
+  button (Accounts row, envelope card). Deleting is still refused while
+  history points at the record; archiving keeps every transaction and every
+  figure and only hides the record from lists, pickers, the dashboard strip,
+  Fund the month, close-out and the forecast's account selection. An
+  archived envelope also has no budget any more, so it leaves the monthly
+  totals and the forecast's allowances **(accounting, budget totals only —
+  balances and net worth are unchanged)**; its balance stays earmarked until
+  you ↩ Return it. Archived records sit in a collapsed list at the bottom of
+  their tab with an Unarchive button; editing an old transaction still
+  offers its archived account or envelope, marked "(archived)". The reserve
+  envelope, and anything an active recurring entry still posts to, cannot
+  be archived until that is changed first. Undoable both ways.
 - **Envelopes can be backed by an account (accounting, forecast only).**
   A new *Backed by account* field in the envelope dialog names the account
   that holds an envelope's money. A forecast that selects only some accounts
