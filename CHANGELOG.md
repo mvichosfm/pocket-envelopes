@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-09 — v0.7.1, budget vs actual at a glance
 
 - **Budget vs actual reads at a glance.** Each Spent figure carries a bar
   of the budget beneath it (ochre when ahead of the calendar in the current
