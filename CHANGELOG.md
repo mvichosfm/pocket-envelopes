@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-10 — v0.9.0, review fixes: allowance netting, server guards, every amount field
 
 - **Review fixes (accounting: forecast allowance only).** A one-off
   ("once") recurring, or one whose end date has passed, no longer nets its
