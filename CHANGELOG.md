@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-09 — v0.6.1, tag limit setting, header fix, honest signing note
 
 - The README no longer claims SignPath code signing: the application was
   declined, so the installer stays unsigned and the release page's SHA-256
