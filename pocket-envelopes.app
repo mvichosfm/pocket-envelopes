@@ -52,7 +52,6 @@
     --chart-total: #d9c89e;
     /* Money and data are set in a tabular mono so decimal columns line up the
        way they would in a ledger. Body copy stays in the UI sans. */
-    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", Menlo, Consolas, monospace;
   }
   /* Light: white sheets on a cool light-grey desk. The first light theme was
      manila stock with a barely lighter sheet on it; cards had almost no
@@ -120,13 +119,37 @@
   /* Below 720px the desktop one-row layout runs out of room. Stack: title +
      status + buttons on row 1; horizontally-scrolling tabs on row 2. */
   @media (max-width: 720px) {
-    header.top { flex-wrap: wrap; padding: 8px 14px; gap: 8px; min-height: 0;
-      padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    header.top { flex-wrap: wrap; padding: 6px 14px 0; gap: 6px; min-height: 0;
+      padding-top: calc(6px + env(safe-area-inset-top, 0px));
       padding-left: calc(14px + env(safe-area-inset-left, 0px));
       padding-right: calc(14px + env(safe-area-inset-right, 0px)); }
     header.top nav.tabs { order: 99; flex-basis: 100%; }
-    header.top h1 { font-size: 15px; }
-    header.top .file-status { font-size: 11px; }
+    /* Row 1 must hold the title, the status and the three buttons on a
+       375px phone. The title takes what is left and the status label is
+       allowed to truncate; the buttons shrink to their small size. */
+    header.top h1 { font-size: 15px; flex: 1 1 auto; min-width: 0; }
+    header.top h1 span, header.top h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    header.top .file-status { font-size: 11px; min-width: 0; max-width: 40vw; }
+    header.top .file-status #fileLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    header.top > button.btn { padding: 5px 9px; font-size: 12px; min-height: 30px; }
+    header.top > button.btn.ghost { padding: 5px 6px; }
+    /* The tab strip still scrolls sideways, but without a scrollbar: the
+       row is a control, not a document. Edge fades (data-fade, kept up to
+       date by a scroll listener) say there is more on that side. */
+    nav.tabs { gap: 0; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+      margin: 0 -14px; padding: 0 14px; }
+    nav.tabs::-webkit-scrollbar { display: none; }
+    nav.tabs[data-fade="right"] { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+    nav.tabs[data-fade="left"] { mask-image: linear-gradient(to right, transparent, #000 28px); -webkit-mask-image: linear-gradient(to right, transparent, #000 28px); }
+    nav.tabs[data-fade="both"] { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+    nav.tabs button { padding: 10px 11px 9px; font-size: 13px; }
+  }
+  /* Narrow phones: the status collapses to its dot (the colour carries the
+     state; the text is in the title attribute) unless there is a conflict,
+     which must stay legible. */
+  @media (max-width: 460px) {
+    header.top .file-status:not(.conflict) #fileLabel { display: none; }
+    header.top .file-status { max-width: none; }
   }
   /* Between ~720px and ~1380px the single-row header can't fit the title +
      status + buttons + all 10 tabs, so the tab strip would clip behind a
@@ -166,6 +189,18 @@
   }
   .btn.selected { background: var(--bg-3); border-color: var(--accent); color: var(--accent); font-weight: 600; }
   .btn.selected:hover { filter: none; background: var(--bg-3); }
+  /* Icons: sized to the text they sit in, stroked in currentColor. A leading
+     icon inside a button gets a small gap before its label. */
+  .ic { width: 1.05em; height: 1.05em; vertical-align: -.18em; fill: none; stroke: currentColor;
+    stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .btn > .ic:first-child:not(:only-child) { margin-right: .4em; }
+  .btn.icon > .ic, .btn.sm > .ic:only-child { width: 1.15em; height: 1.15em; vertical-align: -.22em; }
+  .pin-btn { background: none; border: none; cursor: pointer; padding: 0 6px 0 0; color: var(--text-dim);
+    vertical-align: middle; line-height: 1; }
+  .pin-btn[aria-pressed="true"] { color: var(--accent); }
+  .pin-btn[aria-pressed="true"] .ic { fill: currentColor; }
+  .pin-btn:hover { color: var(--accent); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
   nav.tabs {
     display: flex; gap: 4px; overflow-x: auto;
@@ -209,17 +244,18 @@
   .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
   .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
 
-  /* Figures are the content here, so they get the ledger treatment: tabular
-     mono, tightened, with the scale contrast carrying the hierarchy instead
-     of colour. Tabular numerals mean a column of amounts aligns on the
-     decimal even when the digits differ. */
-  .stat { font-size: 26px; font-weight: 600; font-family: var(--font-mono);
+  /* Figures are the content here. They stay in the UI face — one type
+     family across the app (the monospace "ledger" face read as a terminal
+     next to the prose) — and get tabular numerals, so a column of amounts
+     still aligns on the decimal even when the digits differ. Weight and
+     scale carry the hierarchy, not a second typeface. */
+  .stat { font-size: 26px; font-weight: 650;
     font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
   .stat.lg { font-size: 34px; letter-spacing: -.03em; }
   .stat .currency { color: var(--text-dim); font-size: .65em; margin-left: 4px; }
   /* Eyebrow labels read like the ruled headings on a statement. */
   .stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase;
-    letter-spacing: .12em; font-family: var(--font-mono); font-weight: 500; }
+    letter-spacing: .1em; font-weight: 600; }
   .delta { font-size: 13px; margin-top: 4px; }
   .delta.up { color: var(--good); }
 
@@ -262,12 +298,11 @@
   .card { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   table th, table td { padding: 11px 10px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
-  table th { color: var(--text-dim); font-weight: 500; font-size: 11px;
-    text-transform: uppercase; letter-spacing: .12em; font-family: var(--font-mono); }
+  table th { color: var(--text-dim); font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .1em; }
   table tr:hover td { background: var(--bg-3); }
-  /* Amount columns in the ledger face, so they align on the decimal. */
-  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums;
-    font-family: var(--font-mono); letter-spacing: -.01em; }
+  /* Amount columns: tabular numerals, so they align on the decimal. */
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.actions { text-align: right; white-space: nowrap; }
   .neg { color: var(--bad); }
   .pos { color: var(--good); }
@@ -283,6 +318,26 @@
   .badge.scheduled { color: var(--warn); border-color: var(--warn); border-style: dashed; }
   tr.tx-future td { color: var(--text-dim); }
   tr.tx-future td.num { opacity: .7; }
+  /* Transactions tab: one heading row per day, a colour dot for the type
+     (the word is there for screen readers and in the tooltip), and — where
+     the table fits without sideways scrolling — a header that stays put
+     under the app header while the list scrolls. */
+  tr.tx-day td { background: var(--bg-3); color: var(--text-dim); font-size: 12px; padding: 6px 10px;
+    border-bottom: 1px solid var(--border); }
+  tr.tx-day td strong { color: var(--text); font-weight: 600; }
+  tr.tx-day:hover td { background: var(--bg-3); }
+  .tx-type { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle;
+    background: var(--text-dim); position: relative; }
+  .tx-type.expense { background: var(--bad); }
+  .tx-type.income { background: var(--good); }
+  .tx-type.transfer-account { background: var(--accent); }
+  .tx-type.transfer-envelope { background: var(--accent); }
+  .tx-type.transfer-envelope::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--bg-2); }
+  @media (min-width: 900px) {
+    .tx-card { overflow: visible; }
+    .tx-table thead th { position: sticky; top: var(--header-h, 48px); background: var(--bg-2); z-index: 3;
+      box-shadow: 0 1px 0 var(--border); }
+  }
   /* Drill-through links: an account or envelope name that opens the
      Transactions tab pre-filtered. Looks like text until hovered. */
   a.drill { color: inherit; text-decoration: none; border-bottom: 1px dotted transparent; }
@@ -322,10 +377,10 @@
   .envelope .ev-head { display: flex; justify-content: space-between; align-items: baseline;
     margin-bottom: 6px; gap: 10px; }
   .envelope .ev-name { font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
-  .envelope .ev-bal { font-size: 19px; font-family: var(--font-mono);
+  .envelope .ev-bal { font-size: 19px; font-weight: 650;
     font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
   .envelope .ev-meta { display: flex; justify-content: space-between; font-size: 11px;
-    color: var(--text-dim); font-family: var(--font-mono); letter-spacing: .04em;
+    color: var(--text-dim); font-variant-numeric: tabular-nums;
     margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
   /* The pace bar. Track = this month's budget; fill = what is spent of it;
      tick = today's position in the month. Fill ahead of the tick means the
@@ -342,7 +397,7 @@
   /* This month's spending against the budget — the figure an envelope
      budgeter checks most, and the one the balance alone doesn't tell you. */
   .envelope .ev-month { display: flex; justify-content: space-between; font-size: 11px;
-    color: var(--text-dim); font-family: var(--font-mono); letter-spacing: .04em; margin-top: 4px; }
+    color: var(--text-dim); font-variant-numeric: tabular-nums; margin-top: 4px; }
   .envelope .ev-month .over { color: var(--bad); }
   /* Three money actions you came for, then a "⋯" menu for the rare ones
      (Edit, Archive, Delete). Six buttons per card read as clutter, and the
@@ -411,8 +466,7 @@
     .co-table td { border: none; padding: 3px 0; display: flex; gap: 10px;
       justify-content: space-between; align-items: baseline; }
     .co-table td::before { content: attr(data-label); color: var(--text-dim);
-      font-size: 11px; text-transform: uppercase; letter-spacing: .12em;
-      font-family: var(--font-mono); }
+      font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600; }
     .co-table td.co-name, .co-table td.co-action { grid-column: 1 / -1; }
     /* Block, not flex: the name and its badge must read as one line, and
        space-between would fling the badge to the far edge. */
@@ -630,6 +684,28 @@
 </style>
 </head>
 <body>
+<!-- Inline icon sprite (decision #46). One 16px grid, stroke = currentColor,
+     so every icon takes the colour of the text it sits in and works in both
+     themes. Use via icon('name') in JS; never inline emoji or text glyphs
+     for controls. -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-pin" viewBox="0 0 16 16"><path d="M9.5 2.5l4 4-1.8.6-2.4 2.4.2 2.8L8 11l-3.5 3.5M8 11L5 8l-1.3-.5 2.4-2.4L6.7 3.3z"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 16 16"><circle cx="6" cy="4" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="4" r="1.1" fill="currentColor" stroke="none"/><circle cx="6" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="6" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="12" r="1.1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
+  <symbol id="i-return" viewBox="0 0 16 16"><path d="M6 4L2.5 7.5 6 11M2.5 7.5H10a3.5 3.5 0 0 1 0 7H8"/></symbol>
+  <symbol id="i-skip" viewBox="0 0 16 16"><path d="M3 3.5v9l7-4.5zM12.5 3.5v9"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 16 16"><path d="M2.5 5.5h11l-3-3M13.5 10.5h-11l3 3"/></symbol>
+  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M2.5 13.5h11"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11A5.5 5.5 0 0 0 8 2.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 16 16"><path d="M4 6.5l4 4 4-4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 3v10l8-5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5.5 3v10M10.5 3v10"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+</svg>
 <header class="top">
   <h1>💰 Pocket Envelopes</h1>
   <nav class="tabs" id="tabs">
@@ -649,7 +725,7 @@
   </div>
   <button class="btn" id="btnReload" title="Reload the latest version from the server">Reload</button>
   <button class="btn" id="btnSave">Save</button>
-  <button class="btn ghost" id="btnTheme" title="Toggle theme" aria-label="Toggle theme">🌗</button>
+  <button class="btn ghost" id="btnTheme" title="Toggle theme" aria-label="Toggle theme"><svg class="ic" aria-hidden="true"><use href="#i-theme"/></svg></button>
 </header>
 
 <main id="main"></main>
@@ -1192,10 +1268,11 @@ function updateFileStatus(name, saved) {
   if (typeof saved === "string") setStatus(saved);
   else setStatus(saved ? "saved" : "unsaved");
   const el = document.getElementById("fileStatus");
+  // The title always carries the label: narrow phones show only the dot.
   if (saved === "conflict") {
     el.title = 'Another device saved a newer version. Auto-save is paused — reload, or overwrite the server from the dialog.';
   } else if (typeof saved === "string") {
-    el.title = '';
+    el.title = name;
   } else {
     el.title = saved ? 'Saved to ' + name + ' on the server' : 'Unsaved changes — auto-saving to ' + name;
   }
@@ -1716,6 +1793,11 @@ function evalAmount(s) {
 
 // "1 cat" / "2 cats", with an explicit irregular plural where needed
 // (e.g. plural(n, 'entry', 'entries')). Centralises the `n === 1 ? '' : 's'` idiom.
+// Inline SVG icon from the sprite in <body>. Decorative by default (the
+// surrounding button carries the label); pass a label for a standalone icon.
+function icon(name, label) {
+  return `<svg class="ic" ${label ? `role="img" aria-label="${esc(label)}"` : 'aria-hidden="true"'}><use href="#i-${name}"/></svg>`;
+}
 function plural(n, one, many) {
   return `${n} ${n === 1 ? one : (many || one + 's')}`;
 }
@@ -2515,7 +2597,14 @@ function render() {
     // Convey the current tab programmatically, not just by colour/underline.
     if (on) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
+    // On a phone the strip scrolls: bring the active tab into view (a
+    // drill-through or URL param can land on a tab that was off-screen).
+    if (on && typeof b.scrollIntoView === 'function') {
+      const nav = b.parentElement;
+      if (nav && nav.scrollWidth > nav.clientWidth + 1) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
   });
+  updateTabFades();
   switch (activeView) {
     case "dashboard": main.innerHTML = renderDashboard(); bindDashboard(); break;
     case "accounts": main.innerHTML = renderAccounts(); bindAccounts(); break;
@@ -2930,7 +3019,7 @@ function renderDashboard() {
         <tbody id="pinnedAccTbody">${pinnedAccs.map(({a, b}) => `
         <tr class="drag-row" draggable="true" data-acc-id="${a.id}">
           <td>
-            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
+            <span class="drag-handle" title="Drag to reorder">${icon('grip')}</span>
             <a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a>
             ${a.type ? `<span style="color:var(--text-dim);font-size:.85em;margin-left:6px;">${esc(a.type)}</span>` : ''}
           </td>
@@ -3255,8 +3344,8 @@ function renderAccounts() {
           No accounts yet. Add your bank accounts, credit cards, cash and investment accounts.</td></tr>` :
           accs.map(({a, b, sched}) => `<tr class="drag-row" draggable="true" data-acc-id="${a.id}">
           <td>
-            <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
-            <button class="pin-btn" data-pin-acc="${a.id}" title="${a.pinned ? 'Unpin from dashboard' : 'Pin to dashboard'}" aria-label="${a.pinned ? 'Unpin ' + esc(a.name) + ' from dashboard' : 'Pin ' + esc(a.name) + ' to dashboard'}" aria-pressed="${a.pinned ? 'true' : 'false'}" style="background:none;border:none;cursor:pointer;font-size:14px;padding:0 6px 0 0;opacity:${a.pinned ? '1' : '0.5'};vertical-align:middle;">📌</button>
+            <span class="drag-handle" title="Drag to reorder">${icon('grip')}</span>
+            <button class="pin-btn" data-pin-acc="${a.id}" title="${a.pinned ? 'Unpin from dashboard' : 'Pin to dashboard'}" aria-label="${a.pinned ? 'Unpin ' + esc(a.name) + ' from dashboard' : 'Pin ' + esc(a.name) + ' to dashboard'}" aria-pressed="${a.pinned ? 'true' : 'false'}">${icon('pin')}</button>
             <strong style="font-size:14px;"><a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a></strong>
             ${a.isInvestment ? '<span class="badge invest">Investment</span>' : ''}
             ${a.includeInNetWorth === false ? '<span class="badge">Excluded</span>' : ''}
@@ -3269,7 +3358,7 @@ function renderAccounts() {
             <button class="btn sm" data-edit="${a.id}">Edit</button>
             ${a.isInvestment ? `<button class="btn sm" data-update="${a.id}">Update value</button>` : ''}
             <button class="btn sm ghost" data-archive="${a.id}" aria-label="Archive account ${esc(a.name)}" title="Archive — hide from lists and pickers, keep every transaction">Archive</button>
-            <button class="btn sm danger" data-del="${a.id}" aria-label="Delete account ${esc(a.name)}" title="Delete account">×</button>
+            <button class="btn sm danger" data-del="${a.id}" aria-label="Delete account ${esc(a.name)}" title="Delete account">${icon('x')}</button>
           </td>
         </tr>`).join('')}
       </tbody>
@@ -3288,7 +3377,7 @@ function renderAccounts() {
             <td class="actions">
               <button class="btn sm" data-unarchive="${a.id}">Unarchive</button>
               <button class="btn sm ghost" data-edit="${a.id}">Edit</button>
-              <button class="btn sm danger" data-del="${a.id}" aria-label="Delete account ${esc(a.name)}" title="Delete account">×</button>
+              <button class="btn sm danger" data-del="${a.id}" aria-label="Delete account ${esc(a.name)}" title="Delete account">${icon('x')}</button>
             </td>
           </tr>`).join('')}
         </tbody>
@@ -3605,8 +3694,8 @@ function renderEnvelopes() {
   <h2>Envelopes</h2>
   <div class="toolbar">
     <button class="btn primary" id="addEnv">+ Add envelope</button>
-    <button class="btn" id="refillBtn" title="Assign one month's budget to each envelope (or top up to full target)">⟳ Fund the month</button>
-    <button class="btn" id="transferBtn">⇄ Move funds</button>
+    <button class="btn" id="refillBtn" title="Assign one month's budget to each envelope (or top up to full target)">${icon('refresh')}Fund the month</button>
+    <button class="btn" id="transferBtn">${icon('swap')}Move funds</button>
     <div class="spacer"></div>
     <div class="toolbar-stat">
       <span class="stat-label">Balance / monthly budget</span>
@@ -3641,9 +3730,9 @@ function renderEnvelopes() {
             <td class="num ${bal < 0 ? 'neg' : ''}"><strong>${fmt(bal)}</strong></td>
             <td class="actions">
               <button class="btn sm" data-unarchive-env="${e.id}">Unarchive</button>
-              ${bal > 0 ? `<button class="btn sm" data-return="${e.id}" title="Un-earmark the balance back to spendable cash">↩ Return</button>` : ''}
+              ${bal > 0 ? `<button class="btn sm" data-return="${e.id}" title="Un-earmark the balance back to spendable cash">${icon('return')}Return</button>` : ''}
               <button class="btn sm ghost" data-edit-env="${e.id}">Edit</button>
-              <button class="btn sm danger" data-del-env="${e.id}" aria-label="Delete envelope ${esc(e.name)}" title="Delete envelope">×</button>
+              <button class="btn sm danger" data-del-env="${e.id}" aria-label="Delete envelope ${esc(e.name)}" title="Delete envelope">${icon('x')}</button>
             </td>
           </tr>`).join('')}
         </tbody>
@@ -3690,7 +3779,7 @@ function envelopeCard(e, bal, spent) {
   }
   return `<div class="card envelope" data-state="${state}">
     <div class="ev-head">
-      <div class="ev-name">${isPinned ? '<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">📌</span>' : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — never funded by Fund the month; receives close-out sweeps">reserve</span>' : ''}</div>
+      <div class="ev-name">${isPinned ? `<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">${icon('pin', 'Pinned')}</span>` : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — never funded by Fund the month; receives close-out sweeps">reserve</span>' : ''}</div>
       <div class="ev-bal ${bal<0?'neg':''}">${fmt(bal)}</div>
     </div>
     <div class="ev-meta">
@@ -3704,9 +3793,9 @@ function envelopeCard(e, bal, spent) {
     <div class="ev-actions">
       <button class="btn sm" data-spend="${e.id}">Spend</button>
       <button class="btn sm" data-fund="${e.id}">Fund</button>
-      <button class="btn sm" data-return="${e.id}" title="Un-earmark money from this envelope and return it to spendable cash (no account is touched)" ${bal <= 0 ? 'disabled' : ''}>↩ Return</button>
+      <button class="btn sm" data-return="${e.id}" title="Un-earmark money from this envelope and return it to spendable cash (no account is touched)" ${bal <= 0 ? 'disabled' : ''}>${icon('return')}Return</button>
       <details class="ev-more">
-        <summary class="btn sm ghost" aria-label="More actions for ${esc(e.name)}" title="Edit, archive or delete">⋯</summary>
+        <summary class="btn sm ghost" aria-label="More actions for ${esc(e.name)}" title="Edit, archive or delete">${icon('more')}</summary>
         <div class="menu" role="menu">
           <button class="menu-item" role="menuitem" data-edit-env="${e.id}">Edit…</button>
           <button class="menu-item" role="menuitem" data-archive-env="${e.id}" title="Drop it from the budget and the pickers, keep its history">Archive</button>
@@ -3771,7 +3860,7 @@ function archiveEnvelope(id) {
   }
   const bal = envelopeBalance(e);
   const note = Math.abs(bal) >= 0.005
-    ? `\n\nIts balance of ${fmt(bal)} stays earmarked in the envelope. Use ↩ Return first if that money should go back to spendable cash.`
+    ? `\n\nIts balance of ${fmt(bal)} stays earmarked in the envelope. Use Return first if that money should go back to spendable cash.`
     : '';
   if (!confirm(`Archive envelope "${e.name}"?${note}`)) return;
   pushUndo(`Archive envelope "${e.name}"`);
@@ -4740,8 +4829,8 @@ function renderTransactions() {
   <h2>Transactions</h2>
   <div class="toolbar">
     <button class="btn primary" id="addTx" title="Add transaction (press 'n' anywhere)">+ Add transaction</button>
-    <button class="btn" id="addTransfer">⇄ Account transfer</button>
-    <button class="btn" id="importCsv" title="Import transactions from a bank CSV statement">⤓ Import CSV</button>
+    <button class="btn" id="addTransfer">${icon('swap')}Account transfer</button>
+    <button class="btn" id="importCsv" title="Import transactions from a bank CSV statement">${icon('download')}Import CSV</button>
     <div class="filter-group">
       <input class="filter-input" id="txFilter" placeholder="Search payee, notes, amount…" aria-label="Search transactions" style="width:200px;" value="${esc(f.q)}">
       <select class="filter-input" id="txTypeFilter" aria-label="Filter by type">
@@ -4768,7 +4857,7 @@ function renderTransactions() {
       <span style="color:var(--text-dim);">–</span>
       <input type="date" class="filter-input" id="txToFilter" aria-label="To date" title="To date" value="${esc(f.to)}">
       <button class="btn sm ghost" id="txMonthFilter" title="This calendar month">This month</button>
-      <button class="btn sm ghost" id="txClearFilter" title="Clear all filters" ${activeCount ? '' : 'disabled'}>✕ Clear</button>
+      <button class="btn sm ghost" id="txClearFilter" title="Clear all filters" ${activeCount ? '' : 'disabled'}>${icon('x')}Clear</button>
     </div>
     <div class="spacer"></div>
     <div class="tx-totals" id="txCount">${txTotalsHTML(txs)}</div>
@@ -4783,15 +4872,15 @@ function renderTransactions() {
     <button class="btn sm danger" id="bulkDelete">Delete selected</button>
     <button class="btn sm ghost" id="bulkClear">Clear selection</button>
   </div>
-  <div class="card" style="padding:0;">
-    <table>
+  <div class="card tx-card" style="padding:0;">
+    <table class="tx-table">
       <thead><tr>
         <th style="width:28px;"><input type="checkbox" id="txSelAll" aria-label="Select all shown transactions" title="Select all shown"></th>
-        <th>Date</th><th>Description</th><th>Type</th>
+        <th style="width:28px;"><span class="sr">Type</span></th><th>Description</th>
         <th>Account</th><th>Envelope</th><th>Tag</th><th class="num">Amount</th><th></th>
       </tr></thead>
       <tbody id="txBody">
-        ${txs.map(tx => txDataRow(tx)).join('')}
+        ${txRowsHTML(txs)}
       </tbody>
     </table>
   </div>
@@ -4804,24 +4893,47 @@ function txDateCell(tx) {
   const future = tx.date > todayISO();
   return `${fmtDate(tx.date)}${future ? ' <span class="badge scheduled" title="Dated after today — not yet counted in any balance">scheduled</span>' : ''}`;
 }
+// The Transactions table groups rows under one heading per day (Today /
+// Yesterday / Tomorrow, else the date with its weekday; a future day is
+// "Scheduled"), so the date column is gone from the rows. Rows arrive sorted
+// date-desc from sortTxsDesc / filterTxs, which is what makes one pass enough.
+function txDayLabel(iso) {
+  const today = todayISO();
+  const rel = daysBetween(parseDate(today), parseDate(iso));
+  const name = rel === 0 ? 'Today' : rel === -1 ? 'Yesterday' : rel === 1 ? 'Tomorrow' : '';
+  const full = new Intl.DateTimeFormat(data?.settings?.locale || DEFAULT_LOCALE,
+    { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(parseDate(iso));
+  const sched = rel > 0 ? '<span class="badge scheduled" title="Dated after today — not yet counted in any balance">scheduled</span> ' : '';
+  return `${sched}${name ? `<strong>${name}</strong> · ` : ''}${full}`;
+}
+function txRowsHTML(txs) {
+  let out = '', lastDate = null;
+  for (const tx of txs) {
+    if (tx.date !== lastDate) {
+      out += `<tr class="tx-day"><td colspan="8">${txDayLabel(tx.date)}</td></tr>`;
+      lastDate = tx.date;
+    }
+    out += txDataRow(tx);
+  }
+  return out;
+}
+const TX_TYPE_LABEL = { expense: 'Expense', income: 'Income', 'transfer-account': 'Account transfer', 'transfer-envelope': 'Envelope transfer' };
 function txDataRow(tx) {
   const { sign, acc, env, tag } = txDisplayParts(tx);
   const future = tx.date > todayISO();
+  const typeLabel = TX_TYPE_LABEL[tx.type] || tx.type;
   return `<tr data-tx="${tx.id}" class="${future ? 'tx-future' : ''}">
     <td><input type="checkbox" data-sel-tx="${tx.id}" aria-label="Select transaction" ${txSelected.has(tx.id) ? 'checked' : ''}></td>
-    <td style="white-space:nowrap;">${txDateCell(tx)}</td>
+    <td><span class="tx-type ${tx.type}" title="${typeLabel}"><span class="sr">${typeLabel}</span></span></td>
     <td>${esc(tx.payee || '')}${tx.notes ? `<br><span style="color:var(--text-dim);font-size:11px;">${esc(tx.notes)}</span>` : ''}</td>
-    <td>${(tx.type === 'transfer-account' || tx.type === 'transfer-envelope')
-      ? `<span class="badge ${tx.type}">${tx.type}</span>`
-      : `<span style="color:var(--text-dim);">${tx.type}</span>`}</td>
     <td>${acc}</td>
     <td>${env}</td>
     <td>${tag}</td>
     <td class="num ${tx.type==='expense'?'neg':(tx.type==='income'?'pos':'')}">${sign}${fmt(tx.amount)}</td>
     <td class="actions">
       <button class="btn sm" data-edit-tx="${tx.id}">Edit</button>
-      <button class="btn sm ghost" data-copy-tx="${tx.id}" title="Duplicate to today (or hover row + press 'c')" aria-label="Duplicate transaction to today">⎘</button>
-      <button class="btn sm danger" data-del-tx="${tx.id}" aria-label="Delete transaction" title="Delete transaction">×</button>
+      <button class="btn sm ghost" data-copy-tx="${tx.id}" title="Duplicate to today (or hover row + press 'c')" aria-label="Duplicate transaction to today">${icon('copy')}</button>
+      <button class="btn sm danger" data-del-tx="${tx.id}" aria-label="Delete transaction" title="Delete transaction">${icon('x')}</button>
     </td>
   </tr>`;
 }
@@ -4864,7 +4976,7 @@ function bindTransactions() {
       to: document.getElementById("txToFilter").value
     };
     const rows = filterTxs();
-    document.getElementById("txBody").innerHTML = rows.map(t => txDataRow(t)).join('');
+    document.getElementById("txBody").innerHTML = txRowsHTML(rows);
     document.getElementById("txCount").innerHTML = txTotalsHTML(rows);
     document.getElementById("txClearFilter").disabled = !Object.values(txFilter).some(Boolean);
     bindRows();
@@ -5391,7 +5503,7 @@ function txFormModal(tx, isNew, opts) {
     row.className = 'field-row'; row.dataset.splitRow = '1'; row.style.cssText = 'margin-bottom:6px;align-items:center;gap:6px;';
     row.innerHTML = `<select class="t-split-env" style="flex:1;">${_envOptsHtml(envId || '')}</select>
       <input class="t-split-amt" type="text" inputmode="decimal" value="${amt != null && amt !== '' ? amt : ''}" placeholder="amount" style="max-width:120px;text-align:right;">
-      <button type="button" class="btn icon t-split-del" title="Remove">×</button>`;
+      <button type="button" class="btn icon t-split-del" title="Remove">${icon('x')}</button>`;
     document.getElementById('t_split_rows').appendChild(row);
     row.querySelector('.t-split-del').onclick = () => { row.remove(); _splitTally(); };
     row.querySelector('.t-split-amt').addEventListener('input', _splitTally);
@@ -5527,7 +5639,7 @@ function renderRecurring() {
           <td>${(() => {
             if (!pending) return '—';
             const today = todayISO();
-            if (pending < today) return `<span class="badge due" title="Overdue — scheduled but not yet recorded. Apply via ⚡ (a plain Add-transaction doesn't clear it).">Overdue</span> ${fmtDate(pending)}`;
+            if (pending < today) return `<span class="badge due" title="Overdue — scheduled but not yet recorded. Apply with the lightning button (a plain Add-transaction doesn't clear it).">Overdue</span> ${fmtDate(pending)}`;
             if (pending === today) return `<span class="badge due" title="Due today">Today</span> ${fmtDate(pending)}`;
             return fmtDate(pending);
           })()}</td>
@@ -5535,12 +5647,12 @@ function renderRecurring() {
             <button class="btn sm" data-edit-rec="${r.id}">Edit</button>
             ${r.active===false
               ? ''
-              : `<button class="btn sm ghost" data-apply-rec="${r.id}" ${pending ? `title="Apply next instance today (scheduled ${fmtDate(pending)})" aria-label="Apply next instance of ${esc(r.name)} today"` : `disabled title="No pending or upcoming instance" aria-label="No pending instance of ${esc(r.name)} to apply"`}>⚡</button>
-                 <button class="btn sm ghost" data-skip-rec="${r.id}" ${pending ? `title="Skip the next occurrence (${fmtDate(pending)}) — it will never be offered; the one after moves up" aria-label="Skip next occurrence of ${esc(r.name)}"` : `disabled title="No pending or upcoming instance" aria-label="No pending occurrence of ${esc(r.name)} to skip"`}>⏭</button>`}
+              : `<button class="btn sm ghost" data-apply-rec="${r.id}" ${pending ? `title="Apply next instance today (scheduled ${fmtDate(pending)})" aria-label="Apply next instance of ${esc(r.name)} today"` : `disabled title="No pending or upcoming instance" aria-label="No pending instance of ${esc(r.name)} to apply"`}>${icon('bolt')}</button>
+                 <button class="btn sm ghost" data-skip-rec="${r.id}" ${pending ? `title="Skip the next occurrence (${fmtDate(pending)}) — it will never be offered; the one after moves up" aria-label="Skip next occurrence of ${esc(r.name)}"` : `disabled title="No pending or upcoming instance" aria-label="No pending occurrence of ${esc(r.name)} to skip"`}>${icon('skip')}</button>`}
             ${r.active===false
-              ? `<button class="btn sm" data-toggle-rec="${r.id}">▶ Enable</button>`
-              : `<button class="btn sm ghost" data-toggle-rec="${r.id}">⏸ Pause</button>`}
-            <button class="btn sm danger" data-del-rec="${r.id}" aria-label="Delete recurring ${esc(r.name)}" title="Delete recurring">×</button>
+              ? `<button class="btn sm" data-toggle-rec="${r.id}">${icon('play')}Enable</button>`
+              : `<button class="btn sm ghost" data-toggle-rec="${r.id}">${icon('pause')}Pause</button>`}
+            <button class="btn sm danger" data-del-rec="${r.id}" aria-label="Delete recurring ${esc(r.name)}" title="Delete recurring">${icon('x')}</button>
           </td>
         </tr>`;
           }).join('')}
@@ -5854,7 +5966,7 @@ function renderForecast() {
           <button class="btn sm" id="fcProfileSaveAs" title="Save current settings as a new profile">Save as…</button>
           <button class="btn sm" id="fcProfileUpdate" title="${forecastState.profileDirty ? 'You have unsaved changes — click to overwrite the profile' : 'Overwrite the selected profile with current settings'}" ${forecastState.selectedProfileId ? '' : 'disabled'}>Update${forecastState.profileDirty ? ' •' : ''}</button>
           <button class="btn sm" id="fcProfileSetDefault" title="${data.defaultForecastProfileId === forecastState.selectedProfileId && forecastState.selectedProfileId ? 'This profile is the session default — click to clear' : 'Set the selected profile as the default for future sessions'}" ${forecastState.selectedProfileId ? '' : 'disabled'}>${data.defaultForecastProfileId === forecastState.selectedProfileId && forecastState.selectedProfileId ? '★ Default' : 'Set default'}</button>
-          <button class="btn sm danger" id="fcProfileDelete" title="Delete the selected profile" aria-label="Delete selected forecast profile" ${forecastState.selectedProfileId ? '' : 'disabled'}>×</button>
+          <button class="btn sm danger" id="fcProfileDelete" title="Delete the selected profile" aria-label="Delete selected forecast profile" ${forecastState.selectedProfileId ? '' : 'disabled'}>${icon('x')}</button>
         </div>
       </div>
       <div>
@@ -5862,7 +5974,7 @@ function renderForecast() {
         <details class="fc-acc-picker">
           <summary>
             <span class="fc-acc-summary">${forecastState.accountIds.length} of ${activeAccounts().length} accounts selected</span>
-            <span class="fc-acc-caret">▾</span>
+            <span class="fc-acc-caret">${icon('caret')}</span>
           </summary>
           <div class="checkbox-list">
             ${activeAccounts().map(a => `
@@ -6735,7 +6847,7 @@ function renderBackupList() {
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <button class="btn" data-bak-restore="${date}">Restore</button>
         <button class="btn ghost" data-bak-download="${date}">Download</button>
-        <button class="btn ghost" data-bak-delete="${date}" aria-label="Delete backup ${date}">×</button>
+        <button class="btn ghost" data-bak-delete="${date}" aria-label="Delete backup ${date}">${icon('x')}</button>
       </div>
     </div>`;
   }).join('');
@@ -6753,7 +6865,7 @@ function renderTagList() {
         <div class="desc">${plural(u.tx, 'transaction')} · ${plural(u.rec, 'recurring entry', 'recurring entries')}</div></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
         <button class="btn" data-tag-rename="${esc(t)}">Rename</button>
-        <button class="btn ghost" data-tag-delete="${esc(t)}" aria-label="Delete tag ${esc(t)}">×</button>
+        <button class="btn ghost" data-tag-delete="${esc(t)}" aria-label="Delete tag ${esc(t)}">${icon('x')}</button>
       </div>
     </div>`;
   }).join('');
@@ -7008,11 +7120,11 @@ function renderHelp() {
       <dt>Dashboard</dt>
       <dd>Net worth, forecast horizons, upcoming entries, lowest envelopes, pinned accounts, and recent transactions.</dd>
       <dt>Accounts</dt>
-      <dd>Manage real-money accounts. Pin to dashboard with the 📌 icon, drag rows to reorder.</dd>
+      <dd>Manage real-money accounts. Pin to dashboard with the pin icon, drag rows by their grip to reorder.</dd>
       <dt>Envelopes</dt>
-      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only) and <strong>↩ Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope.</dd>
+      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only) and <strong>Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope.</dd>
       <dt>Transactions</dt>
-      <dd>Every recorded movement: expenses, income, account-to-account transfers, envelope-to-envelope transfers. Searchable and filterable by type, account, envelope and tag. An expense can be <strong>split</strong> across several envelopes, and <strong>⤓ Import CSV</strong> brings in a bank statement through a column-mapping wizard (mappings save as named profiles), with duplicate detection and a review step before anything is recorded.</dd>
+      <dd>Every recorded movement: expenses, income, account-to-account transfers, envelope-to-envelope transfers. Searchable and filterable by type, account, envelope and tag. An expense can be <strong>split</strong> across several envelopes, and <strong>Import CSV</strong> brings in a bank statement through a column-mapping wizard (mappings save as named profiles), with duplicate detection and a review step before anything is recorded.</dd>
       <dt>Recurring</dt>
       <dd>Templates for repeating entries (salary, rent, subscriptions). The app reminds you when occurrences are due rather than auto-applying them.</dd>
       <dt>Forecast</dt>
@@ -7052,7 +7164,7 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>How do I retire an account or envelope I no longer use?</summary>
-    <div><strong>Archive</strong> it (the button on the Accounts row or the envelope card). Deleting is refused while any transaction still points at the record, and that is deliberate: dropping it would orphan history or destroy it. Archiving keeps every transaction and every figure — an archived account still counts in balances and net worth, an archived envelope keeps its balance earmarked — and only takes the record out of the way: out of the lists, the pickers, the dashboard strip and the forecast's account selection. An archived envelope also has <em>no budget</em> any more, so it drops out of Fund the month, close-out, the monthly totals and the forecast's allowances; if it still holds money you want back, click <strong>↩ Return</strong> first. Archived records sit in a collapsed list at the bottom of their tab with an <strong>Unarchive</strong> button, and Reports still shows an archived envelope for any month it was in use. You cannot archive the reserve envelope, or anything an <em>active</em> recurring entry still posts to — deactivate or reassign that first. Editing an old transaction still offers its archived account or envelope, marked "(archived)", so re-saving never loses it.</div>
+    <div><strong>Archive</strong> it (the button on the Accounts row or the envelope card). Deleting is refused while any transaction still points at the record, and that is deliberate: dropping it would orphan history or destroy it. Archiving keeps every transaction and every figure — an archived account still counts in balances and net worth, an archived envelope keeps its balance earmarked — and only takes the record out of the way: out of the lists, the pickers, the dashboard strip and the forecast's account selection. An archived envelope also has <em>no budget</em> any more, so it drops out of Fund the month, close-out, the monthly totals and the forecast's allowances; if it still holds money you want back, click <strong>Return</strong> first. Archived records sit in a collapsed list at the bottom of their tab with an <strong>Unarchive</strong> button, and Reports still shows an archived envelope for any month it was in use. You cannot archive the reserve envelope, or anything an <em>active</em> recurring entry still posts to — deactivate or reassign that first. Editing an old transaction still offers its archived account or envelope, marked "(archived)", so re-saving never loses it.</div>
     </details>
 
     <details class="faq"><summary>What does "Backed by account" do?</summary>
@@ -7089,7 +7201,7 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>Fund the month vs. Fund vs. Move funds vs. Return — which do I use?</summary>
-    <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button does the same for just that envelope, mid-month, from spendable cash. <strong>Move funds</strong> shifts money from one envelope to another (no account or spendable effect). <strong>↩ Return</strong> un-earmarks money from an envelope back to spendable cash. All of these only move virtual allocations — your account totals stay the same.</div>
+    <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button does the same for just that envelope, mid-month, from spendable cash. <strong>Move funds</strong> shifts money from one envelope to another (no account or spendable effect). <strong>Return</strong> un-earmarks money from an envelope back to spendable cash. All of these only move virtual allocations — your account totals stay the same.</div>
     </details>
   </div>
   `;
@@ -7101,6 +7213,26 @@ function renderHelp() {
 document.querySelectorAll("nav.tabs button").forEach(b => {
   b.onclick = () => { activeView = b.dataset.view; render(); };
 });
+// Edge fades on the phone tab strip: data-fade = left | right | both | none,
+// from the scroll position. Cheap, so it runs on every scroll and resize.
+function updateTabFades() {
+  // The sticky table header on the Transactions tab needs the app header's
+  // current height (one row, or two with the tab strip wrapped).
+  const hdr = document.querySelector("header.top");
+  if (hdr) document.documentElement.style.setProperty("--header-h", hdr.offsetHeight + "px");
+  const nav = document.getElementById("tabs");
+  if (!nav) return;
+  const max = nav.scrollWidth - nav.clientWidth;
+  let fade = "none";
+  if (max > 1) {
+    const atStart = nav.scrollLeft <= 1, atEnd = nav.scrollLeft >= max - 1;
+    fade = atStart ? "right" : atEnd ? "left" : "both";
+  }
+  if (nav.dataset.fade !== fade) nav.dataset.fade = fade;
+}
+document.getElementById("tabs").addEventListener("scroll", updateTabFades, { passive: true });
+window.addEventListener("resize", updateTabFades);
+updateTabFades();
 // Pull the server's copy again — useful after editing on another device.
 // Refuses to discard unsaved local edits without a confirmation.
 document.getElementById("btnReload").onclick = () => {

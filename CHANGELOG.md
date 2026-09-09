@@ -5,6 +5,27 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **One typeface.** Figures, table headings and card captions no longer
+  switch to a monospace face; everything is the UI font with tabular
+  numerals, so amounts still align on the decimal without the terminal look.
+- **Transactions grouped by day.** The list gets one heading per day
+  (Today, Yesterday, Tomorrow, else the date with its weekday; future days
+  say "scheduled"), the date column goes, the type is a coloured dot (red
+  expense, green income, blue transfers; the word is in the tooltip and for
+  screen readers), and on screens wide enough for the table to fit, the
+  column header stays put under the app header while the list scrolls.
+- **One icon set.** The pushpin and moon emoji, the text drag handle and the
+  arrow, bolt and cross glyphs are replaced by a small inline SVG set that
+  takes the colour of its text in both themes.
+- **A one-row phone header.** Below 720px the title, status and the
+  Reload / Save / theme buttons share one row (the buttons shrink, the
+  status truncates, and under 460px it collapses to its coloured dot unless
+  there is a conflict), and the tab strip scrolls without a scrollbar, with
+  edge fades that say there is more on that side. The active tab is
+  scrolled into view when a drill-through or a link lands on it.
+
 ## 2026-09-09 — v0.6.1, tag limit setting, header fix, honest signing note
 
 - The README no longer claims SignPath code signing: the application was
