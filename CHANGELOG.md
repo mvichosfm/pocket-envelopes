@@ -5,6 +5,33 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **Review fixes (accounting: forecast allowance only).** A one-off
+  ("once") recurring, or one whose end date has passed, no longer nets its
+  amount off the envelope's monthly allowance forever — an applied one-off
+  used to silence that envelope's allowance in every month, so the forecast,
+  the dashboard low tile and Fund the month were all optimistic by a whole
+  budget per affected envelope. **Fund the month is now one undo step.**
+  The server refuses private files even when their names are
+  percent-encoded (`/finance%2Ddata.json` used to be served), and answers
+  421 to requests whose Host header is not this machine, a literal IP, a
+  `*.ts.net` name or `$ALLOWED_HOSTS` — which is what stops a DNS-rebinding
+  page from reaching `/data`; no authentication is introduced. A data file
+  with a hostile record id or type is refused on load instead of reaching
+  the page as markup. When the budget fails to load, the welcome screen no
+  longer offers "Create new budget" (which would have overwritten the file
+  on the server); it offers Retry and Import instead. The full review
+  report, 59 findings with the rest still open, is `docs/REVIEW-360-2026-09-10.md`.
+- **Every amount field takes arithmetic and a comma decimal.** The last five
+  plain number inputs — an account's opening and current balance, an
+  envelope's opening balance and budget, and the manual net-worth snapshot —
+  now behave like the transaction amount field: `1200-350`, `4*150` and
+  `2380,50` all work, an expression that does not evaluate refuses the save
+  with a message instead of silently becoming zero, and a negative budget is
+  refused. The account dialog's opening / current balance link still works
+  while you type.
+
 ## 2026-09-10 — v0.8.0, link hand-typed bills, faster renders
 
 - **A hand-typed bill can be linked to its due occurrence.** The due review

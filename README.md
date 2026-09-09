@@ -130,6 +130,8 @@ tailscale serve --bg 8765
 
 The app is now at `https://<machine-name>.<tailnet>.ts.net/`: a real HTTPS origin with a valid certificate, reachable only from your own devices, while the server itself stays on loopback. Every device reads and writes the one `finance-data.json`. `tailscale serve reset` undoes it.
 
+The server only answers requests addressed to this machine: `localhost`, a literal IP address, its own hostname, any `*.ts.net` name, or the names you list in `ALLOWED_HOSTS` (comma-separated, no port). If you put a different reverse proxy in front with its own hostname, start the server with `ALLOWED_HOSTS=budget.home.lan`. Anything else gets a 421 — that is what keeps a malicious web page from reaching the loopback port through DNS rebinding; it is not authentication.
+
 **Keeping it running.** Set `IDLE_TIMEOUT=0` and start the server at boot:
 
 - Windows: `serve-daemon.cmd` runs it windowless with the right settings. Register it from an elevated terminal:

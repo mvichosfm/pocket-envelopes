@@ -147,7 +147,7 @@ function logicApi() {
     "balanceCacheBegin", "balanceCacheEnd", "_balCacheLive", "findHandLoggedMatch",
     "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
     "dueRecurringOccurrences", "recurringToTx", "recurringResumeDate",
-    "recurringMonthlyEquiv", "recurringMonthlyForEnvelope",
+    "recurringMonthlyEquiv", "recurringMonthlyForEnvelope", "recurringCoversEnvelope",
     "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
@@ -223,6 +223,28 @@ if (api) {
     assert.ok(api.validateData({ transactions: {} }).length > 0);
     assert.ok(api.validateData({ accounts: [null] }).length > 0);
     assert.deepEqual(Array.from(api.validateData({ accounts: [], transactions: [] })), []);
+    // ids and types are interpolated into markup unescaped: constrain them here (decision #50)
+    assert.ok(api.validateData({ envelopes: [{ id: 'e1" onmouseover="x' }] }).length > 0, "hostile id refused");
+    assert.ok(api.validateData({ transactions: [{ id: "t1", type: "expense<img>" }] }).length > 0, "hostile type refused");
+    assert.ok(api.validateData({ recurring: [{ id: "r1", type: "weird" }] }).length > 0, "unknown recurring type refused");
+    assert.deepEqual(Array.from(api.validateData({ transactions: [{ id: "demo_t1", type: "transfer-envelope" }], envelopes: [{ id: "__fundProbe" }] })), []);
+  });
+
+  check("A one-off or ended recurring does not net the envelope allowance", () => {
+    const env = { id: "living", name: "Living", openingBalance: 0, budgetAmount: 300, cadence: "monthly" };
+    const t = new Date();
+    const lastMonthEnd = new Date(t.getFullYear(), t.getMonth(), 0);
+    const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const mk = (over) => ({ id: "r", type: "expense", amount: 300, schedule: "monthly", startDate: "2020-01-01", envelopeId: "living", active: true, ...over });
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({})] });
+    assert.equal(api.recurringMonthlyForEnvelope(env), 300, "a live monthly nets its amount");
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ schedule: "once", amount: 5000 })] });
+    assert.equal(api.recurringMonthlyForEnvelope(env), 0, "a one-off is an event, not a stream");
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ endDate: iso(lastMonthEnd) })] });
+    assert.equal(api.recurringMonthlyForEnvelope(env), 0, "ended last month → no longer nets");
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ endDate: iso(new Date(t.getFullYear(), t.getMonth() + 2, 1)) })] });
+    assert.equal(api.recurringMonthlyForEnvelope(env), 300, "ending in a future month still nets this month");
+    assert.equal(api.recurringCoversEnvelope(mk({ active: false })), false);
   });
 
   check("Forecast floors overspent envelopes instead of inflating spendable cash", () => {
@@ -426,6 +448,35 @@ if (api) {
     assert.equal(api.isCashflowTx({ type: "expense", accountId: "cash", amount: 10 }), true);
     assert.equal(api.isCashflowTx({ type: "income", accountId: "invest", payee: "Market adjustment" }), false);
   });
+}
+
+// ------------------------------------------------------- 3b. serve.py guards
+{
+  const script = [
+    "import importlib.util, sys",
+    "spec = importlib.util.spec_from_file_location('serve', 'serve.py'); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+    "priv = ['/finance-data.json', '/finance%2Ddata.json', '/finance%252Ddata.json', '/finance-data.bak.0', '/finance%2Ddata.bak.0', '/.git/config', '/%2Egit/config', '/serve-daemon%2Elog', '/icons/../finance-data.json', '/.claude/launch.json']",
+    "pub = ['/', '/pocket-envelopes.app', '/sw.js', '/manifest.webmanifest', '/icons/icon-192.png', '/vendor/chart.umd.min.js']",
+    "bad = [p for p in priv if not m._is_private_url(p)] + [p for p in pub if m._is_private_url(p)]",
+    "hosts_ok = ['localhost:8765', '127.0.0.1:8765', '[::1]:8765', '192.168.1.20:8765', 'mini-pc.tail1234.ts.net', None, '']",
+    "hosts_bad = ['attacker.example:8765', 'evil.com', 'localhost.evil.com:8765']",
+    "bad += [h for h in hosts_ok if not m._host_allowed_name(h)] + [h for h in hosts_bad if m._host_allowed_name(h)]",
+    "print('OK' if not bad else 'BAD ' + repr(bad))",
+  ].join("\n");
+  const candidates = process.platform === "win32"
+    ? [["py", ["-3", "-c", script]], ["python", ["-c", script]]]
+    : [["python3", ["-c", script]], ["python", ["-c", script]]];
+  let ran = false;
+  for (const [cmd, args] of candidates) {
+    const r = spawnSync(cmd, args, { cwd: root, encoding: "utf8" });
+    if (r.error) continue;
+    ran = true;
+    const out = (r.stdout || "").trim();
+    if (r.status === 0 && out === "OK") pass("serve.py refuses private paths after decoding, and foreign Host headers");
+    else fail("serve.py refuses private paths after decoding, and foreign Host headers", out || r.stderr);
+    break;
+  }
+  if (!ran) warn("serve.py guard checks skipped", "no Python found");
 }
 
 // ------------------------------------------------------- 4. service worker

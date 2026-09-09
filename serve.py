@@ -41,25 +41,41 @@ puts `tailscale serve` in front instead.
 Static files: the app, its icons, the manifest, the service worker and
 vendor/ are served from this directory. The data file, its backups, logs,
 dotfiles (.git, .claude) and directory listings are refused (404) so the
-budget can only be reached through the /data API above.
+budget can only be reached through the /data API above. The check runs on
+the percent-DECODED, normalised path: `/finance%2Ddata.json` used to slip
+past it.
+
+Host check: every request's Host header must name this machine -- localhost,
+a literal IP address, this host's own name, a Tailscale `*.ts.net` name, or
+an entry in $ALLOWED_HOSTS (comma-separated). Anything else is answered 421.
+This is what stops a DNS-rebinding page (a hostname the attacker re-points at
+127.0.0.1 after the page has loaded) from reading or overwriting /data through
+the loopback bind; it is not authentication.
 
 Stdlib only -- no pip install. Python 3.8 or newer.
 """
 
 import hashlib
 import http.server
+import ipaddress
 import json
 import mimetypes
 import os
+import posixpath
 import shutil
+import socket
 import socketserver
 import sys
 import threading
 import time
+import urllib.parse
 
 PORT = int(os.environ.get("PORT", "8765"))
 BIND = os.environ.get("BIND", "127.0.0.1")
 IDLE_TIMEOUT = int(os.environ.get("IDLE_TIMEOUT", "1800"))
+# Extra hostnames the Host check accepts, e.g. a reverse-proxy name that is not
+# a *.ts.net one. Comma-separated, case-insensitive, without the port.
+ALLOWED_HOSTS = {h.strip().lower() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()}
 
 # The app file deliberately uses a non-.html extension so double-clicking it in
 # Explorer does not open it under file:// (which has no persistent origin, so
@@ -72,6 +88,7 @@ def _is_private_path(path_only: str) -> bool:
 
     Matches the data file and its rotation/staging siblings, log files, and
     any path component starting with a dot (.git, .claude, .env ...).
+    Call it on a DECODED path (see _is_private_url).
     """
     parts = [p for p in path_only.split("/") if p]
     if any(p.startswith(".") for p in parts):
@@ -79,7 +96,56 @@ def _is_private_path(path_only: str) -> bool:
     name = parts[-1].lower() if parts else ""
     if name.startswith("finance-data"):
         return True
-    return name.endswith((".log", ".tmp", ".bak"))
+    return name.endswith((".log", ".tmp", ".bak", ".bak.0", ".bak.1", ".bak.2", ".bak.3", ".bak.4"))
+
+
+def _is_private_url(path_only: str) -> bool:
+    """_is_private_path on the percent-decoded, normalised URL path.
+
+    SimpleHTTPRequestHandler.translate_path unquotes AFTER our check, so the
+    check must see what the file system will see: `/finance%2Ddata.json`,
+    `/%2Egit/config` and `/x/../finance-data.json` all decode or collapse to a
+    private path. Decoding twice is deliberate: a doubly-encoded path is
+    refused too rather than reasoned about.
+    """
+    decoded = urllib.parse.unquote(urllib.parse.unquote(path_only))
+    normalised = posixpath.normpath("/" + decoded.replace("\\", "/"))
+    return _is_private_path(decoded) or _is_private_path(normalised)
+
+
+_LOCAL_NAMES = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+
+def _host_allowed_name(host_header) -> bool:
+    """Is this Host header value one of ours? (See the module docstring.)
+
+    Accepts: no Host at all (HTTP/1.0 clients), localhost and loopback
+    addresses, any literal IP address (DNS rebinding needs a NAME that can be
+    re-pointed; a literal IP cannot), this machine's own hostname, Tailscale
+    `*.ts.net` names, and $ALLOWED_HOSTS. Everything else is refused.
+    """
+    if not host_header:
+        return True
+    host = host_header.strip().lower()
+    if host.startswith("["):                      # [ipv6]:port
+        host = host.split("]", 1)[0] + "]"
+        host = host.strip("[]")
+    elif host.count(":") == 1:                    # name:port or v4:port
+        host = host.rsplit(":", 1)[0]
+    host = host.rstrip(".")
+    if host in _LOCAL_NAMES:
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if host.endswith(".ts.net"):
+        return True
+    own = socket.gethostname().lower()
+    if host in (own, own + ".local", own.split(".")[0]):
+        return True
+    return host in ALLOWED_HOSTS
 mimetypes.add_type("text/html", ".app")
 # PWA assets. Windows' registry-backed mimetypes module reports .js as
 # text/plain on some machines, which makes the browser refuse to register the
@@ -176,6 +242,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _route(self):
         return self.path.split("?", 1)[0].split("#", 1)[0]
 
+    def _host_ok(self) -> bool:
+        if _host_allowed_name(self.headers.get("Host")):
+            return True
+        self._send_error_json(
+            421,
+            "this server only answers requests addressed to this machine "
+            "(localhost, its IP, its hostname, a *.ts.net name, or $ALLOWED_HOSTS)",
+        )
+        return False
+
     def _send_json(self, code, payload: bytes, extra_headers=()):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -205,7 +281,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # finance-data.json, the .bak rotation, logs and .git/ to anyone who
         # can reach the port, bypassing the /data API entirely. Directory
         # listings go for the same reason.
-        if _is_private_path(path_only):
+        if _is_private_url(path_only):
             self.send_error(404, "Not found")
             return None
         return super().send_head()
@@ -216,18 +292,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         self._touch()
+        if not self._host_ok():
+            return None
         if self._route() == "/data":
             return self._get_data()
         return super().do_GET()
 
     def do_HEAD(self):
         self._touch()
+        if not self._host_ok():
+            return None
         if self._route() == "/data":
             return self._get_data()
         return super().do_HEAD()
 
     def do_PUT(self):
         self._touch()
+        if not self._host_ok():
+            return None
         if self._route() == "/data":
             return self._put_data()
         self._send_error_json(405, "PUT is only supported on /data")

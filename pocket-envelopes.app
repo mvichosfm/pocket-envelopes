@@ -818,8 +818,14 @@ function emptyData() {
 // silently preferring it would resurrect deleted transactions. Recovery runs
 // through the dated backups (Settings → Backups) and the server's own
 // finance-data.bak.N rotation instead, both of which the user picks explicitly.
+// Why the welcome screen is shown: 'new' = the server says there is no file
+// yet (the only state in which "Create new budget" is offered); 'failed' =
+// the load did not succeed (unreachable, non-ok, unparsable) and the file may
+// well exist — creating a new budget there would overwrite it (decision #50).
+let loadState = 'new';
 async function loadFromServer() {
   let res;
+  loadState = 'failed';
   try {
     res = await fetch(DATA_URL, { cache: "no-store" });
   } catch (e) {
@@ -838,11 +844,13 @@ async function loadFromServer() {
   // X-Data-New means serve.py found no finance-data.json at all — a genuinely
   // first run, as opposed to a file that exists and happens to be empty.
   if (res.headers.get("X-Data-New") === "1") {
+    loadState = 'new';
     updateFileStatus("no data file yet", "no-file");
     return false;
   }
   const parsed = safeParseData(text, "finance-data.json");
-  if (!parsed) return false; // parse failure already toasted; welcome screen follows
+  if (!parsed) return false; // parse failure already toasted; the failed-load screen follows
+  loadState = 'loaded';
   data = parsed;
   updateFileStatus("finance-data.json", true);
   return true;
@@ -869,6 +877,20 @@ function validateData(raw) {
   if (raw.settings && raw.settings.tags !== undefined && !Array.isArray(raw.settings.tags)) problems.push('"settings.tags" is not a list');
   for (const k of ['accounts', 'envelopes', 'transactions', 'recurring']) {
     if (Array.isArray(raw[k]) && raw[k].some(x => !x || typeof x !== 'object' || Array.isArray(x))) problems.push(`"${k}" has an invalid entry`);
+  }
+  // Ids and types are interpolated into HTML attributes and class names
+  // unescaped at dozens of sites, so they are constrained here, once, rather
+  // than escaped at each (decision #50). uid() and the demo ids always pass;
+  // only a foreign or hand-edited file can fail.
+  const ID_RE = /^[A-Za-z0-9_\-]{1,80}$/;
+  const TYPES = new Set(['expense', 'income', 'transfer-account', 'transfer-envelope']);
+  for (const k of ['accounts', 'envelopes', 'transactions', 'recurring']) {
+    if (!Array.isArray(raw[k])) continue;
+    for (const x of raw[k]) {
+      if (!x || typeof x !== 'object') continue;
+      if (x.id !== undefined && !(typeof x.id === 'string' && ID_RE.test(x.id))) { problems.push(`"${k}" has an entry with an invalid id`); break; }
+      if ((k === 'transactions' || k === 'recurring') && x.type !== undefined && !TYPES.has(x.type)) { problems.push(`"${k}" has an entry with an unknown type`); break; }
+    }
   }
   return problems;
 }
@@ -1016,6 +1038,10 @@ function migrate(raw) {
 // Start a brand-new budget on a server that has no finance-data.json yet.
 // The PUT creates the file; from then on it is an ordinary save.
 async function newFile() {
+  if (loadState !== 'new') {
+    toast("Not creating a new budget: the last load did not succeed, so a file may already exist on the server. Reload, or Import if you mean to replace it.", 8000, 'error');
+    return;
+  }
   data = emptyData();
   const ok = await writeFile();
   if (ok) {
@@ -2143,8 +2169,28 @@ function recurringMonthlyEquiv(rec) {
     case 'biweekly':      return a * 26 / 12;
     case 'yearly':        return a / 12;
     case 'custom-months': return a * ((rec.months || []).length) / 12;
+    case 'once':          return 0;   // a one-off is not a monthly stream (decision #50)
     default:              return a;   // monthly
   }
+}
+
+// Does this recurring model an ongoing monthly stream for an envelope right
+// now? The ONE predicate behind decision #23's netting and decision #34's
+// spent-this-month exclusion, so the two cannot fall out of step. A one-off
+// ("once") is an event, not a stream; a template whose endDate is before the
+// start of the current month has stopped. Both used to keep netting their
+// full amount off the envelope's allowance forever — an applied one-off of
+// 5000 on a 300/mo envelope silenced that envelope's allowance in every
+// month (decision #50).
+function recurringCoversEnvelope(rec) {
+  if (!rec || rec.active === false) return false;
+  if (rec.schedule === 'once') return false;
+  if (rec.endDate) {
+    const t = new Date();
+    const monthStart = isoDate(new Date(t.getFullYear(), t.getMonth(), 1));
+    if (rec.endDate < monthStart) return false;
+  }
+  return true;
 }
 
 // How much of this envelope's monthly budget is ALREADY modelled by active
@@ -2156,7 +2202,7 @@ function recurringMonthlyEquiv(rec) {
 function recurringMonthlyForEnvelope(env) {
   let covered = 0;
   for (const rec of data.recurring) {
-    if (rec.active === false) continue;
+    if (!recurringCoversEnvelope(rec)) continue;
     if (rec.envelopeId === env.id) covered += recurringMonthlyEquiv(rec);
     // Only the destination of a transfer-envelope recurring counts — the
     // source envelope loses money on each occurrence and still needs its own
@@ -2443,7 +2489,7 @@ function forecastAccountBalances(accountIds, days, opts) {
     const todayKey = todayISO();
     const coveringRecs = {};   // envelopeId -> Set of recurring ids netted off below
     for (const rec of data.recurring) {
-      if (rec.active === false) continue;
+      if (!recurringCoversEnvelope(rec)) continue;   // same predicate as recurringMonthlyForEnvelope
       const envId = rec.envelopeId || (rec.type === 'transfer-envelope' ? rec.toEnvelopeId : null);
       if (!envId) continue;
       (coveringRecs[envId] = coveringRecs[envId] || new Set()).add(rec.id);
@@ -2676,6 +2722,20 @@ function snapshotIfNeeded() {
 // WELCOME
 //=============================================================================
 function renderWelcome() {
+  if (loadState === 'failed') {
+    return `<div class="empty-state">
+      <h2>Could not load your budget</h2>
+      <p>The server did not hand over <strong>finance-data.json</strong> — it may be stopped, unreachable, or the file may not have parsed.
+         Nothing has been changed. The file, and its <code>finance-data.bak.N</code> backups, are still on the serving machine.</p>
+      <div class="btns">
+        <button class="btn primary" id="welRetry">Retry</button>
+        <button class="btn" id="welOpen">Import a JSON file (replaces the server copy)</button>
+      </div>
+      <p style="margin-top:30px;font-size:12px;">
+        If the server is behind a proxy such as <code>tailscale serve</code>, the proxy can be up while the server is not; start the server and retry.
+      </p>
+    </div>`;
+  }
   return `<div class="empty-state">
     <h2>Welcome to your envelope budget</h2>
     <p>Your data lives in <strong>finance-data.json</strong> next to <code>serve.py</code>,
@@ -2692,7 +2752,8 @@ function renderWelcome() {
   </div>`;
 }
 function bindWelcome() {
-  document.getElementById("welNew").onclick = newFile;
+  const n = document.getElementById("welNew"); if (n) n.onclick = newFile;
+  const r = document.getElementById("welRetry"); if (r) r.onclick = () => location.reload();
   document.getElementById("welOpen").onclick = importViaInput;
 }
 
@@ -3236,7 +3297,7 @@ function showDueReview() {
     const m = matches[i];
     return `<tr>
       <td style="white-space:nowrap;">${fmtDate(u.date)}</td>
-      <td>${esc(u.rec.name)} <span class="badge ${u.rec.type}">${u.rec.type}</span>${m ? `
+      <td>${esc(u.rec.name)} <span class="badge ${esc(u.rec.type)}">${esc(u.rec.type)}</span>${m ? `
         <div class="micro" style="margin-top:3px;">looks already recorded: <strong>${esc(m.payee || m.notes || 'transaction')}</strong> on ${fmtDate(m.date)}, ${fmt(m.amount)}</div>` : ''}</td>
       <td class="num">
         <input type="text" inputmode="decimal" autocomplete="off" data-due-amt="${i}" value="${(u.rec.amount || 0).toFixed(2)}"
@@ -3374,7 +3435,7 @@ function txRow(tx) {
   const { sign, acc, env, tag } = txDisplayParts(tx);
   return `<tr class="${tx.date > todayISO() ? 'tx-future' : ''}">
     <td style="white-space:nowrap;">${txDateCell(tx)}</td>
-    <td>${esc(tx.payee || tx.notes || '')} ${tag} <span class="badge ${tx.type}">${tx.type}</span></td>
+    <td>${esc(tx.payee || tx.notes || '')} ${tag} <span class="badge ${esc(tx.type)}">${esc(tx.type)}</span></td>
     <td>${acc}</td>
     <td>${env}</td>
     <td class="num ${tx.type==='expense'?'neg':(tx.type==='income'?'pos':'')}">${sign}${fmt(tx.amount)}</td>
@@ -3546,9 +3607,9 @@ function editAccount(id) {
     </div>
     <div class="field-row">
       <div class="field"><label>Opening balance</label>
-        <input type="number" step="0.01" id="f_open" value="${a.openingBalance ?? 0}"></div>
+        <input type="text" inputmode="decimal" autocomplete="off" id="f_open" value="${(a.openingBalance ?? 0).toFixed(2)}" title="You can type arithmetic, e.g. 1200-350"></div>
       <div class="field"><label>Current balance</label>
-        <input type="number" step="0.01" id="f_current" value="${(id ? accountBalance(a) : (a.openingBalance ?? 0)).toFixed(2)}"></div>
+        <input type="text" inputmode="decimal" autocomplete="off" id="f_current" value="${(id ? accountBalance(a) : (a.openingBalance ?? 0)).toFixed(2)}" title="What your bank shows now. You can type arithmetic, e.g. 2380,50-100"></div>
     </div>
     <div style="font-size:11px;color:var(--text-dim);margin:-6px 0 12px;line-height:1.4;">
       Edit either field — typing a new Current balance updates Opening balance by the same amount, so the figure on the Accounts page matches what your bank shows.
@@ -3571,12 +3632,14 @@ function editAccount(id) {
     const fOpen = document.getElementById("f_open");
     const fCurrent = document.getElementById("f_current");
     const txDelta = id ? (accountBalance(a) - (a.openingBalance || 0)) : 0;
+    // Both fields take arithmetic (evalAmount); an unfinished expression
+    // simply leaves the other field alone until it parses.
     fOpen.addEventListener("input", () => {
-      const v = parseFloat(fOpen.value);
+      const v = evalAmount(fOpen.value);
       if (!isNaN(v)) fCurrent.value = (v + txDelta).toFixed(2);
     });
     fCurrent.addEventListener("input", () => {
-      const v = parseFloat(fCurrent.value);
+      const v = evalAmount(fCurrent.value);
       if (!isNaN(v)) fOpen.value = (v - txDelta).toFixed(2);
     });
   }
@@ -3585,7 +3648,12 @@ function editAccount(id) {
     if (!a.name) { toast("Name required"); return; }
     a.type = document.getElementById("f_type").value;
     a.owner = document.getElementById("f_owner").value;
-    a.openingBalance = parseFloat(document.getElementById("f_open").value) || 0;
+    // Opening balance goes through evalAmount like every other amount field;
+    // empty means 0, anything that does not evaluate refuses the save.
+    const openRaw = document.getElementById("f_open").value.trim();
+    const openVal = openRaw ? evalAmount(openRaw) : 0;
+    if (isNaN(openVal)) { toast("Opening balance: invalid expression", 3000, 'error'); return; }
+    a.openingBalance = openVal;
     // a.currency is left as stored. Nothing converts by it, so the editor no
     // longer shows it — a visible field implied FX that never happened
     // (roadmap: per-account currency + FX table).
@@ -3974,9 +4042,9 @@ function editEnvelope(id) {
     </div>
     <div class="field-row" id="f_budget_row">
       <div class="field"><label>Opening balance</label>
-        <input type="number" step="0.01" id="f_open" value="${e.openingBalance ?? 0}"></div>
+        <input type="text" inputmode="decimal" autocomplete="off" id="f_open" value="${(e.openingBalance ?? 0).toFixed(2)}" title="You can type arithmetic, e.g. 300-45"></div>
       <div class="field"><label>Budget amount <span class="help-tip" tabindex="0" title="The target amount for this envelope per cadence. For Monthly envelopes this is what you fund each month; for Annual envelopes this is the full yearly target — the app accrues 1/12 of it each month.">?</span></label>
-        <input type="number" step="0.01" id="f_bud" value="${e.budgetAmount ?? 0}"></div>
+        <input type="text" inputmode="decimal" autocomplete="off" id="f_bud" value="${(e.budgetAmount ?? 0).toFixed(2)}" title="You can type arithmetic, e.g. 4*150"></div>
       <div class="field"><label>Cadence <span class="help-tip" tabindex="0" title="Monthly: budget refills each month (e.g. Groceries €600/mo). Annual: budget is the YEARLY target — it accrues 1/12 per month so a €2,400/yr Holiday Fund builds up by €200/mo without you topping it up manually.">?</span></label>
         <select id="f_cad">
           <option value="monthly" ${e.cadence !== 'annual' ? 'selected' : ''}>per month</option>
@@ -4124,8 +4192,20 @@ function editEnvelope(id) {
 
     e.name = name;
     e.category = document.getElementById("f_cat").value.trim();
-    e.openingBalance = parseFloat(document.getElementById("f_open").value) || 0;
-    e.budgetAmount = parseFloat(document.getElementById("f_bud").value) || 0;
+    // Both amounts go through evalAmount; empty means 0, an expression that
+    // does not evaluate refuses the save, and a negative budget is refused
+    // because nothing downstream (allowance, Fund the month, pace bars)
+    // has a meaning for it.
+    const amounts = {};
+    for (const [fid, label] of [["f_open", "Opening balance"], ["f_bud", "Budget amount"]]) {
+      const raw = document.getElementById(fid).value.trim();
+      const v = raw ? evalAmount(raw) : 0;
+      if (isNaN(v)) { toast(`${label}: invalid expression`, 3000, 'error'); return; }
+      amounts[fid] = v;
+    }
+    if (amounts.f_bud < 0) { toast("Budget amount cannot be negative", 3000, 'error'); return; }
+    e.openingBalance = amounts.f_open;
+    e.budgetAmount = amounts.f_bud;
     e.cadence = document.getElementById("f_cad").value || "monthly";
     e.rolloverPolicy = e.cadence === "annual" ? "rollover" : (document.getElementById("f_roll").value || "rollover");
     e.isReserve = document.getElementById("f_reserve").checked;
@@ -4507,8 +4587,10 @@ function refillEnvelopes() {
     }
 
     const date = document.getElementById("rf_date").value || todayISO();
-    let count = 0;
-    let total = 0;
+    // Collect first, then snapshot once, then book: the largest monthly
+    // mutation used to be the one batch without pushUndo, so Ctrl-Z after it
+    // reverted something unrelated while the refills stayed (decision #50).
+    const rows = [];
     document.querySelectorAll("[data-rf]:checked").forEach(c => {
       const id = c.dataset.rf;
       const env = envelopeById(id);
@@ -4516,15 +4598,22 @@ function refillEnvelopes() {
       const inp = document.querySelector(`[data-rf-amt="${id}"]`);
       const amt = evalAmount(inp.value);
       if (isNaN(amt) || amt < 0.005) return;
-      data.transactions.push({
-        id: uid(), date, type: "income", amount: amt,
-        accountId: null, envelopeId: env.id,
-        payee: "Envelope refill", notes: ""
-      });
-      count++;
-      total += amt;
+      rows.push({ env, amt });
     });
-    if (count > 0) { saveDirty(); toast(`Funded ${count} envelope${count === 1 ? '' : 's'} (${fmt(total)})`); }
+    if (rows.length) {
+      pushUndo(`Fund ${plural(rows.length, 'envelope')}`);
+      let total = 0;
+      for (const { env, amt } of rows) {
+        data.transactions.push({
+          id: uid(), date, type: "income", amount: amt,
+          accountId: null, envelopeId: env.id,
+          payee: "Envelope refill", notes: ""
+        });
+        total += amt;
+      }
+      saveDirty();
+      toast(`Funded ${plural(rows.length, 'envelope')} (${fmt(total)})`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+    }
     closeModal(); render();
   };
 }
@@ -5706,7 +5795,7 @@ function renderRecurring() {
             const pending = r.active === false ? null : firstPendingOccurrence(r);
             return `<tr>
           <td><strong>${esc(r.name)}</strong>${r.active===false?' <span class="badge">Paused</span>':''}</td>
-          <td><span class="badge ${r.type}">${r.type}</span></td>
+          <td><span class="badge ${esc(r.type)}">${esc(r.type)}</span></td>
           <td>${esc(r.schedule)}${r.schedule==='custom-months'?` (${(r.months||[]).join(',')})`:''}</td>
           <td>${esc(r.type==='transfer-account' ?
             ((accountById(r.fromAccountId)?.name || '?') + '→' + (accountById(r.toAccountId)?.name || '?')) :
@@ -6613,7 +6702,7 @@ function renderNetWorth() {
     <p style="color:var(--text-dim);">A snapshot is captured automatically each day. Use this to add a snapshot for a past date (useful for seeding history).</p>
     <div class="field-row">
       <div class="field"><label>Date</label><input type="date" id="nw_date" value="${todayISO()}"></div>
-      <div class="field"><label>Net worth value</label><input type="number" step="0.01" id="nw_val"></div>
+      <div class="field"><label>Net worth value</label><input type="text" inputmode="decimal" autocomplete="off" id="nw_val" placeholder="e.g. 24500 or 18000+6500" title="You can type arithmetic"></div>
     </div>
     <button class="btn primary" id="nw_add">Add / replace snapshot</button>
   </div>
@@ -6623,8 +6712,9 @@ function bindNetWorth() {
   drawNetWorth();
   document.getElementById("nw_add").onclick = () => {
     const d = document.getElementById("nw_date").value;
-    const v = parseFloat(document.getElementById("nw_val").value);
-    if (!d || isNaN(v)) { toast("Date and value required"); return; }
+    const raw = document.getElementById("nw_val").value.trim();
+    const v = raw ? evalAmount(raw) : NaN;
+    if (!d || isNaN(v)) { toast(raw ? "Net worth value: invalid expression" : "Date and value required", 3000, 'error'); return; }
     const ix = data.netWorthSnapshots.findIndex(s => s.date === d);
     if (ix >= 0) data.netWorthSnapshots[ix].value = v;
     else data.netWorthSnapshots.push({ date: d, value: v });
