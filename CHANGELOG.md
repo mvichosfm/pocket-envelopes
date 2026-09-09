@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-10 — v0.8.0, link hand-typed bills, faster renders
 
 - **A hand-typed bill can be linked to its due occurrence.** The due review
   now spots a transaction you entered by hand that looks like a due

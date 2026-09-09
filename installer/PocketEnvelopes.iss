@@ -4,7 +4,7 @@
 
 #define MyAppName "Pocket Envelopes"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.7.1"
+  #define MyAppVersion "0.8.0"
 #endif
 #define MyAppPublisher "Manos Vichos"
 #define MyAppURL "https://github.com/mvichosfm/pocket-envelopes"
