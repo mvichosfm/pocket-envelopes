@@ -1866,21 +1866,45 @@ function txEnvelopeDelta(tx, envelopeId) {
   return 0;
 }
 
+// PER-RENDER BALANCE CACHE (decision #48). accountBalance / envelopeBalance
+// each scan every transaction, and one render asks for the same balance
+// several times (cards, tiles, the dashboard forecast seeds every envelope,
+// the pinned strip, the lowest-envelopes list). render() opens the cache for
+// the duration of the pass and closes it in `finally`; outside a render every
+// call computes fresh, so a handler that mutates and then reads never sees a
+// stale figure. Two extra guards, cheap insurance: the cache is keyed to the
+// transactions array's identity and length, so spendableMinAfterFunding's
+// probe copy (a different array) and any in-pass push bypass it.
+let _balCache = null;
+function balanceCacheBegin() {
+  _balCache = data ? { ref: data.transactions, len: data.transactions.length, acc: new Map(), env: new Map() } : null;
+}
+function balanceCacheEnd() { _balCache = null; }
+function _balCacheLive() {
+  const c = _balCache;
+  return (c && data && c.ref === data.transactions && c.len === data.transactions.length) ? c : null;
+}
 function accountBalance(account) {
+  const c = _balCacheLive();
+  if (c && c.acc.has(account.id)) return c.acc.get(account.id);
   // start from openingBalance + sum transaction deltas up to today
   const today = todayISO();
   let bal = account.openingBalance || 0;
   for (const tx of data.transactions) {
     if (tx.date <= today) bal += txAccountDelta(tx, account.id);
   }
+  if (c) c.acc.set(account.id, bal);
   return bal;
 }
 function envelopeBalance(env) {
+  const c = _balCacheLive();
+  if (c && c.env.has(env.id)) return c.env.get(env.id);
   const today = todayISO();
   let bal = env.openingBalance || 0;
   for (const tx of data.transactions) {
     if (tx.date <= today) bal += txEnvelopeDelta(tx, env.id);
   }
+  if (c) c.env.set(env.id, bal);
   return bal;
 }
 
@@ -2601,35 +2625,38 @@ function render() {
     bindWelcome();
     return;
   }
-  document.querySelectorAll("nav.tabs button").forEach(b => {
-    const on = b.dataset.view === activeView;
-    b.classList.toggle("active", on);
-    // Convey the current tab programmatically, not just by colour/underline.
-    if (on) b.setAttribute("aria-current", "page");
-    else b.removeAttribute("aria-current");
-    // On a phone the strip scrolls: bring the active tab into view (a
-    // drill-through or URL param can land on a tab that was off-screen).
-    if (on && typeof b.scrollIntoView === 'function') {
-      const nav = b.parentElement;
-      if (nav && nav.scrollWidth > nav.clientWidth + 1) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  balanceCacheBegin();
+  try {
+    document.querySelectorAll("nav.tabs button").forEach(b => {
+      const on = b.dataset.view === activeView;
+      b.classList.toggle("active", on);
+      // Convey the current tab programmatically, not just by colour/underline.
+      if (on) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
+      // On a phone the strip scrolls: bring the active tab into view (a
+      // drill-through or URL param can land on a tab that was off-screen).
+      if (on && typeof b.scrollIntoView === 'function') {
+        const nav = b.parentElement;
+        if (nav && nav.scrollWidth > nav.clientWidth + 1) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    });
+    updateTabFades();
+    switch (activeView) {
+      case "dashboard": main.innerHTML = renderDashboard(); bindDashboard(); break;
+      case "accounts": main.innerHTML = renderAccounts(); bindAccounts(); break;
+      case "envelopes": main.innerHTML = renderEnvelopes(); bindEnvelopes(); break;
+      case "transactions": main.innerHTML = renderTransactions(); bindTransactions(); break;
+      case "recurring": main.innerHTML = renderRecurring(); bindRecurring(); break;
+      case "forecast": main.innerHTML = renderForecast(); bindForecast(); break;
+      case "networth": main.innerHTML = renderNetWorth(); bindNetWorth(); break;
+      case "reports": main.innerHTML = renderReports(); bindReports(); break;
+      case "settings": main.innerHTML = renderSettings(); bindSettings(); break;
+      case "help": main.innerHTML = renderHelp(); break;
     }
-  });
-  updateTabFades();
-  switch (activeView) {
-    case "dashboard": main.innerHTML = renderDashboard(); bindDashboard(); break;
-    case "accounts": main.innerHTML = renderAccounts(); bindAccounts(); break;
-    case "envelopes": main.innerHTML = renderEnvelopes(); bindEnvelopes(); break;
-    case "transactions": main.innerHTML = renderTransactions(); bindTransactions(); break;
-    case "recurring": main.innerHTML = renderRecurring(); bindRecurring(); break;
-    case "forecast": main.innerHTML = renderForecast(); bindForecast(); break;
-    case "networth": main.innerHTML = renderNetWorth(); bindNetWorth(); break;
-    case "reports": main.innerHTML = renderReports(); bindReports(); break;
-    case "settings": main.innerHTML = renderSettings(); bindSettings(); break;
-    case "help": main.innerHTML = renderHelp(); break;
-  }
-  linkHelpTips(main);
-  // ensure today's snapshot updates
-  if (data) snapshotIfNeeded();
+    linkHelpTips(main);
+    // ensure today's snapshot updates
+    if (data) snapshotIfNeeded();
+  } finally { balanceCacheEnd(); }
 }
 
 function snapshotIfNeeded() {
@@ -2896,6 +2923,8 @@ function renderDashboard() {
       <div style="color:var(--text-dim);font-size:13px;margin-top:4px;">
         ${due.slice(0, 4).map(u => esc(u.rec.name) + ' (' + fmtDate(u.date) + ')').join(', ')}${due.length > 4 ? ` and ${due.length - 4} more` : ''}
         ${dueTotal !== 0 ? ` · net <span class="${dueTotal >= 0 ? 'pos' : 'neg'}">${dueTotal >= 0 ? '+' : ''}${fmt(dueTotal)}</span>` : ''}
+        ${(() => { const t = new Set(); const k = due.filter(u => { const m = findHandLoggedMatch(u.rec, u.date, t); if (m) t.add(m.id); return m; }).length;
+             return k ? ` · <span style="color:var(--warn);">${k} look${k === 1 ? 's' : ''} already recorded by hand — Review to link</span>` : ''; })()}
       </div>
     </div>
     <div style="display:flex;gap:8px;">
@@ -3168,15 +3197,47 @@ function wireAccountDragReorder() {
   });
 }
 
+// A due occurrence the user may already have logged by hand (decision #49):
+// a transaction of the same type on the same account (or the same from/to
+// pair for a transfer), the same amount to the cent, dated within
+// HAND_LOG_WINDOW_DAYS of the schedule, not itself generated from a recurring,
+// and not already claimed by another due row (`taken` = tx ids). The closest
+// date wins. Offered as "Link" in the due review and never applied by itself:
+// a wrong automatic match would hide a bill that is genuinely still due.
+const HAND_LOG_WINDOW_DAYS = 3;
+function findHandLoggedMatch(rec, date, taken) {
+  const target = parseDate(date);
+  let best = null, bestGap = Infinity;
+  for (const tx of data.transactions) {
+    if (tx.fromRecurringId || tx.type !== rec.type) continue;
+    if (taken && taken.has(tx.id)) continue;
+    if (Math.abs((tx.amount || 0) - (rec.amount || 0)) >= 0.005) continue;
+    if (rec.type === 'transfer-account') {
+      if (tx.fromAccountId !== rec.fromAccountId || tx.toAccountId !== rec.toAccountId) continue;
+    } else if (rec.type === 'transfer-envelope') {
+      if (tx.fromEnvelopeId !== rec.fromEnvelopeId || tx.toEnvelopeId !== rec.toEnvelopeId) continue;
+    } else if ((tx.accountId || null) !== (rec.accountId || null)) continue;
+    const gap = Math.abs(daysBetween(target, parseDate(tx.date)));
+    if (gap > HAND_LOG_WINDOW_DAYS || gap >= bestGap) continue;
+    best = tx; bestGap = gap;
+  }
+  return best;
+}
+
 function showDueReview() {
   const due = dueRecurringOccurrences();
   if (!due.length) { toast("Nothing due"); return; }
+  // Candidate hand-logged transactions, one per due row at most.
+  const taken = new Set();
+  const matches = due.map(u => { const m = findHandLoggedMatch(u.rec, u.date, taken); if (m) taken.add(m.id); return m; });
   const rows = due.map((u, i) => {
     const inputColor = u.rec.type === 'expense' ? 'var(--bad)'
       : (u.rec.type === 'income' ? 'var(--good)' : 'var(--text)');
+    const m = matches[i];
     return `<tr>
       <td style="white-space:nowrap;">${fmtDate(u.date)}</td>
-      <td>${esc(u.rec.name)} <span class="badge ${u.rec.type}">${u.rec.type}</span></td>
+      <td>${esc(u.rec.name)} <span class="badge ${u.rec.type}">${u.rec.type}</span>${m ? `
+        <div class="micro" style="margin-top:3px;">looks already recorded: <strong>${esc(m.payee || m.notes || 'transaction')}</strong> on ${fmtDate(m.date)}, ${fmt(m.amount)}</div>` : ''}</td>
       <td class="num">
         <input type="text" inputmode="decimal" autocomplete="off" data-due-amt="${i}" value="${(u.rec.amount || 0).toFixed(2)}"
           style="width:100px;text-align:right;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:${inputColor};font-variant-numeric:tabular-nums;">
@@ -3186,6 +3247,7 @@ function showDueReview() {
         : (accountById(u.rec.accountId)?.name || ''))}</td>
       <td>
         <select data-due-act="${i}" aria-label="What to do with ${esc(u.rec.name)} on ${fmtDate(u.date)}" style="padding:4px 6px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+          ${m ? `<option value="link" selected>Link to the recorded one</option>` : ''}
           <option value="record">Record</option>
           <option value="skip">Skip</option>
           <option value="later">Decide later</option>
@@ -3197,7 +3259,7 @@ function showDueReview() {
     <h2>Review due recurring</h2>
     <p style="color:var(--text-dim);margin-top:0;"><strong style="color:var(--text);">Record</strong> books the transaction;
       <strong style="color:var(--text);">skip</strong> marks this one occurrence as never happening (a waived fee, a month you paid nothing) so it stops being offered;
-      <strong style="color:var(--text);">decide later</strong> leaves it due. Edit an amount for this occurrence only — the template is unchanged.</p>
+      <strong style="color:var(--text);">decide later</strong> leaves it due. Where a transaction you typed in by hand looks like this occurrence (same account and amount, within ${HAND_LOG_WINDOW_DAYS} days), <strong style="color:var(--text);">link</strong> marks it as the recorded one instead of booking it twice. Edit an amount for this occurrence only — the template is unchanged.</p>
     <div style="margin:-4px 0 10px 0;font-size:12px;color:var(--text-dim);">
       Set all:
       <button type="button" class="btn sm ghost" data-dueall="record">Record</button>
@@ -3232,9 +3294,16 @@ function showDueReview() {
       if (!isNaN(v) && v > 0) overrides[idx] = v;
     });
     pushUndo('Review due recurring');
-    let n = 0, skipped = 0;
+    let n = 0, skipped = 0, linked = 0;
     due.forEach(({ rec, date }, i) => {
-      if (action[i] === 'record') {
+      if (action[i] === 'link' && matches[i]) {
+        // The hand-logged transaction becomes this occurrence's record: it is
+        // stamped with the recurring's id (so it can't be matched again and
+        // the forecast's coverage netting treats it like a generated one),
+        // and the watermark logic below counts the row as resolved.
+        matches[i].fromRecurringId = rec.id;
+        linked++;
+      } else if (action[i] === 'record') {
         data.transactions.push(recurringToTx(rec, date, overrides[i] !== undefined ? overrides[i] : rec.amount));
         n++;
       } else if (action[i] === 'skip') {
@@ -3277,6 +3346,7 @@ function showDueReview() {
     closeModal();
     const bits = [];
     if (n) bits.push(`recorded ${plural(n, 'entry', 'entries')}`);
+    if (linked) bits.push(`linked ${linked}`);
     if (skipped) bits.push(`skipped ${skipped}`);
     if (bits.length) toast(bits.join(', ') + ' (Ctrl+Z to undo)', 4000, 'success', { label: 'Undo', onClick: performUndo });
     render();
@@ -7191,6 +7261,10 @@ function renderHelp() {
 
     <details class="faq"><summary>How do I retire an account or envelope I no longer use?</summary>
     <div><strong>Archive</strong> it (the button on the Accounts row or the envelope card). Deleting is refused while any transaction still points at the record, and that is deliberate: dropping it would orphan history or destroy it. Archiving keeps every transaction and every figure — an archived account still counts in balances and net worth, an archived envelope keeps its balance earmarked — and only takes the record out of the way: out of the lists, the pickers, the dashboard strip and the forecast's account selection. An archived envelope also has <em>no budget</em> any more, so it drops out of Fund the month, close-out, the monthly totals and the forecast's allowances; if it still holds money you want back, click <strong>Return</strong> first. Archived records sit in a collapsed list at the bottom of their tab with an <strong>Unarchive</strong> button, and Reports still shows an archived envelope for any month it was in use. You cannot archive the reserve envelope, or anything an <em>active</em> recurring entry still posts to — deactivate or reassign that first. Editing an old transaction still offers its archived account or envelope, marked "(archived)", so re-saving never loses it.</div>
+    </details>
+
+    <details class="faq"><summary>I typed a bill in by hand and it still shows as due. Why, and what do I do?</summary>
+    <div>A plain <strong>Add transaction</strong> does not tell the recurring entry that its occurrence happened — only the ⚡ button and the due review do — so the scheduled occurrence stays due, and until you clear it the forecast counts the bill twice: once as your real transaction, once as the due it still expects. Open <strong>Review</strong> on the dashboard banner. A due row that looks like something you already recorded (same account and amount, dated within three days of the schedule) shows that transaction underneath and defaults its action to <strong>Link</strong>: applying it marks your transaction as the record of that occurrence, nothing is booked twice, and the due clears. The match is only ever offered, never applied on its own — a wrong automatic link would hide a bill that is really still due. If it is not the same payment, choose Record or Skip as usual.</div>
     </details>
 
     <details class="faq"><summary>What does "Backed by account" do?</summary>

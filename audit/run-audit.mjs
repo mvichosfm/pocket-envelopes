@@ -25,6 +25,10 @@
 //          a filtered one subtracts only the envelopes its accounts hold
 //        - archived envelopes keep their balance but carry no budget; pickers keep
 //          an archived record only while the edited entry still names it
+//        - the per-render balance cache never returns a stale figure: a push, a
+//          swapped array or closing the cache all force a recompute
+//        - a hand-logged transaction matches a due occurrence only on type, account,
+//          exact amount and a 3-day window, never one generated from a recurring
 //        - "fund one month" assigns the budget, not the overspend gap
 //        - envelope-only adjustments are not cashflow
 //   4. sw.js compiles, never intercepts /data, and keeps the shell network-first.
@@ -140,6 +144,7 @@ function logicApi() {
     "parseDate", "addDays", "addMonths", "addMonthsAnchored", "isoDate",
     "todayISO", "daysBetween", "validateData", "evalAmount", "txAccountDelta",
     "txEnvelopePortion", "txEnvelopeDelta", "accountById", "envelopeById",
+    "balanceCacheBegin", "balanceCacheEnd", "_balCacheLive", "findHandLoggedMatch",
     "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
     "dueRecurringOccurrences", "recurringToTx", "recurringResumeDate",
     "recurringMonthlyEquiv", "recurringMonthlyForEnvelope",
@@ -149,6 +154,8 @@ function logicApi() {
   ];
   const bundle = [
     "var data = null;",
+    "let _balCache = null;",
+    "const HAND_LOG_WINDOW_DAYS = 3;",
     "const uid = () => 'audit-id';",
     ...names.map((name) => extractFunction(source, name)),
     `globalThis.__auditApi = {
@@ -352,6 +359,57 @@ if (api) {
     assert.deepEqual(arr(api.pickerList(api.getData().accounts, "old")).map((a) => a.id), ["cash", "old"]);
     assert.deepEqual(arr(api.pickerList(api.getData().accounts, null)).map((a) => a.id), ["cash"]);
     assert.deepEqual(arr(api.pickerList(api.getData().envelopes, ["gone", "live"])).map((e) => e.id), ["live", "gone"]);
+  });
+
+  check("Balance cache: same figures as a fresh scan, never stale", () => {
+    api.setData({
+      accounts: [{ id: "cash", name: "Cash", openingBalance: 1000, includeInNetWorth: true }],
+      envelopes: [{ id: "food", name: "Food", openingBalance: 100, budgetAmount: 0, cadence: "monthly" }],
+      transactions: [{ id: "t1", date: "2020-01-05", type: "expense", amount: 40, accountId: "cash", envelopeId: "food" }],
+      recurring: [],
+    });
+    const d = api.getData();
+    const fresh = api.accountBalance(d.accounts[0]);
+    api.balanceCacheBegin();
+    assert.equal(api.accountBalance(d.accounts[0]), fresh);
+    assert.equal(api.envelopeBalance(d.envelopes[0]), 60);
+    // a push inside the pass changes the array length → recompute, not the cached value
+    d.transactions.push({ id: "t2", date: "2020-01-06", type: "expense", amount: 10, accountId: "cash", envelopeId: "food" });
+    assert.equal(api.accountBalance(d.accounts[0]), 950);
+    assert.equal(api.envelopeBalance(d.envelopes[0]), 50);
+    // a swapped array (the Fund modal's probe copy) bypasses the cache too
+    const original = d.transactions;
+    d.transactions = original.concat([{ id: "p", date: "2020-01-07", type: "expense", amount: 5, accountId: "cash", envelopeId: "food" }]);
+    assert.equal(api.accountBalance(d.accounts[0]), 945);
+    d.transactions = original;
+    assert.equal(api.accountBalance(d.accounts[0]), 950);
+    api.balanceCacheEnd();
+    assert.equal(api._balCacheLive(), null);
+    assert.equal(api.accountBalance(d.accounts[0]), 950);
+  });
+
+  check("Hand-logged match: type, account, exact amount, 3-day window, never a generated tx", () => {
+    const rec = { id: "r1", name: "Rent", type: "expense", amount: 1100, accountId: "cash", envelopeId: "rent" };
+    const base = { accounts: [], envelopes: [], recurring: [] };
+    const tx = (over) => ({ id: "x", date: "2026-09-01", type: "expense", amount: 1100, accountId: "cash", envelopeId: "rent", ...over });
+    const find = (t, taken) => { api.setData({ ...base, transactions: [t] }); return api.findHandLoggedMatch(rec, "2026-09-03", taken || new Set()); };
+    assert.equal(find(tx())?.id, "x", "two days early, same account and amount → match");
+    assert.equal(find(tx({ envelopeId: "other" }))?.id, "x", "a different envelope is still the same payment");
+    assert.equal(find(tx({ date: "2026-08-29" })), null, "five days away → no");
+    assert.equal(find(tx({ amount: 1099.99 })), null, "a cent off → no");
+    assert.equal(find(tx({ accountId: "savings" })), null, "another account → no");
+    assert.equal(find(tx({ type: "income" })), null, "another type → no");
+    assert.equal(find(tx({ fromRecurringId: "r1" })), null, "already generated from a recurring → no");
+    assert.equal(find(tx(), new Set(["x"])), null, "claimed by another due row → no");
+    // closest date wins
+    api.setData({ ...base, transactions: [tx({ id: "far", date: "2026-09-01" }), tx({ id: "near", date: "2026-09-04" })] });
+    assert.equal(api.findHandLoggedMatch(rec, "2026-09-03", new Set()).id, "near");
+    // transfers match on the from/to pair
+    const trec = { id: "r2", type: "transfer-account", amount: 200, fromAccountId: "cash", toAccountId: "savings" };
+    api.setData({ ...base, transactions: [{ id: "t", date: "2026-09-02", type: "transfer-account", amount: 200, fromAccountId: "cash", toAccountId: "savings" }] });
+    assert.equal(api.findHandLoggedMatch(trec, "2026-09-01", new Set())?.id, "t");
+    api.setData({ ...base, transactions: [{ id: "t", date: "2026-09-02", type: "transfer-account", amount: 200, fromAccountId: "savings", toAccountId: "cash" }] });
+    assert.equal(api.findHandLoggedMatch(trec, "2026-09-01", new Set()), null, "reversed direction → no");
   });
 
   check("Fund-one-month does not silently repay overspending", () => {

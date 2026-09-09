@@ -5,6 +5,22 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **A hand-typed bill can be linked to its due occurrence.** The due review
+  now spots a transaction you entered by hand that looks like a due
+  occurrence (same type and account, the same amount to the cent, dated
+  within three days of the schedule, not itself generated from a recurring)
+  and offers **Link** as that row's default. Applying it marks your
+  transaction as the record of the occurrence, so the due clears and the
+  forecast stops counting the bill twice **(accounting: forecast start
+  point only, and only when you choose Link)**. The dashboard banner says
+  how many due entries look already recorded. The match is offered, never
+  applied on its own, and is one undo step with the rest of the review.
+- **Faster renders on large files.** Account and envelope balances are
+  computed once per render instead of once per place that shows them; no
+  figure changes.
+
 ## 2026-09-09 — v0.7.1, budget vs actual at a glance
 
 - **Budget vs actual reads at a glance.** Each Spent figure carries a bar
