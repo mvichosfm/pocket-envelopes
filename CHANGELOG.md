@@ -7,6 +7,9 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- The README no longer claims SignPath code signing: the application was
+  declined, so the installer stays unsigned and the release page's SHA-256
+  is the verification. The workflow's signing job stays dormant.
 - **The tag limit is a setting.** Settings → Tag limit (1–50, default 8)
   replaces the fixed cap of eight. Lowering it below the tags you already
   have keeps them all and only disables "+ Add tag"; chip and chart colours

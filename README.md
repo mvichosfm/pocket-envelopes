@@ -161,14 +161,11 @@ A service worker caches the app shell, so it opens even when the server is aslee
 
 `pocket-envelopes.app` is one HTML file: CSS, then a single script that holds the data model, the accounting helpers, the forecast, and one render loop per tab. `serve.py` is a `SimpleHTTPRequestHandler` with two extra routes, `GET` and `PUT /data`, an ETag per response, and an idle watchdog. `sw.js` caches the shell network-first and never touches `/data`. The developer guide, including the decision log that explains every accounting rule and why it is the way it is, is `CLAUDE.md`; `node audit/run-audit.mjs` syntax-checks the app and unit-tests its accounting helpers.
 
-## Code signing policy
+## Installer provenance
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+The Windows installer is **not code-signed**, so SmartScreen shows an "unrecognised publisher" warning on first run. Verify it instead: every release installer is built by the [Windows installer workflow](.github/workflows/installer.yml) on GitHub Actions from the tagged commit, never on a personal machine, and the release page prints its SHA-256 next to the download. Compare that hash with `Get-FileHash PocketEnvelopes-Setup-<version>.exe` in PowerShell, or build the installer yourself from `installeruild.ps1` and compare the two. Signing is on the list for when the project has a track record; nothing about the app changes when it arrives.
 
-- Committers and reviewers: [Manos Vichos (mvichosfm)](https://github.com/mvichosfm)
-- Approvers: [Manos Vichos (mvichosfm)](https://github.com/mvichosfm)
-
-Release installers are built by the [Windows installer workflow](.github/workflows/installer.yml) on GitHub Actions from the tagged commit, so every signed binary traces back to the public source. **Privacy policy:** this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The app makes no outbound network calls of its own; the only network activity is between your browser and the server you run.
+**Privacy policy:** this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. The app makes no outbound network calls of its own; the only network activity is between your browser and the server you run.
 
 ## Contributing and license
 

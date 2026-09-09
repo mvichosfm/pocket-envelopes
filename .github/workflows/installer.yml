@@ -1,8 +1,8 @@
 # Builds the Windows installer from the public tree, so a release binary can be
 # traced to a commit rather than to somebody's PC. Runs on every v* tag and on
-# demand. When the SignPath variables and secret are configured (after SignPath
-# Foundation approves the project), the installer is also code-signed and the
-# signed file is what gets attached to the release.
+# demand. If the SignPath variables and secret are ever configured (the
+# project has no signing certificate today), the installer is also code-signed
+# and the signed file is what gets attached to the release.
 #
 # The release job also PUBLISHES the release: it writes the notes from the
 # CHANGELOG section for that version plus the download/SHA-256 block, and
