@@ -662,9 +662,11 @@
 // STATE & STORAGE
 //=============================================================================
 const SCHEMA_VERSION = 2;
-// Max user-defined transaction tags (settings.tags). A UI limit only — migrate()
-// never truncates a longer list from a hand-edited file. Raise freely.
-const TAG_LIMIT = 8;
+// Max user-defined transaction tags (settings.tags) when the file sets no
+// settings.tagLimit. A UI limit only — migrate() never truncates a longer list
+// from a hand-edited file or a lowered limit. tagLimit() is the reader.
+const TAG_LIMIT_DEFAULT = 8;
+const TAG_LIMIT_MIN = 1, TAG_LIMIT_MAX = 50;
 // Number/date formatting locale when the data file has none (first run, or a
 // hand-edited file): follow the browser rather than pin one country's format.
 const DEFAULT_LOCALE = (typeof navigator !== 'undefined' && navigator.language) || "en-US";
@@ -816,7 +818,7 @@ function migrate(raw) {
   if (!raw.version) raw.version = SCHEMA_VERSION;
   raw.settings = { ...emptyData().settings, ...(raw.settings || {}) };
   // Tags: additive, no version bump. The list is sanitised (strings, trimmed,
-  // case-insensitive dedupe) but NOT truncated to TAG_LIMIT — cutting a
+  // case-insensitive dedupe) but NOT truncated to the tag limit — cutting a
   // hand-edited list would orphan tags for no safety gain. A tx/rec tag that
   // names nothing in the list is kept, not dropped: migrate runs before any
   // pushUndo, so a drop here would be silent, irreversible data loss on an
@@ -828,6 +830,10 @@ function migrate(raw) {
       .map(t => String(t ?? '').trim())
       .filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
     const canon = new Map(raw.settings.tags.map(t => [t.toLowerCase(), t]));
+    // settings.tagLimit (optional): a whole number in [TAG_LIMIT_MIN, TAG_LIMIT_MAX];
+    // anything else is dropped so tagLimit() falls back to the default.
+    const lim = raw.settings.tagLimit;
+    if (!(Number.isInteger(lim) && lim >= TAG_LIMIT_MIN && lim <= TAG_LIMIT_MAX)) delete raw.settings.tagLimit;
     const fixTag = x => {
       if (x.tag === undefined) return;
       const s = typeof x.tag === 'string' ? x.tag.trim() : '';
@@ -1623,6 +1629,12 @@ function chartPalette() {
 // drawn as a plain grey chip — see the note in migrate().
 //---------------------------------------------------------------------------
 function tagList() { return (data && data.settings && data.settings.tags) || []; }
+// How many tags Settings lets the user define: settings.tagLimit when set
+// (migrate() guarantees it is a whole number in range), else the default.
+function tagLimit() {
+  const v = data && data.settings && data.settings.tagLimit;
+  return Number.isInteger(v) ? v : TAG_LIMIT_DEFAULT;
+}
 function strayTags() {
   const known = new Set(tagList());
   const out = new Set();
@@ -6766,6 +6778,11 @@ function renderSettings() {
       <input id="s_fcfloor" type="text" inputmode="decimal" value="${typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''}" placeholder="none" style="width:120px;text-align:right;">
     </div>
     <div class="setting-row">
+      <div><div class="label">Tag limit</div>
+        <div class="desc">How many tags you can define under Tags below (default ${TAG_LIMIT_DEFAULT}). Chip and chart colours repeat after ${chartPalette().length - 1}. Lowering it below the tags you already have keeps them all; it only stops you adding more.</div></div>
+      <input id="s_taglimit" type="number" min="${TAG_LIMIT_MIN}" max="${TAG_LIMIT_MAX}" step="1" value="${Number.isInteger(data.settings.tagLimit) ? data.settings.tagLimit : ''}" placeholder="${TAG_LIMIT_DEFAULT}" style="width:80px;text-align:center;">
+    </div>
+    <div class="setting-row">
       <div><div class="label">Theme</div></div>
       <select id="s_theme">
         <option value="auto" ${(data.settings.theme||'auto')==='auto'?'selected':''}>Auto (system)</option>
@@ -6776,9 +6793,9 @@ function renderSettings() {
   </div>
   <div class="card" style="margin-top:14px;">
     <h3>Tags</h3>
-    <p style="color:var(--text-dim);">One optional tag per transaction, for filtering the Transactions tab and the by-tag reports. Envelopes say what the money was for; tags are for the cross-cutting view (committed vs discretionary, work vs household). Up to ${TAG_LIMIT}.</p>
+    <p style="color:var(--text-dim);">One optional tag per transaction, for filtering the Transactions tab and the by-tag reports. Envelopes say what the money was for; tags are for the cross-cutting view (committed vs discretionary, work vs household). ${tagList().length} of ${tagLimit()} defined — the limit is a setting above.</p>
     <div id="tagList">${renderTagList()}</div>
-    <button class="btn" id="btnAddTag" style="margin-top:8px;" ${tagList().length >= TAG_LIMIT ? `disabled title="Limit of ${TAG_LIMIT} tags reached"` : ''}>+ Add tag</button>
+    <button class="btn" id="btnAddTag" style="margin-top:8px;" ${tagList().length >= tagLimit() ? `disabled title="Limit of ${tagLimit()} tags reached"` : ''}>+ Add tag</button>
   </div>
   <div class="card" style="margin-top:14px;">
     <h3>Data file</h3>
@@ -6839,6 +6856,18 @@ function bindSettings() {
     const v = evalAmount(raw);
     if (isNaN(v) || v < 0) { toast("Warning floor: enter a non-negative amount, or leave it empty", 3500, 'error'); e.target.value = typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''; return; }
     data.settings.forecastWarnBelow = Math.round(v * 100) / 100;
+    saveDirty(); render();
+  };
+  document.getElementById("s_taglimit").onchange = e => {
+    const raw = e.target.value.trim();
+    if (!raw) { delete data.settings.tagLimit; saveDirty(); render(); return; }
+    const v = Number(raw);
+    if (!Number.isInteger(v) || v < TAG_LIMIT_MIN || v > TAG_LIMIT_MAX) {
+      toast(`Tag limit: enter a whole number from ${TAG_LIMIT_MIN} to ${TAG_LIMIT_MAX}, or leave it empty for the default (${TAG_LIMIT_DEFAULT})`, 3500, 'error');
+      e.target.value = Number.isInteger(data.settings.tagLimit) ? data.settings.tagLimit : '';
+      return;
+    }
+    data.settings.tagLimit = v;
     saveDirty(); render();
   };
   document.getElementById("s_theme").onchange = e => {
@@ -6907,7 +6936,7 @@ function bindSettings() {
     });
   }
   document.getElementById("btnAddTag").onclick = () => {
-    if (tagList().length >= TAG_LIMIT) { toast(`Limit of ${TAG_LIMIT} tags reached`, 3000, 'error'); return; }
+    if (tagList().length >= tagLimit()) { toast(`Limit of ${tagLimit()} tags reached — raise it under Settings › Tag limit`, 3000, 'error'); return; }
     const name = (prompt("New tag name:") || "").trim();
     if (!name) return;
     const err = validateTagName(name);

@@ -7,6 +7,11 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **The tag limit is a setting.** Settings → Tag limit (1–50, default 8)
+  replaces the fixed cap of eight. Lowering it below the tags you already
+  have keeps them all and only disables "+ Add tag"; chip and chart colours
+  repeat after the eighth tag.
+
 - The tab strip takes its own row up to 1440px wide (was 1380px): between
   the two, a long status label pushed the Help tab off the header.
 - README screenshots regenerated for the v0.6.0 look; the Playwright script

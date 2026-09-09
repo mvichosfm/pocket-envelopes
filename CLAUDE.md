@@ -74,9 +74,11 @@ data = {
   forecastProfiles: [...],
   importProfiles: [{ id, name, delimiter, hasHeader, dateOrder, amountMode, map:{date,desc,amount,debit,credit}, accountId }],  // saved CSV-import column mappings
   defaultForecastProfileId,
-  settings: { currency, locale, theme: 'auto'|'dark'|'light', household: ['You','Partner'], tags: ['Fixed costs', ...], forecastWarnBelow? }
+  settings: { currency, locale, theme: 'auto'|'dark'|'light', household: ['You','Partner'], tags: ['Fixed costs', ...], tagLimit?, forecastWarnBelow? }
   // forecastWarnBelow?: number — the dashboard's low-point tile turns amber under this amount (red below zero regardless). Absent = no floor.
-  // tags: ordered list of tag names, max TAG_LIMIT (8) in the UI; order = chip/chart colour index.
+  // tags: ordered list of tag names, at most tagLimit() in the UI; order = chip/chart colour index (repeats after 8).
+  // tagLimit?: integer 1–50 (Settings → Tag limit); absent = TAG_LIMIT_DEFAULT (8). migrate() drops any other value.
+  // Lowering it never truncates the list — it only disables "+ Add tag".
 }
 ```
 
@@ -124,7 +126,7 @@ data = {
 | `plural(n, one, many)` | near `evalAmount` | `"1 cat"` / `"2 cats"`, with explicit irregular plural (`plural(n,'entry','entries')`). Centralises the `n===1?'':'s'` idiom. |
 | `linkHelpTips(root)` | near `openModal` | Mirrors each `.help-tip[title]`'s `title` into `aria-label` so keyboard/SR users get the help text. Called at the end of `render()` (root=`#main`) and in `openModal()` (root=modal). |
 | `makeModalDraggable(modal, handle)` | before `openModal` | Desktop-only (gated on `(pointer: fine)`): drag the modal by its title bar via pointer events, clamped so the whole modal stays on-screen. `openModal` calls it with the heading and resets `transform`/`width`/`height` first (reset each open). Resize is CSS (`resize: both` in the `(pointer: fine)` block). |
-| `tagList()` / `allTags()` / `tagChip(tag)` / `tagOptions(selected)` / `tagColor(tag)` / `validateTagName(name, ignore)` / `tagUsage(tag)` / `renameTag(old, new)` / `deleteTag(name)` | "TRANSACTION TAGS" block after `chartPalette()` | Everything tag-related goes through these. `tagChip` is the only place the chip HTML lives (both tx row renderers get it via `txDisplayParts`); `tagOptions` is the shared `<option>` builder for the tx form, recurring form and CSV review, and appends a stray value as "(unlisted)". `allTags()` = the list plus any stray tags found on records — use it for filters and report columns, `tagList()` for pickers. The two cascades leave `pushUndo` to the caller. |
+| `tagLimit()` / `tagList()` / `allTags()` / `tagChip(tag)` / `tagOptions(selected)` / `tagColor(tag)` / `validateTagName(name, ignore)` / `tagUsage(tag)` / `renameTag(old, new)` / `deleteTag(name)` | "TRANSACTION TAGS" block after `chartPalette()` | Everything tag-related goes through these. `tagChip` is the only place the chip HTML lives (both tx row renderers get it via `txDisplayParts`); `tagOptions` is the shared `<option>` builder for the tx form, recurring form and CSV review, and appends a stray value as "(unlisted)". `allTags()` = the list plus any stray tags found on records — use it for filters and report columns, `tagList()` for pickers. The two cascades leave `pushUndo` to the caller. |
 | `csvImportStart()` + `csvShowMapping` / `csvShowReview` | "CSV IMPORT" section, before `quickTx` | Bank-statement import flow: file pick → column mapping (saveable as a `importProfiles` profile) → dedupe + review → import. Pure helpers `parseCSV` (RFC-4180-ish, `,`/`;`/tab), `parseImportAmount` (EU/US decimals), `parseImportDate` (dmy/mdy/ymd). Auto-categorizes via `suggestPayeeDefaults`. Imports tagged `source:'import'`, wrapped in one `pushUndo`. |
 
 ## Recent decisions worth preserving
