@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-09 — v0.7.0, one typeface, one icon set, a phone header and a day-grouped ledger
 
 - **One typeface.** Figures, table headings and card captions no longer
   switch to a monospace face; everything is the UI font with tabular

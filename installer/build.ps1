@@ -1,7 +1,7 @@
 <#
 Build the Windows installer: dist\PocketEnvelopes-Setup-<version>.exe
 
-    powershell -ExecutionPolicy Bypass -File installer\build.ps1 [-Version 0.6.1]
+    powershell -ExecutionPolicy Bypass -File installer\build.ps1 [-Version 0.7.0]
 
 Needs Inno Setup 6 (winget install JRSoftware.InnoSetup). Downloads the
 official embeddable CPython runtime from python.org into installer\stage
@@ -12,7 +12,7 @@ To move to a newer Python: change the version and hash together. The hash is
 the one python.org publishes for the embeddable amd64 zip of that release.
 #>
 param(
-    [string]$Version = "0.6.1"
+    [string]$Version = "0.7.0"
 )
 $ErrorActionPreference = "Stop"
 
