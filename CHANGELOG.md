@@ -5,6 +5,15 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **Budget vs actual reads at a glance.** Each Spent figure carries a bar
+  of the budget beneath it (ochre when ahead of the calendar in the current
+  month, red past the budget, with the month-progress tick from the envelope
+  cards), rows that went over are tinted, and the Over / under column says
+  "€50.00 over" or "€150.00 under" instead of a signed number whose colour
+  had to be decoded.
+
 ## 2026-09-09 — v0.7.0, one typeface, one icon set, a phone header and a day-grouped ledger
 
 - **One typeface.** Figures, table headings and card captions no longer

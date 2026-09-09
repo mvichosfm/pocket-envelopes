@@ -394,6 +394,16 @@
   .envelope .ev-bar-tick { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
     background: var(--text-dim); border-radius: 1px; }
   @media (prefers-reduced-motion: reduce) { .envelope .ev-bar-fill { transition: none; } }
+  /* Reports → Budget vs actual: the same bar under each Spent figure, and a
+     tint on rows that went over. */
+  .bva-table td.bva-spent { min-width: 120px; }
+  .bva-bar { position: relative; height: 5px; border-radius: 3px; background: var(--bg-3); margin-top: 5px; }
+  .bva-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
+  .bva-bar[data-state="ahead"] .bva-fill { background: var(--warn); }
+  .bva-bar[data-state="over"] .bva-fill { background: var(--bad); }
+  .bva-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--text-dim); border-radius: 1px; }
+  tr.bva-over td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
+  tr.bva-over:hover td { background: color-mix(in srgb, var(--bad) 12%, transparent); }
   /* This month's spending against the budget — the figure an envelope
      budgeter checks most, and the one the balance alone doesn't tell you. */
   .envelope .ev-month { display: flex; justify-content: space-between; font-size: 11px;
@@ -6679,23 +6689,39 @@ function budgetVsActualHTML(ym) {
     .sort((a, b) => b.variance - a.variance);
   if (!rows.length) return '<p style="color:var(--text-dim);">No envelopes yet.</p>';
   const tot = rows.reduce((t, r) => ({ budget: t.budget + r.budget, spent: t.spent + r.spent, funded: t.funded + r.funded, balance: t.balance + r.balance }), { budget: 0, spent: 0, funded: 0, balance: 0 });
-  const varCell = v => Math.abs(v) < 0.005 ? '<span style="color:var(--text-dim);">—</span>' : `<span class="${v > 0 ? 'neg' : 'pos'}">${v > 0 ? '+' : ''}${fmt(v)}</span>`;
-  return `<table>
-    <thead><tr><th>Envelope</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Funded</th><th class="num">Over / under <span class="help-tip" tabindex="0" title="Spent minus budget for the month. Positive (red) = over budget. Annual envelopes count 1/12 of their yearly target as the month's budget.">?</span></th><th class="num">Balance at month end</th></tr></thead>
+  // Over / under in words, not a signed number: "€50.00 over" reads at once,
+  // "+€50.00" needed a second look every time (a positive variance is bad).
+  const varCell = v => Math.abs(v) < 0.005 ? '<span style="color:var(--text-dim);">on budget</span>'
+    : v > 0 ? `<span class="neg"><strong>${fmt(v)}</strong> over</span>` : `<span class="pos">${fmt(-v)} under</span>`;
+  // Spent as a bar of the budget under the figure. For the current month a
+  // tick marks how far through the month we are (the envelope cards' pace
+  // bar, same rule); a past month is complete, so no tick.
+  const cur = ym === todayISO().slice(0, 7);
+  const now = new Date();
+  const monthPct = cur ? (now.getDate() / new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()) * 100 : null;
+  const bar = r => {
+    if (r.budget <= 0) return '';
+    const pct = Math.min(100, (r.spent / r.budget) * 100);
+    const state = r.spent > r.budget + 0.005 ? 'over' : (monthPct !== null && pct > monthPct + 0.5) ? 'ahead' : 'ok';
+    const label = `${Math.round((r.spent / r.budget) * 100)}% of budget spent${monthPct !== null ? `, ${Math.round(monthPct)}% of the month gone` : ''}`;
+    return `<div class="bva-bar" data-state="${state}" title="${label}"><span class="bva-fill" style="width:${pct.toFixed(1)}%"></span>${monthPct !== null ? `<span class="bva-tick" style="left:${monthPct.toFixed(1)}%"></span>` : ''}</div>`;
+  };
+  return `<table class="bva-table">
+    <thead><tr><th>Envelope</th><th class="num">Budget</th><th class="num">Spent</th><th class="num">Funded</th><th class="num">Over / under <span class="help-tip" tabindex="0" title="How far this month's spending is from the budget: over (red) or under. The bar under Spent shows the same as a share of the budget; in the current month the tick marks how far through the month we are, so a bar past the tick means spending is running ahead of the calendar. Annual envelopes compare against one twelfth of the yearly amount.">?</span></th><th class="num">Balance at month end</th></tr></thead>
     <tbody>
-      ${rows.map(r => `<tr>
+      ${rows.map(r => `<tr class="${r.spent > r.budget + 0.005 && r.budget > 0 ? 'bva-over' : ''}">
         <td><a href="#" class="drill" data-tx-env="${r.env.id}" title="Show this envelope's transactions">${esc(r.env.name)}</a>${r.env.cadence === 'annual' ? ' <span class="badge">annual</span>' : ''}${r.env.isReserve ? ' <span class="badge">reserve</span>' : ''}${r.env.archived ? ' <span class="badge">archived</span>' : ''}</td>
         <td class="num" style="color:var(--text-dim);">${fmt(r.budget)}</td>
-        <td class="num">${fmt(r.spent)}</td>
+        <td class="num bva-spent">${fmt(r.spent)}${bar(r)}</td>
         <td class="num" style="color:var(--text-dim);">${fmt(r.funded)}</td>
-        <td class="num">${varCell(r.variance)}</td>
+        <td class="num">${r.budget > 0 ? varCell(r.variance) : '<span style="color:var(--text-dim);">—</span>'}</td>
         <td class="num ${r.balance < 0 ? 'neg' : ''}">${fmt(r.balance)}</td>
       </tr>`).join('')}
       <tr style="border-top:2px solid var(--border);"><td><strong>Total</strong></td>
         <td class="num"><strong>${fmt(tot.budget)}</strong></td>
         <td class="num"><strong>${fmt(tot.spent)}</strong></td>
         <td class="num"><strong>${fmt(tot.funded)}</strong></td>
-        <td class="num"><strong>${varCell(tot.spent - tot.budget)}</strong></td>
+        <td class="num">${varCell(tot.spent - tot.budget)}</td>
         <td class="num ${tot.balance < 0 ? 'neg' : ''}"><strong>${fmt(tot.balance)}</strong></td>
       </tr>
     </tbody>
