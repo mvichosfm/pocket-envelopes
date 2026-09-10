@@ -990,10 +990,11 @@ function emptyData() {
 // well exist — creating a new budget there would overwrite it (decision #50).
 let loadState = 'new';
 async function loadFromServer() {
-  let res;
+  let res, text;
   loadState = 'failed';
   try {
     res = await fetch(DATA_URL, { cache: "no-store" });
+    text = await res.text();
   } catch (e) {
     updateFileStatus("server unreachable", "no-file");
     toast("Could not reach the server — is serve.py still running? Your data is safe on disk; reload once it's back.", 8000, "error");
@@ -1006,7 +1007,6 @@ async function loadFromServer() {
     return false;
   }
   serverEtag = res.headers.get("ETag");
-  const text = await res.text();
   // X-Data-New means serve.py found no finance-data.json at all — a genuinely
   // first run, as opposed to a file that exists and happens to be empty.
   if (res.headers.get("X-Data-New") === "1") {
@@ -1222,46 +1222,76 @@ async function newFile() {
 // choice offered by the conflict dialog. Everything else sends the ETag we
 // last saw, so a write racing another device is refused rather than silently
 // overwriting it.
+let saveInFlight = null;
+let saveKeepaliveRequested = false;
 async function writeFile({ force = false, keepalive = false } = {}) {
   if (!data) return false;
   // ?demo=1 is a sandbox: edits are allowed and stay in memory, but nothing is
   // ever written to the server. Keep the label honest rather than saying "saved".
   if (demoMode) { dirty = false; updateFileStatus("demo data (not saved)", "no-file"); return true; }
-  const body = JSON.stringify(data, null, 2);
-  const headers = { "Content-Type": "application/json" };
-  if (serverEtag && !force) headers["If-Match"] = serverEtag;
-  let res;
-  try {
-    // keepalive lets a save started by pagehide/visibilitychange outlive the
-    // page. It is capped at 64KB by the spec, so a real budget file outgrows
-    // it quickly — fall back to a normal fetch above that and accept that a
-    // tab closed inside the same millisecond may lose the very last edit.
-    const useKeepalive = keepalive && body.length < 60000;
-    res = await fetch(DATA_URL, { method: "PUT", headers, body, keepalive: useKeepalive });
-  } catch (e) {
-    setStatus("unsaved");
-    toast("Save failed — server unreachable. Your changes are still here in this tab; they'll save once serve.py is back.", 8000, "error");
-    console.error("writeFile: fetch failed", e);
-    return false;
+  if (conflictPending && !force) return false;
+  if (keepalive) saveKeepaliveRequested = true;
+  // Join an active save rather than sending a second PUT with its stale ETag.
+  // The writer drains newer edits before resolving. A failed write is never
+  // retried automatically without its precondition.
+  while (saveInFlight) {
+    const ok = await saveInFlight;
+    if (!ok && !force) return false;
+    if (!dirty && !force) return true;
   }
-  if (res.status === 409) {
-    handleConflict(res.headers.get("ETag"));
-    return false;
+  if (conflictPending && !force) return false;
+  saveInFlight = persistData(force);
+  try { return await saveInFlight; }
+  finally { saveInFlight = null; saveKeepaliveRequested = false; }
+}
+
+async function persistData(force) {
+  dirty = true;
+  setStatus("unsaved");
+  while (true) {
+    const body = JSON.stringify(data, null, 2);
+    const headers = { "Content-Type": "application/json" };
+    if (serverEtag && !force) headers["If-Match"] = serverEtag;
+    let res;
+    try {
+      // keepalive lets a save started by pagehide/visibilitychange outlive the
+      // page. It is capped at 64KB by the spec, so a real budget file outgrows
+      // it quickly — fall back to a normal fetch above that and accept that a
+      // tab closed inside the same millisecond may lose the very last edit.
+      const useKeepalive = saveKeepaliveRequested && new TextEncoder().encode(body).byteLength < 60000;
+      res = await fetch(DATA_URL, { method: "PUT", headers, body, keepalive: useKeepalive });
+    } catch (e) {
+      setStatus("unsaved");
+      toast("Save failed — server unreachable. Your changes are still here in this tab; they'll save once serve.py is back.", 8000, "error");
+      console.error("writeFile: fetch failed", e);
+      return false;
+    }
+    if (res.status === 409) {
+      handleConflict(res.headers.get("ETag"));
+      return false;
+    }
+    if (!res.ok) {
+      setStatus("unsaved");
+      toast(`Save failed (server said ${res.status}). Your changes are still here in this tab.`, 8000, "error");
+      return false;
+    }
+    serverEtag = res.headers.get("ETag") || serverEtag;
+    conflictPending = false;
+    // Compare the actual snapshot, including imports/direct writes that don't
+    // go through saveDirty. Never claim that newer in-memory edits were saved.
+    if (JSON.stringify(data, null, 2) !== body) {
+      force = false;
+      continue;
+    }
+    try { ensureDailyBackup(); } catch {}
+    dirty = false;
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    // Rewrite the whole indicator, not just the dot: a save that resolves a
+    // conflict (or the first save after a failed one) has to clear the stale
+    // "conflict — server has a newer version" label as well as the colour.
+    updateFileStatus("finance-data.json", true);
+    return true;
   }
-  if (!res.ok) {
-    setStatus("unsaved");
-    toast(`Save failed (server said ${res.status}). Your changes are still here in this tab.`, 8000, "error");
-    return false;
-  }
-  serverEtag = res.headers.get("ETag") || serverEtag;
-  conflictPending = false;
-  try { ensureDailyBackup(); } catch {}
-  dirty = false;
-  // Rewrite the whole indicator, not just the dot: a save that resolves a
-  // conflict (or the first save after a failed one) has to clear the stale
-  // "conflict — server has a newer version" label as well as the colour.
-  updateFileStatus("finance-data.json", true);
-  return true;
 }
 
 // Another device wrote since we loaded. We do NOT touch the in-memory data —
@@ -3826,19 +3856,18 @@ function envelopeActivityTier(env) {
 
 // Real spending per envelope in one calendar month, one pass over the tx
 // list: {envId: spent}. Same rules as envelopeMonthSummary's `spent` (split-
-// aware, isCashflowTx so one-sided bookkeeping doesn't count, transfers out
-// count) but for every envelope at once — the card grid needs all of them.
+// aware, real cashflow only) but for every envelope at once — the card grid
+// needs all of them. Reallocating envelopes changes reservations, not spending.
 function envelopeMonthSpendMap(ym) {
   const start = ym + "-01", last = lastDayOfMonthKey(ym);
+  const today = todayISO();
   const out = {};
   for (const tx of data.transactions) {
-    if (tx.date < start || tx.date > last) continue;
+    if (tx.date < start || tx.date > last || tx.date > today) continue;
     if (tx.type === 'expense' && isCashflowTx(tx)) {
       if (tx.splits && tx.splits.length) {
         for (const sp of tx.splits) if (sp.envelopeId) out[sp.envelopeId] = (out[sp.envelopeId] || 0) + Math.abs(sp.amount || 0);
       } else if (tx.envelopeId) out[tx.envelopeId] = (out[tx.envelopeId] || 0) + tx.amount;
-    } else if (tx.type === 'transfer-envelope' && tx.fromEnvelopeId) {
-      out[tx.fromEnvelopeId] = (out[tx.fromEnvelopeId] || 0) + tx.amount;
     }
   }
   return out;
@@ -4708,14 +4737,14 @@ function closeOutDue() {
 function envelopeMonthSummary(env, ym) {
   const last = lastDayOfMonthKey(ym);
   const start = ym + "-01";
+  const today = todayISO();
   let spent = 0, funded = 0;
   for (const tx of data.transactions) {
-    if (tx.date < start || tx.date > last) continue;
+    if (tx.date < start || tx.date > last || tx.date > today) continue;
     if (tx.type === 'expense') { if (isCashflowTx(tx)) spent += txEnvelopePortion(tx, env.id); }
     else if (tx.type === 'income') funded += txEnvelopePortion(tx, env.id);
     if (tx.type === 'transfer-envelope') {
       if (tx.toEnvelopeId === env.id) funded += tx.amount;
-      if (tx.fromEnvelopeId === env.id) spent += tx.amount;
     }
   }
   // Balance at month end: rerun the envelopeBalance logic but capped by `last`.
@@ -6868,10 +6897,11 @@ function isCashflowTx(tx) {
 // of re-scanning; together they now scan the tx list once, not four times.
 let _reportsAgg = null;
 function reportsAggregates() {
-  const today = parseDate(todayISO());
+  const todayKey = todayISO();
+  const today = parseDate(todayKey);
   const months = [];
   for (let i = 11; i >= 0; i--) {
-    const d = addMonths(today, -i);
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
     months.push({ key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,
       labelLong: d.toLocaleDateString('en', { month: 'short', year: '2-digit' }),
       labelShort: d.toLocaleDateString('en', { month: 'short' }),
@@ -6887,6 +6917,7 @@ function reportsAggregates() {
   // internal movement and is ignored. Key '' = untagged expense.
   const tagOutflow = tx => (tx.type === 'expense' && isCashflowTx(tx)) || (tx.type === 'transfer-account' && tx.tag);
   for (const tx of data.transactions) {
+    if (tx.date > todayKey) continue;
     if (isCashflowTx(tx)) {
       const m = months.find(x => x.key === tx.date.slice(0, 7));
       if (m) {
@@ -7487,6 +7518,10 @@ function renderHelp() {
     </details>
     <details class="faq"><summary>What does Lowest projected spendable mean?</summary>
     <div>The lowest point over exactly the horizon selected in Forecast, using the same accounts and envelope-allowance setting. The Dashboard always shows spendable cash, even if the chart displays only total or individual account lines. The assumption chips state whether allowances are included. The projection assumes no new envelope funding: <strong>Fund the month</strong> recalculates the low for the amounts you propose. Money already set aside pays for its envelope's projected spending first, so it is not charged twice.</div>
+    </details>
+
+    <details class="faq"><summary>What counts as spent this month?</summary>
+    <div>Envelope cards, Budget vs actual and close-out count real expenses dated through today, including each envelope's share of split purchases. Moving funds between envelopes, sweeping leftovers and returning an allocation to spendable cash do not count as spending. Future-dated transactions enter actual spending on their date; the forecast still projects them in advance. Tagged transfers between accounts keep their separate meaning in the tag reports.</div>
     </details>
 
     <details class="faq"><summary>Fund the month vs. Fund vs. Move funds vs. Return — which do I use?</summary>

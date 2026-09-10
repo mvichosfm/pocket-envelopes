@@ -233,6 +233,8 @@ def _write_data(payload: bytes):
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    # A sleeping phone or interrupted upload must not strand a handler forever.
+    timeout = 30
     last_request = time.monotonic()
 
     # -- helpers ------------------------------------------------------------

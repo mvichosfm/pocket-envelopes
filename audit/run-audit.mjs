@@ -81,14 +81,14 @@ function extractFunction(source, name) {
   const match = new RegExp(`(?:async\\s+)?function\\*?\\s+${name}\\s*\\(`).exec(source);
   if (!match) throw new Error(`Function ${name} not found`);
   const start = match.index;
-  const open = source.indexOf("{", start);
+  let parameters = 1;
   let depth = 0;
   let quote = null;
   let escaped = false;
   let lineComment = false;
   let blockComment = false;
 
-  for (let i = open; i < source.length; i++) {
+  for (let i = start + match[0].length; i < source.length; i++) {
     const ch = source[i];
     const next = source[i + 1];
     if (lineComment) {
@@ -108,6 +108,12 @@ function extractFunction(source, name) {
     if (ch === "/" && next === "/") { lineComment = true; i++; continue; }
     if (ch === "/" && next === "*") { blockComment = true; i++; continue; }
     if (ch === '"' || ch === "'" || ch === "`") { quote = ch; continue; }
+    // Destructured/default parameters can contain braces before the body.
+    if (parameters) {
+      if (ch === "(") parameters++;
+      if (ch === ")") parameters--;
+      continue;
+    }
     if (ch === "{") depth++;
     if (ch === "}") {
       depth--;
@@ -151,16 +157,20 @@ function logicApi() {
     "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
+    "lastDayOfMonthKey", "envelopeMonthSummary", "envelopeMonthSpendMap", "reportsAggregates",
   ];
   const bundle = [
     "var data = null;",
     "let _balCache = null;",
     "const HAND_LOG_WINDOW_DAYS = 3;",
     "const uid = () => 'audit-id';",
+    "const tagColor = () => 'grey', themeColor = () => 'grey';",
+    "const allTags = () => data.settings?.tags || [];",
     ...names.map((name) => extractFunction(source, name)),
     `globalThis.__auditApi = {
       ${names.join(",")},
       setData(value) { data = value; },
+      setToday(value) { todayISO = () => value; },
       getData() { return data; }
     };`,
   ].join("\n\n");
@@ -449,6 +459,145 @@ if (api) {
     assert.equal(api.isCashflowTx({ type: "income", accountId: "invest", payee: "Market adjustment" }), false);
   });
 }
+
+if (api) {
+  check("Reports retain twelve distinct months on month-end and leap dates", () => {
+    api.setData({ transactions: [], envelopes: [], settings: {} });
+    for (const date of ["2026-03-29", "2026-03-30", "2026-03-31", "2024-02-29", "2026-01-31"]) {
+      api.setToday(date);
+      const keys = Array.from(api.reportsAggregates().months, m => m.key);
+      assert.equal(new Set(keys).size, 12, date);
+      assert.equal(keys[11], date.slice(0, 7));
+      for (let i = 1; i < keys.length; i++) {
+        const serial = k => Number(k.slice(0, 4)) * 12 + Number(k.slice(5));
+        assert.equal(serial(keys[i]) - serial(keys[i - 1]), 1);
+      }
+    }
+  });
+  check("Cards, close-out and reports count actual spending, excluding future rows and reallocations", () => {
+    api.setToday("2026-09-10");
+    const food = { id: "food", name: "Food", openingBalance: 300 };
+    api.setData({ envelopes: [food, { id: "fun", name: "Fun" }], settings: { tags: ["Bills"] }, transactions: [
+      { date: "2026-09-01", type: "expense", amount: 250, accountId: "cash", envelopeId: "food" },
+      { date: "2026-09-02", type: "expense", amount: 30, accountId: "cash", splits: [{ envelopeId: "food", amount: 20 }, { envelopeId: "fun", amount: 10 }] },
+      { date: "2026-09-03", type: "transfer-envelope", amount: 15, fromEnvelopeId: "food", toEnvelopeId: "fun", payee: "Close-out sweep" },
+      { date: "2026-09-04", type: "transfer-envelope", amount: 5, fromEnvelopeId: "food", toEnvelopeId: "fun", payee: "Move funds" },
+      { date: "2026-09-05", type: "income", amount: 40, envelopeId: "food", accountId: null },
+      { date: "2026-09-06", type: "expense", amount: 3, envelopeId: "food", accountId: null },
+      { date: "2026-09-10", type: "transfer-account", amount: 7, fromAccountId: "cash", toAccountId: "savings", tag: "Bills" },
+      { date: "2026-09-25", type: "expense", amount: 100, accountId: "cash", envelopeId: "food", tag: "Bills" },
+      { date: "2026-09-25", type: "income", amount: 200, accountId: "cash", envelopeId: "food" },
+    ] });
+    assert.equal(api.envelopeMonthSpendMap("2026-09").food, 270);
+    const summary = api.envelopeMonthSummary(food, "2026-09");
+    assert.equal(summary.spent, 270);
+    assert.equal(summary.funded, 40);
+    assert.equal(summary.balance, 147, "month-end balance still includes scheduled rows and reallocations");
+    const report = api.reportsAggregates();
+    assert.equal(report.months[11].expense, 280);
+    assert.equal(report.months[11].income, 0);
+    assert.equal(report.envSpend.find(e => e.name === "Food").amt, 270);
+    assert.equal(report.tagSpend.find(t => t.name === "Bills").amt, 7, "tagged account transfers retain their meaning");
+    api.setToday("2026-10-01");
+    assert.equal(api.envelopeMonthSummary(food, "2026-09").spent, 370, "past months include all actual rows");
+  });
+}
+
+// Drive the real persistence functions with delayed responses, never a budget file.
+function persistenceApi() {
+  const requests = [], statuses = [];
+  const context = vm.createContext({
+    console: { error() {} }, TextEncoder,
+    setTimeout: () => 1, clearTimeout() {},
+    fetch(url, options) { return new Promise(resolve => requests.push({ options, resolve })); },
+    recordStatus: value => statuses.push(value),
+  });
+  const names = ["writeFile", "persistData", "saveDirty", "flushNow", "loadFromServer"];
+  vm.runInContext(`
+    let data = { value: 'A' }, dirty = true, demoMode = false, conflictPending = false;
+    let serverEtag = 'initial', saveInFlight = null, saveKeepaliveRequested = false, saveTimer = null, loadState = 'loaded';
+    const DATA_URL = '/data';
+    function setStatus(s) { recordStatus(s); }
+    function updateFileStatus(s) { recordStatus(s); }
+    function toast() {} function ensureDailyBackup() {}
+    function safeParseData(text) { return JSON.parse(text); }
+    function handleConflict() { conflictPending = true; dirty = true; recordStatus('conflict'); }
+    ${names.map(n => extractFunction(mainInlineScript(app), n)).join("\n")}
+    globalThis.api = { ${names.join(",")},
+      edit(value) { data = value; saveDirty(); },
+      demo() { demoMode = true; },
+      state() { return { dirty, conflictPending, serverEtag, loadState, data }; }
+    };
+  `, context);
+  return { ...context.api, requests, statuses };
+}
+function respond(request, status = 204, tag = 'saved', text = async () => '{}') {
+  request.resolve({ status, ok: status >= 200 && status < 300, headers: { get: k => k === 'ETag' ? tag : null }, text });
+}
+async function until(predicate) {
+  for (let i = 0; i < 30; i++) { if (predicate()) return; await Promise.resolve(); }
+  assert.ok(predicate(), "expected asynchronous progress");
+}
+async function asyncCheck(name, fn) {
+  try { await fn(); pass(name); } catch (error) { fail(name, error.message); }
+}
+await asyncCheck("Delayed saves drain newer edits with a fresh ETag and no self-conflict", async () => {
+  const p = persistenceApi();
+  const first = p.writeFile();
+  p.edit({ value: 'B' });
+  p.flushNow();
+  const joined = p.writeFile();
+  assert.equal(p.requests.length, 1);
+  respond(p.requests[0], 204, 'A-tag');
+  await until(() => p.requests.length === 2);
+  assert.equal(p.state().dirty, true);
+  assert.ok(!p.statuses.includes('finance-data.json'), "must not label newer edits saved early");
+  assert.equal(JSON.parse(p.requests[1].options.body).value, 'B');
+  assert.equal(p.requests[1].options.headers['If-Match'], 'A-tag');
+  assert.equal(p.requests[1].options.keepalive, true);
+  respond(p.requests[1]);
+  assert.equal(await first, true);
+  assert.equal(await joined, true);
+  assert.equal(p.requests.length, 2);
+  assert.equal(p.state().dirty, false);
+});
+await asyncCheck("Real conflicts pause saving until an explicit overwrite; failures preserve dirty state", async () => {
+  const p = persistenceApi();
+  const first = p.writeFile();
+  respond(p.requests[0], 409, 'other-device');
+  assert.equal(await first, false);
+  assert.equal(await p.writeFile(), false);
+  assert.equal(p.requests.length, 1);
+  assert.equal(p.state().dirty, true);
+  const forced = p.writeFile({ force: true });
+  assert.equal(p.requests[1].options.headers['If-Match'], undefined);
+  respond(p.requests[1], 503);
+  assert.equal(await forced, false);
+  assert.equal(p.state().dirty, true);
+  const retry = p.writeFile({ force: true });
+  respond(p.requests[2]);
+  assert.equal(await retry, true);
+  assert.equal(p.state().conflictPending, false);
+});
+await asyncCheck("Keepalive measures UTF-8 bytes, and demo edits never send requests", async () => {
+  for (const [value, expected] of [['x'.repeat(40000), true], ['α'.repeat(40000), false]]) {
+    const p = persistenceApi(); p.edit({ value });
+    const saving = p.writeFile({ keepalive: true });
+    assert.equal(p.requests[0].options.keepalive, expected);
+    respond(p.requests[0]); await saving;
+  }
+  const p = persistenceApi(); p.demo();
+  assert.equal(await p.writeFile(), true);
+  assert.equal(p.requests.length, 0);
+});
+await asyncCheck("A failed response-body read leaves the existing budget and failed-load guard intact", async () => {
+  const p = persistenceApi();
+  const loading = p.loadFromServer();
+  respond(p.requests[0], 200, 'new-tag', async () => { throw Error('connection reset'); });
+  assert.equal(await loading, false);
+  assert.equal(p.state().loadState, 'failed');
+  assert.equal(p.state().data.value, 'A');
+});
 
 // ------------------------------------------------------- 3b. serve.py guards
 {

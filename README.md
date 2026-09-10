@@ -188,6 +188,8 @@ The Windows installer is **not code-signed**, so SmartScreen shows an "unrecogni
 
 ## Contributing and license
 
-See `CONTRIBUTING.md`. Bug reports with a reproduction on the demo data are the most useful thing you can send.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks, and
+[ROADMAP.md](ROADMAP.md) for the path to 1.0 and useful first contributions.
+Bug reports with a reproduction on the demo data are the most useful thing you can send.
 
 MIT — see `LICENSE`. Chart.js is © Chart.js Contributors, MIT, vendored under `vendor/` with its license text.

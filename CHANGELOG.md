@@ -5,6 +5,25 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased — reliability and contributor checks
+
+- Saves are serialized and drain edits made during an earlier save, using the
+  latest ETag. A completed earlier request cannot label a newer edit saved,
+  and duplicate save triggers do not conflict with the same tab's own write.
+  Genuine conflicts still require reload or explicit overwrite.
+- Keepalive limits measure UTF-8 bytes. Interrupted response bodies show the
+  failed-load screen; stalled uploads time out instead of holding server threads.
+- **(accounting)** Envelope cards, close-out spending and budget-vs-actual count
+  real expenses only. Moving funds or sweeping leftovers between envelopes
+  changes reservations/balances without inflating spending. Incoming transfers
+  still count as funding. Current actuals exclude future-dated rows; month-end
+  projected balances and tagged account-transfer reports retain their meaning.
+- Reports always show twelve distinct consecutive months, including the 29th–31st.
+- Added regression checks for reporting and save races, disposable server
+  save/conflict/recovery tests, and browser persistence checks. Pull requests
+  run the core checks on three operating systems and browser checks on Linux.
+- Added a readiness roadmap, reproducible contributor test setup and PR template.
+
 ## 2026-09-10 — v0.10.0, interface refresh: spendable-cash dashboard, phone navigation, clearer entry
 
 - Dashboard features actual spendable cash and the projected spendable low,

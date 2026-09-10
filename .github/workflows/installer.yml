@@ -59,6 +59,9 @@ jobs:
       - name: Audit the app (syntax + accounting checks)
         run: node audit/run-audit.mjs
 
+      - name: Verify server persistence and recovery
+        run: python audit/test_server.py
+
       - name: Build with Inno Setup (preinstalled on the runner)
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/build.ps1 -Version ${{ steps.version.outputs.version }}

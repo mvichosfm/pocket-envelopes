@@ -35,6 +35,54 @@ expect some to be declined to keep the app small.
 4. If you change anything the service worker caches (the app file, the
    vendored chart library, icons, manifest), bump `CACHE_NAME` in `sw.js`.
 
+### Run the checks
+
+Use Node.js 22+ and Python 3.8+ for the core checks, from the repository root:
+
+```sh
+node audit/run-audit.mjs
+python audit/test_server.py
+```
+
+Use `python3` if that is your Python command. The first command tests the
+accounting, reporting and asynchronous save functions with synthetic fixtures.
+The second starts temporary loopback servers and verifies real save/load,
+concurrent edits, backup rotation and restoration, and interrupted uploads.
+Neither command reads your budget.
+
+Browser checks need Python 3.12+ and optional development dependencies:
+
+```sh
+python -m venv .venv
+# Activate: .venv\Scripts\activate on Windows; source .venv/bin/activate on macOS/Linux
+python -m pip install -r audit/requirements.txt
+python -m playwright install chromium
+python audit/run_browser.py
+```
+
+On Linux, use `python -m playwright install --with-deps chromium` if system
+browser libraries are missing. `run_browser.py` creates and cleans up its own
+scratch server on a free port. It runs responsive/theme checks and a browser
+save/conflict/restore scenario. There is no need to start your normal server.
+To use an installed Edge or Chrome, set `BROWSER_CHANNEL=msedge` or `chrome`.
+
+The **Checks** workflow runs on pull requests and pushes to `main`: core checks
+on Windows, macOS and Linux, plus Chromium browser checks on Linux. The workflow
+definition is not a claim that every platform has already passed locally.
+
+### A first contribution
+
+Start with [ROADMAP.md](ROADMAP.md). Useful contributions include a clearer
+first-budget walkthrough, synthetic bank-import examples, and additional browser
+coverage. For a larger feature, describe the intended behavior in a Discussion
+before implementing it. Improvements that help other households are welcome
+when they preserve accurate accounting, local ownership and the small runtime.
+
+For code changes, start at the relevant helper in `CLAUDE.md`, add a synthetic
+example that demonstrates the problem, then change the behavior and run the
+checks above. Describe the expected numbers in your pull request so another
+person can verify them without sharing a real budget.
+
 `CLAUDE.md` is the developer guide: architecture invariants, data model,
 helpers worth knowing, and the decision log. It is written for coding
 assistants as much as for people; `AGENTS.md` points at it for tools that

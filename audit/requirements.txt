@@ -1,0 +1,2 @@
+# Optional browser test tooling only; the app/server has no pip dependencies.
+playwright==1.61.0
