@@ -146,13 +146,17 @@ def _host_allowed_name(host_header) -> bool:
     if host in (own, own + ".local", own.split(".")[0]):
         return True
     return host in ALLOWED_HOSTS
-mimetypes.add_type("text/html", ".app")
-# PWA assets. Windows' registry-backed mimetypes module reports .js as
-# text/plain on some machines, which makes the browser refuse to register the
-# service worker ("unsupported MIME type") — so pin both explicitly rather
-# than trusting the host.
-mimetypes.add_type("application/manifest+json", ".webmanifest")
-mimetypes.add_type("text/javascript", ".js")
+# Content types the stdlib would get wrong. Windows' registry-backed
+# mimetypes module reports .js as text/plain on some machines, which makes the
+# browser refuse to register the service worker ("unsupported MIME type") — so
+# pin all three explicitly rather than trusting the host.
+_STATIC_TYPES = {
+    ".app": "text/html",
+    ".webmanifest": "application/manifest+json",
+    ".js": "text/javascript",
+}
+for _ext, _mime in _STATIC_TYPES.items():
+    mimetypes.add_type(_mime, _ext)
 
 # Where the budget lives. Default: next to this file, which is what a
 # checkout expects. The Windows installer sets DATA_DIR to a per-user folder
@@ -233,6 +237,12 @@ def _write_data(payload: bytes):
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    # Python 3.8's handler never consults the mimetypes registry: it reads only
+    # this table, copied at import time, so the registrations above must be
+    # mirrored here or the app is served as application/octet-stream (a
+    # download prompt instead of a page). 3.9+ falls through to mimetypes and
+    # ignores the duplicate.
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, **_STATIC_TYPES}
     # A sleeping phone or interrupted upload must not strand a handler forever.
     timeout = 30
     last_request = time.monotonic()

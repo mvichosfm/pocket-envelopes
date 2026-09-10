@@ -23,6 +23,9 @@ because those are the ones worth re-checking your own figures after.
   save/conflict/recovery tests, and browser persistence checks. Pull requests
   run the core checks on three operating systems and browser checks on Linux.
 - Added a readiness roadmap, reproducible contributor test setup and PR template.
+- Python 3.8 serves the app, manifest and service worker with the right content
+  types again; its file handler ignores `mimetypes.add_type`, so the entries are
+  mirrored onto the handler's own table. Caught by the new 3.8 CI job.
 
 ## 2026-09-10 — v0.10.0, interface refresh: spendable-cash dashboard, phone navigation, clearer entry
 
