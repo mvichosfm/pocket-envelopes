@@ -28,7 +28,7 @@
      Ink navy is the inside of the envelope, manila is the paper itself, and
      the blue is the security tint printed inside bank envelopes so the
      contents can't be read through them. That blue is the interactive colour
-     AND the material the envelope cards fill with — see .envelope below.
+     throughout the interface. Envelope bars show monthly spending pace.
      Semantics stay separated so nothing has to do double duty: blue acts,
      green credits, red debits, ochre warns.                                  */
   :root {
@@ -50,8 +50,7 @@
     --radius: 10px;
     --chart-grid: rgba(255,255,255,.06);
     --chart-total: #d9c89e;
-    /* Money and data are set in a tabular mono so decimal columns line up the
-       way they would in a ledger. Body copy stays in the UI sans. */
+    /* A single UI typeface with tabular numerals keeps amounts aligned. */
   }
   /* Light: white sheets on a cool light-grey desk. The first light theme was
      manila stock with a barely lighter sheet on it; cards had almost no
@@ -82,6 +81,7 @@
     --chart-total: #8a6516;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
     font: 14px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; }
   button { font: inherit; color: inherit; cursor: pointer; }
@@ -109,59 +109,13 @@
   nav.tabs button { letter-spacing: .01em; }
   header.top .file-status { align-self: center; flex-shrink: 0; }
   header.top > button.btn { align-self: center; flex-shrink: 0; }
-  .file-status { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  .file-status { font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
   .file-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
   .file-status.saved .dot { background: var(--good); }
   .file-status.unsaved .dot { background: var(--warn); }
   .file-status.no-file .dot { background: var(--bad); }
   .file-status.conflict { cursor: pointer; color: var(--warn); }
   .file-status.conflict .dot { background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
-  /* Below 720px the desktop one-row layout runs out of room. Stack: title +
-     status + buttons on row 1; horizontally-scrolling tabs on row 2. */
-  @media (max-width: 720px) {
-    header.top { flex-wrap: wrap; padding: 6px 14px 0; gap: 6px; min-height: 0;
-      padding-top: calc(6px + env(safe-area-inset-top, 0px));
-      padding-left: calc(14px + env(safe-area-inset-left, 0px));
-      padding-right: calc(14px + env(safe-area-inset-right, 0px)); }
-    header.top nav.tabs { order: 99; flex-basis: 100%; }
-    /* Row 1 must hold the title, the status and the three buttons on a
-       375px phone. The title takes what is left and the status label is
-       allowed to truncate; the buttons shrink to their small size. */
-    header.top h1 { font-size: 15px; flex: 1 1 auto; min-width: 0; }
-    header.top h1 span, header.top h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    header.top .file-status { font-size: 11px; min-width: 0; max-width: 40vw; }
-    header.top .file-status #fileLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    header.top > button.btn { padding: 5px 9px; font-size: 12px; min-height: 30px; }
-    header.top > button.btn.ghost { padding: 5px 6px; }
-    /* The tab strip still scrolls sideways, but without a scrollbar: the
-       row is a control, not a document. Edge fades (data-fade, kept up to
-       date by a scroll listener) say there is more on that side. */
-    nav.tabs { gap: 0; scrollbar-width: none; -webkit-overflow-scrolling: touch;
-      margin: 0 -14px; padding: 0 14px; }
-    nav.tabs::-webkit-scrollbar { display: none; }
-    nav.tabs[data-fade="right"] { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
-    nav.tabs[data-fade="left"] { mask-image: linear-gradient(to right, transparent, #000 28px); -webkit-mask-image: linear-gradient(to right, transparent, #000 28px); }
-    nav.tabs[data-fade="both"] { mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
-    nav.tabs button { padding: 10px 11px 9px; font-size: 13px; }
-  }
-  /* Narrow phones: the status collapses to its dot (the colour carries the
-     state; the text is in the title attribute) unless there is a conflict,
-     which must stay legible. */
-  @media (max-width: 460px) {
-    header.top .file-status:not(.conflict) #fileLabel { display: none; }
-    header.top .file-status { max-width: none; }
-  }
-  /* Between ~720px and ~1380px the single-row header can't fit the title +
-     status + buttons + all 10 tabs, so the tab strip would clip behind a
-     horizontal scrollbar (1280px laptops hit this). Drop the tabs to their own
-     full-width row — without the small-screen font shrink above. */
-  /* Up to 1440px the tab strip takes its own row: between 1381 and 1440 the
-     ten tabs plus a long status label ("demo data (not saved)", "conflict")
-     clipped the last tab. */
-  @media (min-width: 721px) and (max-width: 1440px) {
-    header.top { flex-wrap: wrap; }
-    header.top nav.tabs { order: 99; flex-basis: 100%; }
-  }
   .file-status.conflict:hover { color: var(--text); }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
@@ -180,7 +134,7 @@
   [data-theme="light"] .btn.ghost:focus-visible { border-color: var(--border); }
   [data-theme="light"] .btn:not(.primary):not(.ghost) { background: var(--bg-2); }
   [data-theme="light"] .btn:not(.primary):not(.ghost):hover { background: var(--bg-3); }
-  .btn.sm { padding: 4px 8px; font-size: 12px; min-height: 24px; }
+  .btn.sm { padding: 4px 8px; font-size: 13px; min-height: 24px; }
   .btn.icon { padding: 4px 6px; font-size: 14px; line-height: 1; min-width: 24px; min-height: 24px; }
   /* WCAG 2.5.8 wants ≥24px targets; touch (coarse) pointers want roomier ones. */
   @media (pointer: coarse) {
@@ -241,8 +195,8 @@
       var(--bg-2);
   }
   .grid { display: grid; gap: 14px; }
-  .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-  .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+  .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); }
+  .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); }
 
   /* Figures are the content here. They stay in the UI face — one type
      family across the app (the monospace "ledger" face read as a terminal
@@ -254,14 +208,14 @@
   .stat.lg { font-size: 34px; letter-spacing: -.03em; }
   .stat .currency { color: var(--text-dim); font-size: .65em; margin-left: 4px; }
   /* Eyebrow labels read like the ruled headings on a statement. */
-  .stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+  .stat-label { font-size: 13px; color: var(--text-dim); text-transform: uppercase;
     letter-spacing: .1em; font-weight: 600; }
   .delta { font-size: 13px; margin-top: 4px; }
   .delta.up { color: var(--good); }
 
   .dash-fc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
   .dash-fc-cell { background: var(--bg-3); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
-  .dash-fc-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
+  .dash-fc-label { font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
   .dash-fc-value { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
   .dash-fc-value.neg { color: var(--bad); }
   /* Low-point tiles carry a tone only when there is something to say. */
@@ -269,13 +223,13 @@
   .dash-fc-cell.tone-warn .dash-fc-value { color: var(--warn); }
   .dash-fc-cell.tone-bad { border-color: var(--bad); }
   .dash-fc-cell.tone-bad .dash-fc-value { color: var(--bad); }
-  .dash-fc-note { font-size: 11px; margin-top: 4px; }
+  .dash-fc-note { font-size: 13px; margin-top: 4px; }
   .tone-warn .dash-fc-note { color: var(--warn); }
   .tone-bad .dash-fc-note { color: var(--bad); }
-  .dash-fc-delta { font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .dash-fc-delta { font-size: 13px; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .dash-fc-delta.up { color: var(--good); }
   .dash-fc-delta.down { color: var(--bad); }
-  .dash-fc-spend { font-size: 11px; color: var(--warn); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .dash-fc-spend { font-size: 13px; color: var(--warn); margin-top: 4px; font-variant-numeric: tabular-nums; }
   .delta.down { color: var(--bad); }
 
   /* Account drag-and-drop polish — used both on the Dashboard's pinned-accounts
@@ -298,7 +252,7 @@
   .card { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   table th, table td { padding: 11px 10px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
-  table th { color: var(--text-dim); font-weight: 600; font-size: 11px;
+  table th { color: var(--text-dim); font-weight: 600; font-size: 13px;
     text-transform: uppercase; letter-spacing: .1em; }
   table tr:hover td { background: var(--bg-3); }
   /* Amount columns: tabular numerals, so they align on the decimal. */
@@ -307,7 +261,7 @@
   .neg { color: var(--bad); }
   .pos { color: var(--good); }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
-    font-size: 11px; background: var(--bg-3); color: var(--text-dim); border: 1px solid var(--border); }
+    font-size: 13px; background: var(--bg-3); color: var(--text-dim); border: 1px solid var(--border); }
   .badge.invest { color: var(--accent-2); border-color: var(--accent-2); }
   .badge.income { color: var(--good); border-color: var(--good); }
   .badge.expense { color: var(--bad); border-color: var(--bad); }
@@ -322,7 +276,7 @@
      (the word is there for screen readers and in the tooltip), and — where
      the table fits without sideways scrolling — a header that stays put
      under the app header while the list scrolls. */
-  tr.tx-day td { background: var(--bg-3); color: var(--text-dim); font-size: 12px; padding: 6px 10px;
+  tr.tx-day td { background: var(--bg-3); color: var(--text-dim); font-size: 13px; padding: 6px 10px;
     border-bottom: 1px solid var(--border); }
   tr.tx-day td strong { color: var(--text); font-weight: 600; }
   tr.tx-day:hover td { background: var(--bg-3); }
@@ -379,7 +333,7 @@
   .envelope .ev-name { font-weight: 600; font-size: 15px; letter-spacing: -.01em; }
   .envelope .ev-bal { font-size: 19px; font-weight: 650;
     font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
-  .envelope .ev-meta { display: flex; justify-content: space-between; font-size: 11px;
+  .envelope .ev-meta { display: flex; justify-content: space-between; font-size: 13px;
     color: var(--text-dim); font-variant-numeric: tabular-nums;
     margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
   /* The pace bar. Track = this month's budget; fill = what is spent of it;
@@ -406,7 +360,7 @@
   tr.bva-over:hover td { background: color-mix(in srgb, var(--bad) 12%, transparent); }
   /* This month's spending against the budget — the figure an envelope
      budgeter checks most, and the one the balance alone doesn't tell you. */
-  .envelope .ev-month { display: flex; justify-content: space-between; font-size: 11px;
+  .envelope .ev-month { display: flex; justify-content: space-between; font-size: 13px;
     color: var(--text-dim); font-variant-numeric: tabular-nums; margin-top: 4px; }
   .envelope .ev-month .over { color: var(--bad); }
   /* Three money actions you came for, then a "⋯" menu for the rare ones
@@ -476,7 +430,7 @@
     .co-table td { border: none; padding: 3px 0; display: flex; gap: 10px;
       justify-content: space-between; align-items: baseline; }
     .co-table td::before { content: attr(data-label); color: var(--text-dim);
-      font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600; }
+      font-size: 13px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600; }
     .co-table td.co-name, .co-table td.co-action { grid-column: 1 / -1; }
     /* Block, not flex: the name and its badge must read as one line, and
        space-between would fling the badge to the far edge. */
@@ -492,7 +446,7 @@
     .co-table td.co-action select { flex: 1 0 100%; }
   }
   .field { margin-bottom: 12px; }
-  .field label { display: block; font-size: 12px; color: var(--text-dim);
+  .field label { display: block; font-size: 13px; color: var(--text-dim);
     margin-bottom: 4px; text-transform: uppercase; letter-spacing: .5px; }
   .field input:not([type="checkbox"]), .field select, .field textarea {
     width: 100%; padding: 8px 10px; background: var(--bg); color: var(--text);
@@ -556,7 +510,7 @@
   .ob-step.ob-done .ob-num { background: var(--good); color: var(--on-fill); border-color: var(--good); }
   .ob-body { flex: 1; min-width: 0; }
   .ob-title { font-weight: 600; font-size: 14px; }
-  .ob-blurb { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .ob-blurb { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
   @media (max-width: 600px) {
     .ob-step { flex-wrap: wrap; }
     .ob-body { flex-basis: calc(100% - 42px); }
@@ -568,9 +522,9 @@
     padding: 10px 0; border-bottom: 1px solid var(--border); max-width: 720px; }
   .setting-row:last-child { border-bottom: none; }
   /* Promotion of the inline 11px muted micro-copy used in ~15 places. */
-  .micro { font-size: 11px; color: var(--text-dim); }
+  .micro { font-size: 13px; color: var(--text-dim); }
   .setting-row .label { font-weight: 500; }
-  .setting-row .desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .setting-row .desc { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
   .setting-row input, .setting-row select {
     padding: 8px 10px; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 6px; }
@@ -597,7 +551,7 @@
   .toast button.toast-action:hover { text-decoration: underline; }
 
   .pill { display: inline-block; padding: 1px 7px; border-radius: 4px;
-    font-size: 11px; background: var(--bg-3); color: var(--text-dim); }
+    font-size: 13px; background: var(--bg-3); color: var(--text-dim); }
 
   /* Tiny "?" bubble next to labels for jargon explanations. The text lives
      in the native title attribute — works on desktop hover and screen readers
@@ -691,6 +645,199 @@
   .help details.faq summary { padding: 8px 0; font-weight: 500; }
   .help details.faq[open] summary { color: var(--accent); }
   .help details.faq > div { padding: 0 0 10px; color: var(--text); }
+
+  /* Visual review branch: hierarchy, readable detail and phone layouts. */
+  :root { --radius: 14px; --text-dim: #a4b0c1; }
+  [data-theme="light"] { --text-dim: #586477; }
+  html, body { line-height: 1.5; }
+  main { padding: 28px 28px 40px; }
+  h2 { font-size: 26px; letter-spacing: -.025em; margin-bottom: 20px; }
+  h3 { font-size: 16px; }
+  .card { padding: 20px; min-width: 0; }
+  .grid { gap: 20px; min-width: 0; }
+  .grid > * { min-width: 0; }
+  .stat-label, .dash-fc-label, .field label { text-transform: none; letter-spacing: 0; font-size: 13px; }
+  .stat { font-size: 27px; }
+  .muted { color: var(--text-dim); font-size: 13px; }
+  .page-heading, .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .page-heading { margin-bottom: 24px; }
+  .page-heading h2 { margin: 0; }
+  .page-heading p { color: var(--text-dim); margin: 4px 0 0; }
+  .section-heading { margin-bottom: 18px; }
+  .section-heading h3 { margin: 0; }
+  .btn { min-height: 36px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.sm, .btn.icon { min-height: 30px; }
+  .brand-icon { color: var(--accent-2); width: 24px; height: 24px; margin-right: 9px; }
+  header.top { flex-wrap: wrap; gap: 10px; padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
+  header.top h1 { flex: 1; }
+  header.top nav.tabs { order: 99; flex: 1 0 100%; overflow: visible; gap: 16px; flex-wrap: wrap; }
+  .nav-group { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+  .nav-group + .nav-group { border-left: 1px solid var(--border); padding-left: 16px; }
+  .nav-group-label { font-size: 12px; color: var(--text-dim); padding-right: 8px; }
+  nav.tabs button { padding: 12px 10px; font-size: 14px; }
+  .nav-admin { margin-left: auto; }
+  .mobile-nav { display: none; }
+  .more-sections { display: grid; gap: 20px; }
+  .more-sections h3 { color: var(--text-dim); font-size: 13px; font-weight: 500; }
+  .more-destination { width: 100%; text-align: left; margin-bottom: 6px; }
+  .cash-hero { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--bg-2); padding: 28px; margin-bottom: 20px; }
+  [data-theme="light"] .cash-hero { background: var(--bg-2); }
+  .cash-hero .section-heading h3 { color: var(--accent-2); }
+  .cash-hero-figures { display: grid; grid-template-columns: 1.1fr 1fr; gap: 32px; margin: 24px 0; }
+  .hero-amount { font-size: clamp(30px, 3.4vw, 50px); font-weight: 650; letter-spacing: -.04em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .hero-low { font-size: clamp(26px, 2.8vw, 38px); font-weight: 600; letter-spacing: -.03em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .cash-low { border-left: 1px solid var(--border); padding-left: 32px; }
+  .cash-low.tone-bad .hero-low { color: var(--bad); }
+  .cash-low.tone-warn .hero-low { color: var(--warn); }
+  .cash-hero-figures p { margin: 4px 0 0; }
+  .hero-context { display: flex; gap: 10px 18px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--text-dim); }
+  .assumption-chip { padding: 4px 10px; border-radius: 6px; background: var(--bg-3); color: var(--text); }
+  .assumption-chip.allowances-off { color: var(--warn); }
+  .hero-note { color: var(--text-dim); font-size: 13px; margin: 14px 0 0; max-width: 90ch; }
+  .attention-panel { margin: 0 0 24px; background: var(--bg-2); }
+  .attention-row { display: flex; gap: 16px; align-items: center; padding: 12px 0; }
+  .attention-row + .attention-row { border-top: 1px solid var(--border); }
+  .attention-panel .section-heading { margin-bottom: 2px; }
+  .attention-copy { flex: 1; min-width: 0; }
+  .attention-copy strong, .attention-copy > span { display: block; }
+  .attention-copy > span { color: var(--text-dim); font-size: 13px; margin-top: 3px; }
+  .status-label { color: var(--accent-2); background: var(--bg-3); border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+  .status-label.due { color: var(--warn); }
+  .wealth-summary { margin: 0 0 28px; padding: 4px 8px 24px; border-bottom: 1px solid var(--border); }
+  .wealth-item { padding: 0 16px; }
+  .wealth-item + .wealth-item { border-left: 1px solid var(--border); }
+  .envelope { padding: 20px; }
+  .envelope .ev-head { align-items: start; gap: 12px; }
+  .ev-name { overflow-wrap: anywhere; }
+  .ev-balance { flex-shrink: 0; text-align: right; }
+  .envelope .ev-bal { font-size: 24px; }
+  .envelope .ev-meta { margin-top: 14px; }
+  .envelope .ev-month { display: block; margin: 16px 0 0; font-size: 13px; }
+  .ev-month > span { display: block; }
+  .ev-month > span + span { margin-top: 3px; }
+  .ev-month strong { color: var(--text); font-weight: 600; }
+  .envelope .ev-bar { height: 7px; margin-top: 30px; margin-bottom: 8px; }
+  .ev-today { position: absolute; bottom: 12px; left: 0; transform: translateX(var(--tick-offset, -50%)); font-size: 12px; color: var(--text-dim); font-weight: 400; }
+  .envelope .ev-actions { margin-top: 20px; }
+  .toolbar { gap: 10px; }
+  .tx-search-row { flex: 1 0 100%; display: flex; gap: 10px; margin-top: 6px; }
+  .tx-search-row #txFilter { flex: 1; min-width: 0; padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; }
+  .tx-advanced { flex: 1 0 100%; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--bg-2); }
+  .tx-advanced .filter-input { max-width: 100%; min-width: 0; flex: 1 1 150px; border: 1px solid var(--border); border-radius: 6px; }
+  .tx-totals { flex-basis: 100%; padding: 4px 0; }
+  .bulk-bar { margin: 14px 0; }
+  .forecast-horizon { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .forecast-horizon > div { display: flex; gap: 6px; flex-wrap: wrap; }
+  .forecast-row { flex-wrap: nowrap; align-items: flex-start; }
+  .forecast-controls { flex: 0 0 var(--forecast-controls-w, 310px); min-width: 0; flex-direction: column; gap: 0; padding: 18px; }
+  .fc-section { min-width: 0; margin: 0; padding: 14px 0; }
+  .fc-section:first-child { padding-top: 0; }
+  .fc-section + .fc-section { border-top: 1px solid var(--border); }
+  .fc-section > summary { font-weight: 600; padding: 4px 0 12px; }
+  .fc-section:not([open]) > summary { padding-bottom: 0; }
+  .fc-section label { display: block; padding: 5px 0; }
+  .fc-section input { accent-color: var(--accent); }
+  .fc-section #fcProfile { width: 100%; flex-basis: 100% !important; }
+  .fc-section.fc-acc-picker { background: transparent; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+  .fc-section .fc-acc-summary { color: var(--text-dim); font-size: 13px; font-weight: 400; }
+  .fc-section.fc-acc-picker summary { border-bottom: 0; }
+  .fc-section .checkbox-list { background: transparent; padding: 0; }
+  .fc-section .checkbox-list label { display: flex; gap: 4px; flex-wrap: wrap; }
+  .forecast-chart-card { min-width: 0; display: block; }
+  .forecast-chart-card > .section-heading { min-height: 0; }
+  .forecast-chart-card > .forecast-canvas { min-height: 0; height: 460px; position: relative; }
+  .forecast-splitter { flex-basis: 16px; }
+  .forecast-splitter::before { width: 1px; }
+  .tx-modal { display: flex; flex-direction: column; overflow: hidden; width: min(640px, 100%); max-width: 640px; padding: 24px; }
+  .tx-modal h2 { flex-shrink: 0; }
+  .tx-form-body { overflow-y: auto; min-height: 0; padding: 0 4px; }
+  .tx-modal .modal-actions { flex-shrink: 0; padding-top: 16px; margin-top: 12px; border-top: 1px solid var(--border); }
+  .tx-amount-field input { font-size: 30px; font-weight: 600; letter-spacing: -.02em; padding: 12px; font-variant-numeric: tabular-nums; }
+  .tx-amount-field label { display: flex; justify-content: space-between; }
+  .tx-amount-field input::placeholder { font-size: 16px; font-weight: 400; letter-spacing: 0; }
+  .tx-allocation { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 14px; background: var(--bg-3); border-radius: 10px; margin-bottom: 16px; }
+  .tx-allocation .field { min-width: 0; margin-bottom: 0; }
+  .tx-allocation #t_env_single label { flex-wrap: wrap; gap: 0 !important; }
+  .tx-allocation #t_split_wrap { grid-column: 1 / -1; }
+  .tx-notes { padding: 8px 0; }
+  .tx-notes summary { font-weight: 500; }
+  .tx-notes summary .muted { margin-left: 8px; }
+  .field-error { color: var(--bad); font-size: 13px; margin: 5px 0; flex-basis: 100%; }
+  [aria-invalid="true"] { border-color: var(--bad) !important; outline: 1px solid var(--bad); outline-offset: 1px; }
+  .mobile-nav button:focus-visible, .fc-section summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  @media (max-width: 1100px) and (min-width: 721px) {
+    .nav-group-label { display: none; }
+    header.top nav.tabs { gap: 6px; }
+    .nav-group + .nav-group { padding-left: 6px; }
+    nav.tabs button { font-size: 13px; padding: 12px 8px; }
+    .nav-admin { margin-left: 0; }
+  }
+  @media (max-width: 900px) {
+    .forecast-row { flex-wrap: wrap; gap: 16px; }
+    .forecast-controls { flex: 1 1 100%; }
+    .forecast-chart-card { flex: 1 1 100%; }
+    .forecast-splitter { display: none; }
+  }
+  @media (max-width: 720px) {
+    header.top { padding: 8px 12px; padding-top: calc(8px + env(safe-area-inset-top, 0px)); align-items: center; gap: 6px; }
+    header.top h1 { font-size: 14px; min-width: 0; }
+    .brand-icon { width: 20px; height: 20px; margin-right: 6px; }
+    header.top nav.tabs { display: none; }
+    header.top > .btn { padding: 6px 8px; font-size: 13px; }
+    header.top .file-status:not(.conflict) #fileLabel { display: none; }
+    header.top .file-status.conflict { flex-basis: 100%; order: 100; padding: 4px 0; }
+    main { padding: 22px 16px calc(96px + env(safe-area-inset-bottom, 0px)); }
+    h2 { font-size: 24px; }
+    .card { padding: 18px; }
+    .mobile-nav { position: fixed; z-index: 60; inset: auto 0 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); background: var(--bg-2); }
+    .mobile-nav button { background: transparent; border: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 0; color: var(--text-dim); font-size: 11px; min-height: 54px; border-radius: 8px; }
+    .mobile-nav .ic { width: 20px; height: 20px; }
+    .mobile-nav button.active { color: var(--accent-2); background: var(--bg-3); }
+    .page-heading { gap: 14px; }
+    .page-heading p { font-size: 13px; }
+    .help dl { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .help dl dd { margin-bottom: 14px; }
+    .cash-hero .section-heading { gap: 10px; }
+    .cash-hero-figures { grid-template-columns: minmax(0, 1fr); gap: 20px; margin: 20px 0; }
+    .hero-amount { font-size: 38px; }
+    .hero-low { font-size: 30px; }
+    .cash-low { border-left: 0; border-top: 1px solid var(--border); padding: 20px 0 0; }
+    .attention-row { flex-wrap: wrap; gap: 8px 12px; }
+    .attention-copy { flex-basis: calc(100% - 105px); }
+    .attention-row > .btn { margin-left: auto; }
+    .wealth-summary { gap: 16px; padding: 0 0 22px; }
+    .wealth-item { padding: 0 4px; }
+    .wealth-item + .wealth-item { border-left: 0; }
+    .wealth-item .stat { font-size: 24px; }
+    .envelope .ev-bal { font-size: 22px; }
+    .envelope .ev-name { font-size: 16px; }
+    .tx-search-row { flex-wrap: wrap; }
+    .tx-search-row #txFilter { flex-basis: 100%; }
+    .forecast-controls { flex: 1 1 100%; min-width: 0; }
+    .forecast-chart-card > .forecast-canvas { height: 320px; }
+    .forecast-horizon { gap: 10px; }
+    .forecast-horizon .btn { flex: 1 1 28%; }
+    .forecast-horizon > div { width: 100%; }
+    .modal-bg { padding: 10px; }
+    .modal.tx-modal { width: 100%; min-width: 0; max-width: 100%; max-height: calc(100dvh - 20px - env(safe-area-inset-top, 0px)); padding: 18px; resize: none; }
+    .tx-allocation { grid-template-columns: minmax(0, 1fr); }
+    .tx-modal .field input, .tx-modal .field select, .tx-modal textarea { font-size: 16px; }
+    .tx-modal .tx-amount-field input { font-size: 30px; }
+    .tx-modal .modal-actions .primary { flex: 1; }
+    .btn.sm, .btn.icon, .envelope .ev-more > summary { min-height: 38px; }
+    .btn.icon { min-width: 38px; }
+    .toast { bottom: calc(88px + env(safe-area-inset-bottom, 0px)); }
+  }
+  @media (max-width: 360px) {
+    header.top { gap: 4px; padding-left: 8px; padding-right: 8px; }
+    header.top h1 { font-size: 13px; }
+    .brand-icon { display: none; }
+    header.top > .btn { padding: 6px; }
+    main { padding-left: 12px; padding-right: 12px; }
+    .mobile-nav button { font-size: 10px; }
+  }
+
 </style>
 </head>
 <body>
@@ -714,21 +861,33 @@
   <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></symbol>
   <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 3v10l8-5z"/></symbol>
   <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5.5 3v10M10.5 3v10"/></symbol>
+  <symbol id="i-envelope" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="m2 4 6 4 6-4"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 16 16"><rect x="2" y="2" width="4" height="4" rx="1"/><rect x="10" y="2" width="4" height="4" rx="1"/><rect x="2" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/></symbol>
+  <symbol id="i-list" viewBox="0 0 16 16"><path d="M6 4h8M6 8h8M6 12h8M2 4h.1M2 8h.1M2 12h.1"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 16 16"><path d="M2 2v12h12M4 10l3-3 3 1 4-5M11 3h3v3"/></symbol>
   <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
 </svg>
 <header class="top">
-  <h1>💰 Pocket Envelopes</h1>
-  <nav class="tabs" id="tabs">
-    <button data-view="dashboard" class="active" aria-current="page">Dashboard</button>
-    <button data-view="accounts">Accounts</button>
-    <button data-view="envelopes">Envelopes</button>
-    <button data-view="transactions">Transactions</button>
-    <button data-view="recurring">Recurring</button>
-    <button data-view="forecast">Forecast</button>
-    <button data-view="networth">Net Worth</button>
-    <button data-view="reports">Reports</button>
-    <button data-view="settings">Settings</button>
-    <button data-view="help">Help</button>
+  <h1><svg class="ic brand-icon" aria-hidden="true"><use href="#i-envelope"/></svg>Pocket Envelopes</h1>
+  <nav class="tabs" id="tabs" aria-label="Main navigation">
+    <div class="nav-group" role="group" aria-label="Everyday budgeting">
+      <span class="nav-group-label">Everyday</span>
+      <button data-view="dashboard" class="active" aria-current="page">Dashboard</button>
+      <button data-view="envelopes">Envelopes</button>
+      <button data-view="transactions">Transactions</button>
+      <button data-view="accounts">Accounts</button>
+      <button data-view="recurring">Recurring</button>
+    </div>
+    <div class="nav-group" role="group" aria-label="Analysis">
+      <span class="nav-group-label">Explore</span>
+      <button data-view="forecast">Forecast</button>
+      <button data-view="networth">Net Worth</button>
+      <button data-view="reports">Reports</button>
+    </div>
+    <div class="nav-group nav-admin" role="group" aria-label="Administration">
+      <button data-view="settings">Settings</button>
+      <button data-view="help">Help</button>
+    </div>
   </nav>
   <div class="file-status no-file" id="fileStatus">
     <span class="dot"></span><span id="fileLabel">No file open</span>
@@ -739,6 +898,13 @@
 </header>
 
 <main id="main"></main>
+<nav class="mobile-nav" aria-label="Mobile navigation">
+  <button data-view="dashboard"><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg><span>Dashboard</span></button>
+  <button data-view="envelopes"><svg class="ic" aria-hidden="true"><use href="#i-envelope"/></svg><span>Envelopes</span></button>
+  <button data-view="transactions"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg><span>Transactions</span></button>
+  <button data-view="forecast"><svg class="ic" aria-hidden="true"><use href="#i-trend"/></svg><span>Forecast</span></button>
+  <button id="mobileMore" aria-haspopup="dialog"><svg class="ic" aria-hidden="true"><use href="#i-more"/></svg><span>More</span></button>
+</nav>
 
 <div class="modal-bg" id="modalBg" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -1446,7 +1612,7 @@ function toast(msg, ms = 2400, kind, action) {
     // element, which strands focus on dismissal.
     if (action.onClick === performUndo) {
       const hint = document.createElement('span');
-      hint.style.cssText = 'margin-left:8px;color:var(--text-dim);font-size:12px;';
+      hint.style.cssText = 'margin-left:8px;color:var(--text-dim);font-size:13px;';
       hint.textContent = 'or ⌘/Ctrl+Z';
       t.appendChild(hint);
     }
@@ -1542,7 +1708,9 @@ function openModal(html, opts) {
   // Focus the first focusable element on next tick (modal must be visible).
   setTimeout(() => {
     const f = _modalFocusables();
-    if (f.length) f[0].focus();
+    const preferred = opts?.focusId ? document.getElementById(opts.focusId) : null;
+    if (preferred && modal.contains(preferred)) preferred.focus();
+    else if (f.length) f[0].focus();
     else modal.focus();
   }, 0);
 }
@@ -1719,6 +1887,12 @@ function suggestPayeeDefaults(payee, opts) {
 function themeColor(name, fallback) {
   const v = getComputedStyle(document.body).getPropertyValue(name).trim();
   return v || fallback;
+}
+function applyChartTheme() {
+  Chart.defaults.color = themeColor('--text-dim', '#8e9bad');
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  Chart.defaults.font.size = 13;
+  Chart.defaults.borderColor = themeColor('--border', '#2c3746');
 }
 function chartPalette() {
   return [
@@ -2666,6 +2840,10 @@ function render() {
   for (const c of reportCharts) c.destroy();
   reportCharts = [];
   const main = document.getElementById("main");
+  const focused = document.activeElement;
+  const focusId = main.contains(focused) ? focused.id : '';
+  const focusHorizon = main.contains(focused) ? focused.dataset.fcH : null;
+  const focusRadio = main.contains(focused) && focused.name === 'fcLines' ? focused.value : null;
   if (!data) {
     main.innerHTML = renderWelcome();
     bindWelcome();
@@ -2673,19 +2851,17 @@ function render() {
   }
   balanceCacheBegin();
   try {
-    document.querySelectorAll("nav.tabs button").forEach(b => {
+    document.querySelectorAll("button[data-view]").forEach(b => {
       const on = b.dataset.view === activeView;
       b.classList.toggle("active", on);
       // Convey the current tab programmatically, not just by colour/underline.
       if (on) b.setAttribute("aria-current", "page");
       else b.removeAttribute("aria-current");
-      // On a phone the strip scrolls: bring the active tab into view (a
-      // drill-through or URL param can land on a tab that was off-screen).
-      if (on && typeof b.scrollIntoView === 'function') {
-        const nav = b.parentElement;
-        if (nav && nav.scrollWidth > nav.clientWidth + 1) b.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      }
     });
+    const moreActive = !['dashboard', 'envelopes', 'transactions', 'forecast'].includes(activeView);
+    document.getElementById('mobileMore').classList.toggle('active', moreActive);
+    if (moreActive) document.getElementById('mobileMore').setAttribute('aria-current', 'true');
+    else document.getElementById('mobileMore').removeAttribute('aria-current');
     updateTabFades();
     switch (activeView) {
       case "dashboard": main.innerHTML = renderDashboard(); bindDashboard(); break;
@@ -2700,6 +2876,10 @@ function render() {
       case "help": main.innerHTML = renderHelp(); break;
     }
     linkHelpTips(main);
+    main.querySelector('h2')?.setAttribute('tabindex', '-1');
+    if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+    else if (focusHorizon) main.querySelector(`[data-fc-h="${focusHorizon}"]`)?.focus({ preventScroll: true });
+    else if (focusRadio) main.querySelector(`input[name="fcLines"][value="${focusRadio}"]`)?.focus({ preventScroll: true });
     // ensure today's snapshot updates
     if (data) snapshotIfNeeded();
   } finally { balanceCacheEnd(); }
@@ -2731,7 +2911,7 @@ function renderWelcome() {
         <button class="btn primary" id="welRetry">Retry</button>
         <button class="btn" id="welOpen">Import a JSON file (replaces the server copy)</button>
       </div>
-      <p style="margin-top:30px;font-size:12px;">
+      <p style="margin-top:30px;font-size:13px;">
         If the server is behind a proxy such as <code>tailscale serve</code>, the proxy can be up while the server is not; start the server and retry.
       </p>
     </div>`;
@@ -2745,7 +2925,7 @@ function renderWelcome() {
       <button class="btn primary" id="welNew">Create new budget</button>
       <button class="btn" id="welOpen">Import a JSON file</button>
     </div>
-    <p style="margin-top:30px;font-size:12px;">
+    <p style="margin-top:30px;font-size:13px;">
       Any browser works — there is no File System Access permission to grant.
       The server keeps rolling <code>finance-data.bak.N</code> backups of the last five saves.
     </p>
@@ -2873,86 +3053,22 @@ function renderDashboard() {
   // hidden entirely when nothing is pinned (no empty placeholder).
   const pinnedAccs = activeAccounts().filter(x => x.pinned).map(a => ({ a, b: accountBalance(a) }));
 
-  // Dashboard forecast horizons (1mo, 3mo, 6mo, 12mo, 2yr).
-  // Mirrors the Forecast tab so the two views agree: same account selection
-  // and same "include envelope allowances" toggle. Defaults to non-investment
-  // accounts that count toward net worth when nothing is selected yet.
-  const fcAccountIds = (forecastState.accountIds && forecastState.accountIds.length)
-    ? forecastState.accountIds
-    : activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
-  // Resolve the active forecast profile (if one is selected on the Forecast
-  // tab) so the dashboard can label its forecast block with the profile name.
-  const activeProfile = forecastState.selectedProfileId
-    ? data.forecastProfiles.find(p => p.id === forecastState.selectedProfileId)
-    : null;
-  // Use the same day counts as the Forecast tab's HORIZONS so the dashboard
-  // and Forecast tab projections agree to the cent at each horizon. Horizons
-  // beyond the profile's chosen time-horizon (forecastState.days) are hidden
-  // so the dashboard mirrors the profile's scope — e.g. a 1-month profile
-  // won't surface 2-year numbers.
-  const allDashHorizons = [
-    { label: "1 month",   days: 30  },
-    { label: "3 months",  days: 90  },
-    { label: "6 months",  days: 180 },
-    { label: "12 months", days: 365 },
-    { label: "2 years",   days: 730 }
-  ];
+  // The dashboard always features spendable cash. Chart visibility is a
+  // presentation choice on Forecast; its accounts, horizon and allowances
+  // still determine this summary. An explicit empty selection stays empty.
+  const fcAccountIds = forecastState.accountIds === null
+    ? activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id)
+    : forecastState.accountIds.filter(id => accountById(id));
+  const activeProfile = data.forecastProfiles.find(p => p.id === forecastState.selectedProfileId);
   const fcDays = forecastState.days || 90;
-  let dashHorizons = allDashHorizons.filter(h => h.days <= fcDays);
-  // Always show at least one horizon — if the profile's horizon is shorter
-  // than 30 days (e.g. the 1-week option), fall back to the smallest cell.
-  if (dashHorizons.length === 0) dashHorizons = [allDashHorizons[0]];
-  // Mirror the chart's visibility settings:
-  //   "individual" hides the combined total → don't feature it on the dashboard
-  //   "spendable"  hides ALL account/total lines AND implies showSpendable
-  // In either of those cases the spendable line becomes the primary metric.
-  const showTotalLine = forecastState.chartLines === "both" || forecastState.chartLines === "total";
-  const showSpendLine = !!forecastState.showSpendable || forecastState.chartLines === "spendable";
-  const primaryIsSpendable = !showTotalLine && showSpendLine;
-  // If the user has hidden BOTH the total and spendable lines on the Forecast
-  // tab, there's nothing meaningful to surface on the dashboard — hide the
-  // whole forecast card.
-  const dashFcVisible = showTotalLine || showSpendLine;
-  let dashFc = null;
-  if (fcAccountIds.length > 0 && dashFcVisible) {
-    const horizonMax = dashHorizons[dashHorizons.length - 1].days;
-    const fc = forecastAccountBalances(fcAccountIds, horizonMax, { includeAllowances: forecastState.includeAllowances });
-    const cur = fc.total[0];
-    const curSpend = fc.spendable[0];
-    // Find the lowest projected value and the date it occurs over the
-    // visible horizon — surfaces "the worst point" the user should plan for.
-    // We only compute the minimum for lines the profile says are visible;
-    // hidden lines stay null so the dashboard doesn't surface them.
-    let totalMin = null, totalMinDate = null;
-    if (showTotalLine) {
-      let minVal = Infinity, minIdx = 0;
-      for (let i = 0; i <= horizonMax && i < fc.total.length; i++) {
-        if (fc.total[i] < minVal) { minVal = fc.total[i]; minIdx = i; }
-      }
-      totalMin = minVal;
-      totalMinDate = fc.dates[minIdx];
-    }
-    let spendMin = null, spendMinDate = null;
-    if (showSpendLine) {
-      let minVal = Infinity, minIdx = 0;
-      for (let i = 0; i <= horizonMax && i < fc.spendable.length; i++) {
-        if (fc.spendable[i] < minVal) { minVal = fc.spendable[i]; minIdx = i; }
-      }
-      spendMin = minVal;
-      spendMinDate = fc.dates[minIdx];
-    }
-    dashFc = {
-      cur, curSpend, primaryIsSpendable, showTotalLine, showSpendLine,
-      totalMin, totalMinDate, spendMin, spendMinDate,
-      points: dashHorizons.map(h => ({
-        label: h.label,
-        value: fc.total[h.days],
-        delta: fc.total[h.days] - cur,
-        spendable: fc.spendable[h.days],
-        spendableDelta: fc.spendable[h.days] - curSpend
-      }))
-    };
-  }
+  const fc = fcAccountIds.length
+    ? forecastAccountBalances(fcAccountIds, fcDays, { includeAllowances: forecastState.includeAllowances }) : null;
+  const low = fc ? spendableLow(fc) : null;
+  // Today's actual, unallocated balance is distinct from forecast index 0,
+  // which already folds in due-but-unrecorded recurring entries.
+  const availableToday = fc ? fcAccountIds.reduce((sum, id) => sum + accountBalance(accountById(id)), 0)
+    - data.envelopes.filter(e => envelopeCountsFor(e, fcAccountIds))
+      .reduce((sum, e) => sum + Math.max(0, envelopeBalance(e)), 0) : null;
 
   const due = dueRecurringOccurrences();
   const dueTotal = due.reduce((s, u) =>
@@ -2966,127 +3082,36 @@ function renderDashboard() {
 
   return `
   ${onboardingHTML}
-  <h2>Dashboard</h2>
-  ${closeYM ? `<div class="card due-banner" style="margin-bottom:14px;border-left:3px solid var(--accent);">
-    <div>
-      <strong>Close out ${esc(closeMonthLabel)}.</strong>
-      <div style="color:var(--text-dim);font-size:13px;margin-top:4px;">
-        Review last month's envelope activity — pick rollover or reset for each, then archive the month.
-      </div>
+  <div class="page-heading"><div><h2>Dashboard</h2><p>Your money, with a view ahead.</p></div>
+    <button class="btn primary" id="dashAddTx">${icon('plus')}Add transaction</button></div>
+  <section class="card cash-hero" aria-label="Available cash and forecast">
+    <div class="section-heading"><h3>Your spending room</h3><button class="btn" id="dashForecast">Explore forecast</button></div>
+    ${fc ? `<div class="cash-hero-figures">
+      <div><div class="stat-label">Spendable today</div><div class="hero-amount ${availableToday < 0 ? 'neg' : ''}" id="dashSpendableToday">${fmt(availableToday)}</div>
+        <p class="muted">After money set aside in envelopes</p></div>
+      <div class="cash-low ${lowTone(low.min) ? 'tone-' + lowTone(low.min) : ''}">
+        <div class="stat-label">Lowest projected spendable</div><div class="hero-low" id="dashSpendableLow">${fmt(low.min)}</div>
+        <p class="muted">${fmtDate(low.date)} · next ${fcDays} days${lowToneNote(low.min) ? ' · ' + lowToneNote(low.min) : ''}</p></div>
     </div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn primary" id="closeOutBtn">Review</button>
-    </div>
-  </div>` : ''}
-  ${due.length ? `<div class="card due-banner" style="margin-bottom:14px;">
-    <div>
-      <strong>${due.length} recurring ${due.length === 1 ? 'entry is' : 'entries are'} due since your last apply.</strong>
-      <div style="color:var(--text-dim);font-size:13px;margin-top:4px;">
-        ${due.slice(0, 4).map(u => esc(u.rec.name) + ' (' + fmtDate(u.date) + ')').join(', ')}${due.length > 4 ? ` and ${due.length - 4} more` : ''}
-        ${dueTotal !== 0 ? ` · net <span class="${dueTotal >= 0 ? 'pos' : 'neg'}">${dueTotal >= 0 ? '+' : ''}${fmt(dueTotal)}</span>` : ''}
-        ${(() => { const t = new Set(); const k = due.filter(u => { const m = findHandLoggedMatch(u.rec, u.date, t); if (m) t.add(m.id); return m; }).length;
-             return k ? ` · <span style="color:var(--warn);">${k} look${k === 1 ? 's' : ''} already recorded by hand — Review to link</span>` : ''; })()}
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;">
-      <button class="btn" id="dueReview">Review</button>
-      <button class="btn primary" id="dueApply">Apply ${due.length}</button>
-    </div>
-  </div>` : ''}
-  <div class="grid cols-3" style="margin-bottom:18px;">
-    <div class="card">
-      <div class="stat-label">Net worth</div>
-      <div class="stat lg">${fmt(nw)}</div>
-      ${delta30 != null ? `<div class="delta ${delta30 >= 0 ? 'up' : 'down'}">
-        ${delta30 >= 0 ? '▲' : '▼'} ${fmt(Math.abs(delta30))} (30d)</div>` : ''}
-    </div>
-    <div class="card">
-      <div class="stat-label">Assets</div>
-      <div class="stat" style="color:var(--good)">${fmt(a)}</div>
-      <div class="delta">Liabilities: ${fmt(l)}</div>
-    </div>
-    <div class="card">
-      <div class="stat-label">Investments</div>
-      <div class="stat" style="color:var(--accent-2)">${fmt(inv)}</div>
-      <div class="delta">${nw > 0 ? ((inv / nw) * 100).toFixed(1) : 0}% of net worth</div>
-    </div>
+    <div class="hero-context"><span>${plural(fcAccountIds.length, 'account')}${activeProfile ? ' · ' + esc(activeProfile.name) : ''}</span>
+      <span class="assumption-chip ${forecastState.includeAllowances ? '' : 'allowances-off'}">Envelope allowances ${forecastState.includeAllowances ? 'included' : 'excluded'}</span>
+      <span>Recurring income &amp; bills included</span></div>
+    <p class="hero-note">The projection includes due entries still to be recorded and assumes no new envelope funding. Fund the month previews a funding proposal.</p>`
+      : '<p class="muted">Select accounts in Forecast to see your available cash and projection.</p>'}
+  </section>
+  ${(closeYM || due.length) ? `<section class="card attention-panel" aria-label="Needs attention">
+    <div class="section-heading"><h3>Needs attention</h3><span class="muted">${(closeYM ? 1 : 0) + (due.length ? 1 : 0)} to review</span></div>
+    ${closeYM ? `<div class="attention-row"><span class="status-label">Month end</span><div class="attention-copy"><strong>Close out ${esc(closeMonthLabel)}</strong><span>Review leftovers and each envelope's rollover, reset or sweep policy.</span></div><button class="btn" id="closeOutBtn">Review ${esc(closeMonthLabel)}</button></div>` : ''}
+    ${due.length ? `<div class="attention-row"><span class="status-label due">Due</span><div class="attention-copy"><strong>${plural(due.length, 'recurring entry', 'recurring entries')} to record</strong>
+      <span>${due.slice(0, 3).map(u => esc(u.rec.name)).join(', ')}${due.length > 3 ? ` and ${due.length - 3} more` : ''}${dueTotal ? ` · net ${fmt(dueTotal)}` : ''}
+      ${(() => { const taken = new Set(); const count = due.filter(u => { const m = findHandLoggedMatch(u.rec, u.date, taken); if (m) taken.add(m.id); return m; }).length; return count ? ` · ${count} may already be recorded — review to link` : ''; })()}</span></div><button class="btn" id="dueReview">Review recurring</button></div>` : ''}
+  </section>` : ''}
+  <div class="grid cols-3 wealth-summary">
+    <div class="wealth-item"><div class="stat-label">Net worth</div><div class="stat">${fmt(nw)}</div>
+      ${delta30 != null ? `<div class="delta ${delta30 >= 0 ? 'up' : 'down'}">${delta30 >= 0 ? '+' : '-'}${fmt(Math.abs(delta30))} over 30 days</div>` : ''}</div>
+    <div class="wealth-item"><div class="stat-label">Assets</div><div class="stat">${fmt(a)}</div><div class="delta">Liabilities ${fmt(l)}</div></div>
+    <div class="wealth-item"><div class="stat-label">Investments</div><div class="stat">${fmt(inv)}</div><div class="delta">${nw > 0 ? ((inv / nw) * 100).toFixed(1) : 0}% of net worth</div></div>
   </div>
-
-  ${dashFc ? `
-  <div class="card" style="margin-bottom:18px;">
-    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
-      <h3 style="margin:0;">Forecast — ${dashFc.primaryIsSpendable ? 'spendable cash' : 'projected balance'}</h3>
-      <span style="color:var(--text-dim);font-size:12px;">
-        ${activeProfile ? `Profile: <strong style="color:var(--text);">${esc(activeProfile.name)}</strong> · ` : ''}${fcAccountIds.length} account${fcAccountIds.length === 1 ? '' : 's'}${dashFc.showTotalLine ? ` · today: <strong style="color:var(--text);">${fmt(dashFc.cur)}</strong>` : ''}${dashFc.showSpendLine ? ` · spendable today: <strong style="color:var(--warn);">${fmt(dashFc.curSpend)}</strong>` : ''}
-      </span>
-    </div>
-    <div class="dash-fc-grid">
-      ${dashFc.points.map(p => {
-        // When spendable is the primary metric (user hid the total line on the
-        // Forecast tab), feature the spendable value+delta in the big slots and
-        // skip the total entirely. Otherwise feature the total and tuck the
-        // spendable beneath when the user has it enabled.
-        if (dashFc.primaryIsSpendable) {
-          return `
-            <div class="dash-fc-cell">
-              <div class="dash-fc-label">${p.label}</div>
-              <div class="dash-fc-value ${p.spendable < 0 ? 'neg' : ''}" style="color:var(--warn);">${fmt(p.spendable)}</div>
-              <div class="dash-fc-delta ${p.spendableDelta >= 0 ? 'up' : 'down'}">
-                ${p.spendableDelta > 0 ? '+' : ''}${fmt(p.spendableDelta)}
-              </div>
-            </div>`;
-        }
-        return `
-          <div class="dash-fc-cell">
-            <div class="dash-fc-label">${p.label}</div>
-            <div class="dash-fc-value ${p.value < 0 ? 'neg' : ''}">${fmt(p.value)}</div>
-            <div class="dash-fc-delta ${p.delta >= 0 ? 'up' : 'down'}">
-              ${p.delta > 0 ? '+' : ''}${fmt(p.delta)}
-            </div>
-            ${dashFc.showSpendLine ? `
-              <div class="dash-fc-spend">
-                Spendable <strong>${fmt(p.spendable)}</strong>
-              </div>
-            ` : ''}
-          </div>`;
-      }).join('')}
-      ${(() => {
-        // "Lowest in period" cell — the worst projected point over the
-        // dashboard's horizon, plus the date it falls on. Mirrors the same
-        // primary/secondary logic as the horizon cells: spendable is featured
-        // when it's the primary line, otherwise total is featured (with the
-        // spendable low tucked beneath when both lines are visible).
-        if (dashFc.primaryIsSpendable) {
-          return `
-            <div class="dash-fc-cell ${lowTone(dashFc.spendMin) ? 'tone-' + lowTone(dashFc.spendMin) : ''}">
-              <div class="dash-fc-label">Lowest spendable in period <span class="help-tip" tabindex="0" title="The lowest your SPENDABLE cash dips to in the horizon — total of your accounts minus the envelope balances they hold (Available-to-Budget; an envelope backed by an account outside the forecast is left out). Funding envelopes pulls money into buckets, which reduces spendable but leaves your account totals unchanged. Projected envelope spending is paid out of that envelope's own balance first and only reduces spendable once the envelope runs dry. Due-but-unapplied recurrings are folded in, so this is the realistic worst case.">?</span></div>
-              <div class="dash-fc-value">${fmt(dashFc.spendMin)}</div>
-              <div class="dash-fc-delta" style="color:var(--text-dim);">on ${fmtDate(dashFc.spendMinDate)}</div>
-              ${lowToneNote(dashFc.spendMin) ? `<div class="dash-fc-note">${lowToneNote(dashFc.spendMin)}</div>` : ''}
-              <div class="dash-fc-spend" style="font-style:italic;color:var(--text-dim);">if you fund nothing · Fund the month shows the effect of a proposal</div>
-            </div>`;
-        }
-        return `
-          <div class="dash-fc-cell ${lowTone(dashFc.totalMin) ? 'tone-' + lowTone(dashFc.totalMin) : ''}">
-            <div class="dash-fc-label">Lowest total in period <span class="help-tip" tabindex="0" title="The lowest your TOTAL account balance dips to in the horizon — sum of selected accounts, ignoring envelope allocations. Note: funding envelopes does NOT change this number (it just moves money into virtual buckets). For "how much is safe to fund?" look at the Spendable line.">?</span></div>
-            <div class="dash-fc-value">${fmt(dashFc.totalMin)}</div>
-            <div class="dash-fc-delta" style="color:var(--text-dim);">on ${fmtDate(dashFc.totalMinDate)}</div>
-            ${lowToneNote(dashFc.totalMin) ? `<div class="dash-fc-note">${lowToneNote(dashFc.totalMin)}</div>` : ''}
-            ${dashFc.showSpendLine ? `
-              <div class="dash-fc-spend">
-                Lowest spendable <strong>${fmt(dashFc.spendMin)}</strong>
-                <span style="color:var(--text-dim);font-weight:400;"> on ${fmtDate(dashFc.spendMinDate)}</span>
-                <div style="font-style:italic;color:var(--text-dim);font-size:11px;margin-top:2px;">if you fund nothing · Fund the month re-forecasts with your proposal applied</div>
-              </div>
-            ` : ''}
-          </div>`;
-      })()}
-    </div>
-    <div style="color:var(--text-dim);font-size:12px;margin-top:8px;">
-      Mirrors the Forecast tab${activeProfile ? ` — profile <strong style="color:var(--text);">${esc(activeProfile.name)}</strong>` : ' (no profile selected — using current settings)'} · ${forecastState.includeAllowances ? '<strong style="color:var(--text);">including</strong>' : 'excluding'} envelope allowances${dashFc.primaryIsSpendable ? ' · showing spendable cash (total line hidden in profile)' : (dashFc.showSpendLine ? ' · spendable cash shown' : '')}. Adjust on the Forecast tab.
-    </div>
-  </div>
-  ` : ''}
 
   <div class="grid ${pinnedAccs.length ? 'cols-3' : 'cols-2'}">
     <div class="card">
@@ -3113,7 +3138,7 @@ function renderDashboard() {
     ${pinnedAccs.length ? `<div class="card">
       <h3 style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;">
         <span>Pinned accounts</span>
-        <span style="font-weight:400;font-size:11px;color:var(--text-dim);">drag to reorder</span>
+        <span style="font-weight:400;font-size:13px;color:var(--text-dim);">drag to reorder</span>
       </h3>
       <table><thead><tr><th>Account</th><th class="num">Balance</th></tr></thead>
         <tbody id="pinnedAccTbody">${pinnedAccs.map(({a, b}) => `
@@ -3160,6 +3185,10 @@ function renderDashboard() {
 }
 function bindDashboard() {
   bindOnboarding();
+  const add = document.getElementById('dashAddTx');
+  if (add) add.onclick = () => editTransaction();
+  const forecast = document.getElementById('dashForecast');
+  if (forecast) forecast.onclick = () => navigateToView('forecast');
   const apply = document.getElementById("dueApply");
   if (apply) apply.onclick = () => {
     const n = applyDueRecurring();
@@ -3321,7 +3350,7 @@ function showDueReview() {
     <p style="color:var(--text-dim);margin-top:0;"><strong style="color:var(--text);">Record</strong> books the transaction;
       <strong style="color:var(--text);">skip</strong> marks this one occurrence as never happening (a waived fee, a month you paid nothing) so it stops being offered;
       <strong style="color:var(--text);">decide later</strong> leaves it due. Where a transaction you typed in by hand looks like this occurrence (same account and amount, within ${HAND_LOG_WINDOW_DAYS} days), <strong style="color:var(--text);">link</strong> marks it as the recorded one instead of booking it twice. Edit an amount for this occurrence only — the template is unchanged.</p>
-    <div style="margin:-4px 0 10px 0;font-size:12px;color:var(--text-dim);">
+    <div style="margin:-4px 0 10px 0;font-size:13px;color:var(--text-dim);">
       Set all:
       <button type="button" class="btn sm ghost" data-dueall="record">Record</button>
       <button type="button" class="btn sm ghost" data-dueall="skip">Skip</button>
@@ -3611,7 +3640,7 @@ function editAccount(id) {
       <div class="field"><label>Current balance</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="f_current" value="${(id ? accountBalance(a) : (a.openingBalance ?? 0)).toFixed(2)}" title="What your bank shows now. You can type arithmetic, e.g. 2380,50-100"></div>
     </div>
-    <div style="font-size:11px;color:var(--text-dim);margin:-6px 0 12px;line-height:1.4;">
+    <div style="font-size:13px;color:var(--text-dim);margin:-6px 0 12px;line-height:1.4;">
       Edit either field — typing a new Current balance updates Opening balance by the same amount, so the figure on the Accounts page matches what your bank shows.
     </div>
     <div class="field check"><label><input type="checkbox" id="f_inv" ${a.isInvestment?'checked':''}> Investment account</label></div>
@@ -3896,7 +3925,7 @@ function envelopeCard(e, bal, spent) {
   const monthly = envMonthlyEquiv(e);
   const left = monthly - (spent || 0);
   const monthLine = e.isReserve ? '' : `<div class="ev-month">
-      <span>spent ${fmt(spent || 0)} this month</span>
+      <span>Spent <strong>${fmt(spent || 0)}</strong>${monthly > 0 ? ` of ${fmt(monthly)}` : ''} this month</span>
       ${monthly > 0 ? `<span class="${left < 0 ? 'over' : ''}">${left < 0 ? fmt(-left) + ' over budget' : fmt(left) + ' of budget left'}</span>` : ''}
     </div>`;
   const isAnnual = e.cadence === "annual";
@@ -3922,22 +3951,21 @@ function envelopeCard(e, bal, spent) {
     const label = `${Math.round(spentPct)}% of this month's budget spent, ${Math.round(monthPct)}% of the month gone`;
     bar = `<div class="ev-bar" data-pace="${pace}" role="img" aria-label="${label}" title="${label}">
       <span class="ev-bar-fill" style="width:${spentPct.toFixed(1)}%"></span>
-      <span class="ev-bar-tick" style="left:${monthPct.toFixed(1)}%"></span>
+      <span class="ev-bar-tick" style="left:${monthPct.toFixed(1)}%"><span class="ev-today" style="--tick-offset:${monthPct > 85 ? '-100%' : monthPct < 15 ? '0%' : '-50%'}">Today</span></span>
     </div>`;
   }
   return `<div class="card envelope" data-state="${state}">
     <div class="ev-head">
       <div class="ev-name">${isPinned ? `<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">${icon('pin', 'Pinned')}</span>` : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — never funded by Fund the month; receives close-out sweeps">reserve</span>' : ''}</div>
-      <div class="ev-bal ${bal<0?'neg':''}">${fmt(bal)}</div>
+      <div class="ev-balance"><span class="stat-label">Available</span><div class="ev-bal ${bal<0?'neg':''}">${fmt(bal)}</div></div>
     </div>
     <div class="ev-meta">
       ${isReserve
         ? '<span>held for emergencies</span><span>no budget</span>'
-        : `<span>${pct.toFixed(0)}% of ${isAnnual ? 'annual' : 'monthly'}</span>
-      <span>${fmt(budget)} / ${isAnnual ? 'yr' : 'mo'}</span>`}
+        : `<span>${isAnnual ? 'Annual target' : 'Monthly budget'}</span><span>${fmt(budget)}</span>`}
     </div>
-    ${bar}
     ${monthLine}
+    ${bar}
     <div class="ev-actions">
       <button class="btn sm" data-spend="${e.id}">Spend</button>
       <button class="btn sm" data-fund="${e.id}">Fund</button>
@@ -4053,7 +4081,7 @@ function editEnvelope(id) {
     </div>
     <div class="field" id="f_roll_field" ${(e.cadence === 'annual' || e.isReserve) ? 'style="display:none;"' : ''}>
       <label>Month-end policy
-        <span style="color:var(--text-dim);font-weight:400;font-size:12px;margin-left:6px;">— used by close-out review</span>
+        <span style="color:var(--text-dim);font-weight:400;font-size:13px;margin-left:6px;">— used by close-out review</span>
       </label>
       <select id="f_roll">
         <option value="rollover" ${(e.rolloverPolicy !== 'reset' && e.rolloverPolicy !== 'sweep') ? 'selected' : ''}>Rollover — carry balance into next month</option>
@@ -4076,16 +4104,16 @@ function editEnvelope(id) {
     <div class="field" style="background:var(--bg-3);padding:10px 12px;border-radius:6px;border:1px solid var(--border);">
       <label>Adjust current balance <span class="help-tip" tabindex="0" title="Set the envelope balance to a target value by recording a single one-sided transaction (envelope only — no account is touched). Budget amount per cadence is NOT changed, no other envelopes are touched. Spendable cash IS affected: raising the envelope balance earmarks more money, so spendable drops by the adjustment amount (and vice versa). You can type arithmetic (e.g. 500-23 → 477).">?</span></label>
       <div style="display:flex;gap:10px;align-items:baseline;margin:6px 0;flex-wrap:wrap;">
-        <span style="color:var(--text-dim);font-size:12px;">Current:</span>
+        <span style="color:var(--text-dim);font-size:13px;">Current:</span>
         <strong style="font-variant-numeric:tabular-nums;">${fmt(envelopeBalance(e))}</strong>
-        <span style="color:var(--text-dim);font-size:12px;margin-left:auto;">Adjust to:</span>
+        <span style="color:var(--text-dim);font-size:13px;margin-left:auto;">Adjust to:</span>
         <input type="text" inputmode="decimal" id="f_adjust"
           placeholder="leave empty for no change" autocomplete="off"
           style="width:130px;text-align:right;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-variant-numeric:tabular-nums;">
       </div>
       <div class="micro" id="f_adjust_preview" style="min-height:14px;margin-bottom:6px;"></div>
       <div style="margin-top:4px;">
-        <label style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">Adjustment notes (optional)</label>
+        <label style="font-size:13px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px;">Adjustment notes (optional)</label>
         <input id="f_adjust_notes" placeholder="e.g. reconciled with bank app"
           style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);">
       </div>
@@ -4095,7 +4123,7 @@ function editEnvelope(id) {
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);">
         <input type="checkbox" id="f_pin" ${e.pinned ? 'checked' : ''} style="width:auto;margin:0;">
         Pin to top of group
-        <span style="color:var(--text-dim);font-size:12px;">— floats above the activity-based sort</span>
+        <span style="color:var(--text-dim);font-size:13px;">— floats above the activity-based sort</span>
       </label>
     </div>
     <div class="field">
@@ -4451,9 +4479,9 @@ function refillEnvelopes() {
           <div class="stat-label">Spendable min in horizon <span class="help-tip" tabindex="0" title="Spendable = total of your accounts − the envelope balances they hold (the YNAB Available-to-Budget concept; envelopes backed by accounts outside the forecast are left out). Funding envelopes moves money INTO buckets, so spendable drops even though your total account balance is unchanged — but not always one-for-one: funding an overspent envelope first fills its hole, and money in an envelope with an allowance gets spent from that envelope inside the horizon. That is why the figure below the list is a real re-forecast with your proposal applied, not this number minus the total.">?</span></div>
           <div style="font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--warn);">
             ${fmt(headroom.spendMin)}
-            <span style="font-size:12px;font-weight:400;color:var(--text-dim);">on ${fmtDate(headroom.spendMinDate)}</span>
+            <span style="font-size:13px;font-weight:400;color:var(--text-dim);">on ${fmtDate(headroom.spendMinDate)}</span>
           </div>
-          <div style="font-size:11px;font-style:italic;color:var(--text-dim);">if you fund nothing</div>
+          <div style="font-size:13px;font-style:italic;color:var(--text-dim);">if you fund nothing</div>
         </div>
       </div>` : '';
 
@@ -4486,7 +4514,7 @@ function refillEnvelopes() {
                 ${isReset ? '<span class="badge" style="margin-left:4px;">resets</span>' : ''}
                 ${isSweep ? '<span class="badge" style="margin-left:4px;">sweeps</span>' : ''}
               </span>
-              <span style="color:var(--text-dim);font-size:12px;width:140px;text-align:right;">
+              <span style="color:var(--text-dim);font-size:13px;width:140px;text-align:right;">
                 ${fmt(r.bal)} / ${fmt(r.target)}${isAnnual ? '/yr' : ''}
               </span>
               <input type="text" inputmode="decimal" data-rf-amt="${r.env.id}"
@@ -4545,7 +4573,7 @@ function refillEnvelopes() {
       const over = lo.min < -0.005;
       html += ` · Projected spendable after funding: <strong style="color:${over ? 'var(--bad)' : 'var(--text)'};">${fmt(lo.min)}</strong> <span style="color:var(--text-dim);font-weight:400;">on ${fmtDate(lo.date)}</span>`;
       if (over) {
-        html += `<div style="color:var(--bad);font-size:12px;margin-top:4px;">⚠ Over-allocates by ${fmt(-lo.min)} — your projected spendable cash would dip below zero on ${fmtDate(lo.date)}.</div>`;
+        html += `<div style="color:var(--bad);font-size:13px;margin-top:4px;">⚠ Over-allocates by ${fmt(-lo.min)} — your projected spendable cash would dip below zero on ${fmtDate(lo.date)}.</div>`;
       }
     }
     tEl.innerHTML = html;
@@ -4748,7 +4776,7 @@ function showCloseOut(forcedYM) {
       <strong style="color:var(--text);">${esc(reserve.name)}</strong> instead of spendable` : ''}.
       Annual envelopes always rollover.
     </p>
-    ${reserve ? `<div style="margin:-4px 0 10px 0;font-size:12px;color:var(--text-dim);">
+    ${reserve ? `<div style="margin:-4px 0 10px 0;font-size:13px;color:var(--text-dim);">
       Set all:
       <button type="button" class="btn sm ghost" data-coall="rollover">Rollover</button>
       <button type="button" class="btn sm ghost" data-coall="reset">Reset</button>
@@ -4949,6 +4977,7 @@ function sortTxsDesc(txs) {
 // filter) and so other views can pre-fill it: goToTransactions({acc}) is the
 // drill-through from an account or envelope name, and ?acc=/?env=/?tag=/?q=
 // in the URL do the same for a bookmark.
+let txFiltersOpen = false;
 let txFilter = { q: '', type: '', acc: '', env: '', tag: '', from: '', to: '' };
 let txSelected = new Set();   // bulk-edit selection (tx ids); cleared on every full render
 function goToTransactions(f) {
@@ -4994,14 +5023,19 @@ function renderTransactions() {
   const f = txFilter;
   const txs = filterTxs();
   const activeCount = ['q','type','acc','env','tag','from','to'].filter(k => f[k]).length;
+  const advancedCount = ['type','acc','env','tag','from','to'].filter(k => f[k]).length;
   return `
   <h2>Transactions</h2>
   <div class="toolbar">
     <button class="btn primary" id="addTx" title="Add transaction (press 'n' anywhere)">+ Add transaction</button>
     <button class="btn" id="addTransfer">${icon('swap')}Account transfer</button>
     <button class="btn" id="importCsv" title="Import transactions from a bank CSV statement">${icon('download')}Import CSV</button>
-    <div class="filter-group">
-      <input class="filter-input" id="txFilter" placeholder="Search payee, notes, amount…" aria-label="Search transactions" style="width:200px;" value="${esc(f.q)}">
+    <div class="tx-search-row">
+      <input class="filter-input" id="txFilter" placeholder="Search payee, notes, amount…" aria-label="Search transactions" value="${esc(f.q)}">
+      <button class="btn" id="txFilterToggle" aria-expanded="${txFiltersOpen}" aria-controls="txAdvancedFilters">Filters${advancedCount ? ` (${advancedCount})` : ''}</button>
+      <button class="btn ghost" id="txClearFilter" title="Clear all filters" ${activeCount ? '' : 'disabled'}>${icon('x')}Clear</button>
+    </div>
+    <div class="filter-group tx-advanced" id="txAdvancedFilters" ${txFiltersOpen ? '' : 'hidden'}>
       <select class="filter-input" id="txTypeFilter" aria-label="Filter by type">
         <option value="">All types</option>
         <option value="expense" ${f.type === 'expense' ? 'selected' : ''}>Expense</option>
@@ -5026,7 +5060,6 @@ function renderTransactions() {
       <span style="color:var(--text-dim);">–</span>
       <input type="date" class="filter-input" id="txToFilter" aria-label="To date" title="To date" value="${esc(f.to)}">
       <button class="btn sm ghost" id="txMonthFilter" title="This calendar month">This month</button>
-      <button class="btn sm ghost" id="txClearFilter" title="Clear all filters" ${activeCount ? '' : 'disabled'}>${icon('x')}Clear</button>
     </div>
     <div class="spacer"></div>
     <div class="tx-totals" id="txCount">${txTotalsHTML(txs)}</div>
@@ -5094,7 +5127,7 @@ function txDataRow(tx) {
   return `<tr data-tx="${tx.id}" class="${future ? 'tx-future' : ''}">
     <td><input type="checkbox" data-sel-tx="${tx.id}" aria-label="Select transaction" ${txSelected.has(tx.id) ? 'checked' : ''}></td>
     <td><span class="tx-type ${tx.type}" title="${typeLabel}"><span class="sr">${typeLabel}</span></span></td>
-    <td>${esc(tx.payee || '')}${tx.notes ? `<br><span style="color:var(--text-dim);font-size:11px;">${esc(tx.notes)}</span>` : ''}</td>
+    <td>${esc(tx.payee || '')}${tx.notes ? `<br><span style="color:var(--text-dim);font-size:13px;">${esc(tx.notes)}</span>` : ''}</td>
     <td>${acc}</td>
     <td>${env}</td>
     <td>${tag}</td>
@@ -5111,6 +5144,11 @@ function bindTransactions() {
   document.getElementById("addTransfer").onclick = () => editTransaction(null, "transfer-account");
   document.getElementById("importCsv").onclick = csvImportStart;
 
+  document.getElementById('txFilterToggle').onclick = () => {
+    txFiltersOpen = !txFiltersOpen;
+    document.getElementById('txAdvancedFilters').hidden = !txFiltersOpen;
+    document.getElementById('txFilterToggle').setAttribute('aria-expanded', String(txFiltersOpen));
+  };
   // Row buttons + selection checkboxes are re-bound after every filter pass
   // (the tbody is rebuilt), so they live in one helper.
   const bindRows = () => {
@@ -5148,6 +5186,8 @@ function bindTransactions() {
     document.getElementById("txBody").innerHTML = txRowsHTML(rows);
     document.getElementById("txCount").innerHTML = txTotalsHTML(rows);
     document.getElementById("txClearFilter").disabled = !Object.values(txFilter).some(Boolean);
+    const count = ['type','acc','env','tag','from','to'].filter(k => txFilter[k]).length;
+    document.getElementById('txFilterToggle').textContent = `Filters${count ? ` (${count})` : ''}`;
     bindRows();
     updateBulk();
   };
@@ -5403,7 +5443,7 @@ function _csvRenderMapping(p, filename) {
         </div>`}
     <div class="field"><label>Import into account</label><select id="csv_account">${accOpts}</select></div>
     <div class="field" style="background:var(--bg-3);padding:10px 12px;border-radius:6px;border:1px solid var(--border);">
-      <div style="color:var(--text-dim);font-size:12px;margin-bottom:6px;">Preview · ${dataRows.length} data row${dataRows.length === 1 ? '' : 's'}</div>
+      <div style="color:var(--text-dim);font-size:13px;margin-bottom:6px;">Preview · ${dataRows.length} data row${dataRows.length === 1 ? '' : 's'}</div>
       ${preview.length ? preview.map(x => `<div style="font-variant-numeric:tabular-nums;font-size:13px;line-height:1.6;">${x.iso || '<span style="color:var(--bad)">bad date</span>'} · ${esc(x.payee || '—')} · ${isNaN(x.amt) ? '<span style="color:var(--bad)">bad amount</span>' : `<span class="${x.amt < 0 ? 'neg' : 'pos'}">${x.amt < 0 ? '−' : '+'}${fmt(Math.abs(x.amt))}</span>`}</div>`).join('') : '<div style="color:var(--bad)">No parseable rows — check the delimiter and column choices.</div>'}
     </div>
     <div class="field"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" id="csv_save" ${p.id || p.name ? 'checked' : ''}> Save this mapping as a profile</label>
@@ -5534,7 +5574,7 @@ function txFormModal(tx, isNew, opts) {
   openModal(`
     <h2>${isNew ? 'Add' : 'Edit'} transaction</h2>
     ${opts && opts.banner ? `<div style="background:var(--bg-3);padding:8px 12px;border-radius:6px;color:var(--text-dim);font-size:13px;margin:-4px 0 12px;">${opts.banner}</div>` : ''}
-    <div class="field-row">
+    <div class="tx-form-body"><div class="field-row">
       <div class="field"><label>Date</label>
         <input type="date" id="t_date" value="${tx.date || todayISO()}"></div>
       <div class="field"><label>Type</label>
@@ -5546,13 +5586,13 @@ function txFormModal(tx, isNew, opts) {
         </select>
       </div>
     </div>
-    <div class="field"><label>Amount</label>
+    <div class="field tx-amount-field"><label>Amount <span class="muted">${esc(data.settings.currency || 'EUR')}</span></label>
       <input type="text" inputmode="decimal" id="t_amt" value="${tx.amount || ''}"
         placeholder="e.g. 50 or 2380-100" autocomplete="off">
       <div class="micro" id="t_amt_preview" style="margin-top:4px; min-height:14px;"></div>
     </div>
 
-    <div id="t_simple">
+    <div id="t_simple" class="tx-allocation">
       <div class="field"><label>Account</label><select id="t_acc">${accOpts}</select></div>
       <div class="field" id="t_env_single">
         <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;"><span>Envelope</span>
@@ -5567,7 +5607,7 @@ function txFormModal(tx, isNew, opts) {
         <div class="micro" id="t_split_tally" style="margin-top:6px;"></div>
       </div>
     </div>
-    <div id="t_xacc" style="display:none;">
+    <div class="tx-allocation" id="t_xacc" style="display:none;">
       <div class="field"><label>From account</label>
         <select id="t_facc">${pickAccounts(tx.fromAccountId).map(a => `<option value="${a.id}" ${tx.fromAccountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)} — ${fmt(accountBalance(a))}</option>`).join('')}</select>
       </div>
@@ -5575,7 +5615,7 @@ function txFormModal(tx, isNew, opts) {
         <select id="t_tacc">${pickAccounts(tx.toAccountId).map(a => `<option value="${a.id}" ${tx.toAccountId===a.id?'selected':''}>${esc(a.name)}${archSuffix(a)} — ${fmt(accountBalance(a))}</option>`).join('')}</select>
       </div>
     </div>
-    <div id="t_xenv" style="display:none;">
+    <div class="tx-allocation" id="t_xenv" style="display:none;">
       <div class="field"><label>From envelope</label>
         <select id="t_fenv">${pickEnvelopes(tx.fromEnvelopeId).map(e => `<option value="${e.id}" ${tx.fromEnvelopeId===e.id?'selected':''}>${esc(e.name)}${archSuffix(e)} — ${fmt(envelopeBalance(e))}</option>`).join('')}</select>
       </div>
@@ -5587,12 +5627,41 @@ function txFormModal(tx, isNew, opts) {
     <div class="field"><label>Payee / description</label><input id="t_payee" value="${esc(tx.payee || '')}" list="payeeList" autocomplete="off">
       <datalist id="payeeList">${payeeHistory().map(p => `<option value="${esc(p)}">`).join('')}</datalist></div>
     <div class="field" ${tagList().length || tx.tag ? '' : 'style="display:none;"'}><label>Tag</label><select id="t_tag">${tagOptions(tx.tag)}</select></div>
-    <div class="field"><label>Notes</label><textarea id="t_notes" rows="2">${esc(tx.notes || '')}</textarea></div>
+    <details class="tx-notes" ${tx.notes ? 'open' : ''}><summary>Notes <span class="muted">optional</span></summary><div class="field"><label class="sr">Notes</label><textarea id="t_notes" rows="2">${esc(tx.notes || '')}</textarea></div></details>
+    </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" id="t_save">${isNew ? 'Add' : 'Save'}</button>
+      <button class="btn primary" id="t_save">${isNew ? 'Add transaction' : 'Save changes'}</button>
     </div>
-  `);
+  `, { className: 'tx-modal', focusId: 't_amt' });
+
+  // Errors remain beside the field until the user edits it. Never discard
+  // the arithmetic expression or form values on a failed submission.
+  function fieldError(control, message) {
+    const el = typeof control === 'string' ? document.getElementById(control) : control;
+    if (!el.id) el.id = 'txField_' + uid();
+    const errorId = el.id + '_error';
+    let error = document.getElementById(errorId);
+    if (!error) { error = document.createElement('div'); error.id = errorId; error.className = 'field-error'; el.insertAdjacentElement('afterend', error); }
+    error.textContent = message;
+    error.setAttribute('role', 'alert');
+    el.setAttribute('aria-invalid', 'true');
+    const described = (el.getAttribute('aria-describedby') || '').split(' ').filter(Boolean);
+    if (!described.includes(errorId)) el.setAttribute('aria-describedby', [...described, errorId].join(' '));
+    el.focus();
+    el.scrollIntoView({ block: 'nearest' });
+  }
+  function clearFieldError(el) {
+    if (!el?.id) return;
+    document.getElementById(el.id + '_error')?.remove();
+    el.removeAttribute('aria-invalid');
+    const remaining = (el.getAttribute('aria-describedby') || '').split(' ').filter(x => x && x !== el.id + '_error');
+    if (remaining.length) el.setAttribute('aria-describedby', remaining.join(' '));
+    else el.removeAttribute('aria-describedby');
+  }
+  const formBody = document.querySelector('.tx-form-body');
+  formBody.addEventListener('input', e => clearFieldError(e.target));
+  formBody.addEventListener('change', e => clearFieldError(e.target));
 
   // Live arithmetic preview for the Amount field. Stays empty when the user
   // types a plain number (no noise) and shows "= 75,00 €" / "⚠ invalid"
@@ -5670,8 +5739,8 @@ function txFormModal(tx, isNew, opts) {
   function _splitAddRow(envId, amt) {
     const row = document.createElement('div');
     row.className = 'field-row'; row.dataset.splitRow = '1'; row.style.cssText = 'margin-bottom:6px;align-items:center;gap:6px;';
-    row.innerHTML = `<select class="t-split-env" style="flex:1;">${_envOptsHtml(envId || '')}</select>
-      <input class="t-split-amt" type="text" inputmode="decimal" value="${amt != null && amt !== '' ? amt : ''}" placeholder="amount" style="max-width:120px;text-align:right;">
+    row.innerHTML = `<select class="t-split-env" aria-label="Split envelope" style="flex:1;">${_envOptsHtml(envId || '')}</select>
+      <input class="t-split-amt" aria-label="Split amount" type="text" inputmode="decimal" value="${amt != null && amt !== '' ? amt : ''}" placeholder="amount" style="max-width:120px;text-align:right;">
       <button type="button" class="btn icon t-split-del" title="Remove">${icon('x')}</button>`;
     document.getElementById('t_split_rows').appendChild(row);
     row.querySelector('.t-split-del').onclick = () => { row.remove(); _splitTally(); };
@@ -5697,25 +5766,38 @@ function txFormModal(tx, isNew, opts) {
 
   document.getElementById("t_save").onclick = () => {
     const t = document.getElementById("t_type").value;
+    document.querySelectorAll('.tx-modal [aria-invalid]').forEach(clearFieldError);
+    const amountText = document.getElementById('t_amt').value.trim();
+    if (!amountText) { fieldError('t_amt', 'Enter an amount greater than zero.'); return; }
+    const amount = evalAmount(amountText);
+    if (!Number.isFinite(amount)) { fieldError('t_amt', 'Enter a valid amount or calculation, such as 50 + 12.'); return; }
+    if (!amount) { fieldError('t_amt', 'Enter an amount greater than zero.'); return; }
     const out = {
       id: tx.id,
       date: document.getElementById("t_date").value || todayISO(),
       type: t,
-      amount: Math.abs(evalAmount(document.getElementById("t_amt").value) || 0),
+      amount: Math.abs(amount),
       payee: document.getElementById("t_payee").value,
       notes: document.getElementById("t_notes").value
     };
     // `out` is rebuilt from literals (see the fromRecurringId note below), so
     // every optional field has to be copied across explicitly.
     { const tag = document.getElementById("t_tag").value; if (tag) out.tag = tag; }
-    if (!out.amount) { toast("Amount required"); return; }
     if (t === 'expense' || t === 'income') {
       out.accountId = document.getElementById("t_acc").value || null;
       if (splitMode) {
+        const splitRows = [...document.querySelectorAll('#t_split_rows [data-split-row]')];
+        if (!splitRows.length) { fieldError('t_split_add', 'Add at least one envelope and amount.'); return; }
+        for (const row of splitRows) {
+          const env = row.querySelector('.t-split-env');
+          const amt = row.querySelector('.t-split-amt');
+          if (!env.value) { fieldError(env, 'Choose an envelope for this split.'); return; }
+          if (!Number.isFinite(evalAmount(amt.value)) || !evalAmount(amt.value)) { fieldError(amt, 'Enter a valid non-zero amount.'); return; }
+        }
         const splits = _splitReadRows().filter(s => s.envelopeId && s.amount > 0);
-        if (!splits.length) { toast("Add at least one split with an envelope and amount", 3000, 'error'); return; }
+        if (!splits.length) { fieldError('t_split_add', 'Add at least one envelope and amount.'); return; }
         const sum = splits.reduce((s, x) => s + x.amount, 0);
-        if (Math.abs(sum - out.amount) >= 0.005) { toast(`Splits must add up to ${fmt(out.amount)} (now ${fmt(sum)})`, 3500, 'error'); return; }
+        if (Math.abs(sum - out.amount) >= 0.005) { fieldError(document.querySelector('.t-split-amt'), `Splits must add up to ${fmt(out.amount)} (currently ${fmt(sum)}).`); return; }
         out.splits = splits;
         out.envelopeId = null;
       } else {
@@ -5724,11 +5806,11 @@ function txFormModal(tx, isNew, opts) {
     } else if (t === 'transfer-account') {
       out.fromAccountId = document.getElementById("t_facc").value;
       out.toAccountId = document.getElementById("t_tacc").value;
-      if (out.fromAccountId === out.toAccountId) { toast("Different accounts please"); return; }
+      if (!out.fromAccountId || !out.toAccountId || out.fromAccountId === out.toAccountId) { fieldError('t_tacc', 'Choose a different destination account.'); return; }
     } else if (t === 'transfer-envelope') {
       out.fromEnvelopeId = document.getElementById("t_fenv").value;
       out.toEnvelopeId = document.getElementById("t_tenv").value;
-      if (out.fromEnvelopeId === out.toEnvelopeId) { toast("Different envelopes please"); return; }
+      if (!out.fromEnvelopeId || !out.toEnvelopeId || out.fromEnvelopeId === out.toEnvelopeId) { fieldError('t_tenv', 'Choose a different destination envelope.'); return; }
     }
     // Preserve recurring-source linkage if the input tx carried it. The form
     // has no UI for this field — without this line it would silently disappear
@@ -5933,7 +6015,7 @@ function editRecurring(id) {
     <div class="field" id="r_months_wrap" style="display:${r.schedule==='custom-months'?'':'none'}">
       <label>Months (1-12, comma separated)</label>
       <input id="r_months" value="${(r.months||[]).join(',')}" placeholder="e.g. 4,8,12">
-      <span style="font-size:11px;color:var(--text-dim);">Useful for Christmas (12), Easter (4), summer (7) bonuses.</span>
+      <span style="font-size:13px;color:var(--text-dim);">Useful for Christmas (12), Easter (4), summer (7) bonuses.</span>
     </div>
     <div class="field"><label>End date (optional)</label>
       <input type="date" id="r_end" value="${r.endDate||''}"></div>
@@ -6115,18 +6197,25 @@ function chartLinesFromLegacy(s) {
   return "both";
 }
 
+const forecastPanelOpen = {};
+function forecastPanelAttr(key) {
+  return (forecastPanelOpen[key] ?? !matchMedia('(max-width: 720px)').matches) ? 'open' : '';
+}
 function renderForecast() {
   if (forecastState.accountIds === null) {
     forecastState.accountIds = activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
   }
   return `
-  <h2>Forecast</h2>
+  <div class="page-heading"><div><h2>Forecast</h2><p>See how your cash could change over time.</p></div></div>
+  <div class="forecast-horizon" role="group" aria-label="Time horizon"><span class="stat-label">Look ahead</span>
+    <div>${HORIZONS.map(h => `<button class="btn ${h.days===forecastState.days?'selected':''}" aria-pressed="${h.days===forecastState.days}" data-fc-h="${h.days}">${h.label}</button>`).join('')}</div>
+  </div>
   <div class="forecast-row" id="forecastRow">
     <div class="card forecast-controls">
-      <div>
-        <h3>Profiles</h3>
+      <details class="fc-section" data-fc-panel="profiles" ${forecastPanelAttr('profiles')}>
+        <summary>Saved profiles</summary>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-          <select id="fcProfile" style="flex:1;min-width:140px;padding:6px 8px;background:var(--bg-3);color:var(--text);border:1px solid var(--border);border-radius:6px;">
+          <select id="fcProfile" aria-label="Forecast profile" style="flex:1;min-width:140px;padding:6px 8px;background:var(--bg-3);color:var(--text);border:1px solid var(--border);border-radius:6px;">
             <option value="">— ${data.forecastProfiles.length ? 'Pick a profile' : 'No saved profiles'} —</option>
             ${data.forecastProfiles.map(p =>
               `<option value="${p.id}" ${forecastState.selectedProfileId === p.id ? 'selected' : ''}>${data.defaultForecastProfileId === p.id ? '★ ' : ''}${esc(p.name)}</option>`
@@ -6137,12 +6226,10 @@ function renderForecast() {
           <button class="btn sm" id="fcProfileSetDefault" title="${data.defaultForecastProfileId === forecastState.selectedProfileId && forecastState.selectedProfileId ? 'This profile is the session default — click to clear' : 'Set the selected profile as the default for future sessions'}" ${forecastState.selectedProfileId ? '' : 'disabled'}>${data.defaultForecastProfileId === forecastState.selectedProfileId && forecastState.selectedProfileId ? '★ Default' : 'Set default'}</button>
           <button class="btn sm danger" id="fcProfileDelete" title="Delete the selected profile" aria-label="Delete selected forecast profile" ${forecastState.selectedProfileId ? '' : 'disabled'}>${icon('x')}</button>
         </div>
-      </div>
-      <div>
-        <h3>Accounts to forecast</h3>
-        <details class="fc-acc-picker">
-          <summary>
-            <span class="fc-acc-summary">${forecastState.accountIds.length} of ${activeAccounts().length} accounts selected</span>
+      </details>
+        <details class="fc-section fc-acc-picker" data-fc-panel="accounts" ${forecastPanelAttr('accounts')}>
+          <summary><span>Accounts<br>
+            <span class="fc-acc-summary">${forecastState.accountIds.length} of ${activeAccounts().length} accounts selected</span></span>
             <span class="fc-acc-caret">${icon('caret')}</span>
           </summary>
           <div class="checkbox-list">
@@ -6152,19 +6239,15 @@ function renderForecast() {
                 <span style="flex:1;">${esc(a.name)}
                   ${a.isInvestment?'<span class="badge invest">Investment</span>':''}
                 </span>
-                <span style="color:var(--text-dim);font-size:12px;">${fmt(accountBalance(a))}</span>
+                <span style="color:var(--text-dim);font-size:13px;">${fmt(accountBalance(a))}</span>
               </label>`).join('')}
           </div>
         </details>
-      </div>
-      <div>
-        <h3>Time horizon</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">
-          ${HORIZONS.map(h => `<button class="btn ${h.days===forecastState.days?'selected':''}" data-fc-h="${h.days}">${h.label}</button>`).join('')}
-        </div>
+      <details class="fc-section" data-fc-panel="assumptions" ${forecastPanelAttr('assumptions')}>
+        <summary>Chart &amp; assumptions</summary>
         <div style="margin-top:14px;display:flex;flex-direction:column;gap:6px;">
           <div style="display:flex;flex-direction:column;gap:4px;">
-            <span style="font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;">Chart shows</span>
+            <span style="font-size:13px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;">Chart shows</span>
             <label><input type="radio" name="fcLines" value="both" ${forecastState.chartLines==='both'?'checked':''}> Per-account lines + combined total</label>
             <label><input type="radio" name="fcLines" value="total" ${forecastState.chartLines==='total'?'checked':''}> Combined total only</label>
             <label><input type="radio" name="fcLines" value="individual" ${forecastState.chartLines==='individual'?'checked':''}> Per-account lines only</label>
@@ -6178,14 +6261,15 @@ function renderForecast() {
           <label title="Show the portion of your projected balance that is NOT earmarked by any envelope. Spendable = total − the envelope balances held in the selected accounts."
                  style="${forecastState.chartLines==='spendable'?'opacity:0.5;':''}">
             <input type="checkbox" id="fcSpend" ${forecastState.showSpendable||forecastState.chartLines==='spendable'?'checked':''} ${forecastState.chartLines==='spendable'?'disabled':''}>
-            Show spendable cash line (total − envelopes)${forecastState.chartLines==='spendable'?' <span style="font-size:11px;color:var(--text-dim);">(implied)</span>':''}
+            Show spendable cash line (total − envelopes)${forecastState.chartLines==='spendable'?' <span style="font-size:13px;color:var(--text-dim);">(implied)</span>':''}
           </label>
         </div>
-      </div>
+      </details>
     </div>
     <div class="forecast-splitter" id="forecastSplitter" title="Drag to resize"></div>
     <div class="card forecast-chart-card">
-      <div><canvas id="fcChart"></canvas></div>
+      <div class="section-heading"><h3>Projected cash</h3><span class="muted" id="fcChartContext"></span></div>
+      <div class="forecast-canvas"><canvas id="fcChart" aria-label="Projected account balances" role="img"></canvas></div>
     </div>
   </div>
   <div class="card" style="margin-top:14px;">
@@ -6199,6 +6283,9 @@ function renderForecast() {
   `;
 }
 function bindForecast() {
+  document.querySelectorAll('[data-fc-panel]').forEach(d => d.addEventListener('toggle', () => {
+    forecastPanelOpen[d.dataset.fcPanel] = d.open;
+  }));
   document.querySelectorAll("[data-fc-acc]").forEach(c => c.onchange = e => {
     const id = e.target.dataset.fcAcc;
     if (e.target.checked && !forecastState.accountIds.includes(id)) forecastState.accountIds.push(id);
@@ -6376,7 +6463,7 @@ function setupForecastSplitter() {
   if (!row || !splitter) return;
   // Restore saved width
   const saved = parseInt(localStorage.getItem("forecastControlsW") || "", 10);
-  if (saved && saved > 280) row.style.setProperty("--forecast-controls-w", saved + "px");
+  if (saved && saved > 280) row.style.setProperty("--forecast-controls-w", Math.min(saved, 420) + "px");
 
   const onDown = (e) => {
     e.preventDefault();
@@ -6387,7 +6474,7 @@ function setupForecastSplitter() {
     const onMove = (ev) => {
       const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rowRect.left;
       const min = 280;
-      const max = Math.max(min + 200, rowRect.width - 360);
+      const max = Math.min(420, Math.max(min, rowRect.width - 400));
       const w = Math.max(min, Math.min(max, x));
       row.style.setProperty("--forecast-controls-w", w + "px");
       // Coalesce chart relayout to one call per frame. A raw resize() on every
@@ -6449,10 +6536,13 @@ function forecastMarksPlugin(m) {
       if (!meta || meta.hidden) return;
       const pt = meta.data[m.lowIdx];
       if (!pt) return;
-      const label = `Lowest ${fmt(m.lowValue)} · ${fmtDate(m.lowDate)}`;
+      const lines = chartArea.right - chartArea.left < 300
+        ? [`Lowest ${fmt(m.lowValue)}`, fmtDate(m.lowDate)]
+        : [`Lowest ${fmt(m.lowValue)} · ${fmtDate(m.lowDate)}`];
       ctx.save();
-      ctx.font = `600 11px ${getComputedStyle(document.body).fontFamily}`;
-      const w = ctx.measureText(label).width + 12, h = 20;
+      ctx.font = `600 12px ${getComputedStyle(document.body).fontFamily}`;
+      const w = Math.min(Math.max(...lines.map(line => ctx.measureText(line).width)) + 16,
+        chartArea.right - chartArea.left - 4), h = lines.length * 17 + 8;
       // Above the point when it sits in the lower half of the plot, else below;
       // clamped so the box never leaves the plot area.
       let bx = Math.min(Math.max(pt.x - w / 2, chartArea.left + 2), chartArea.right - w - 2);
@@ -6466,13 +6556,14 @@ function forecastMarksPlugin(m) {
       ctx.fill(); ctx.stroke();
       ctx.fillStyle = themeColor("--text", "#e8edf4");
       ctx.textBaseline = 'middle';
-      ctx.fillText(label, bx + 6, by + h / 2);
+      lines.forEach((line, i) => ctx.fillText(line, bx + 8, by + 12 + i * 17, w - 16));
       ctx.restore();
     }
   };
 }
 
 function drawForecast() {
+  applyChartTheme();
   const { dates, series, total, envelopeTotal, spendable, allowanceInfo, excludedEnvelopes } = forecastAccountBalances(
     forecastState.accountIds, forecastState.days,
     { includeAllowances: forecastState.includeAllowances }
@@ -6586,6 +6677,9 @@ function drawForecast() {
     })]
   });
 
+  const context = document.getElementById('fcChartContext');
+  if (context) context.textContent = `${plural(liveAccountIds.length, 'account')} · allowances ${forecastState.includeAllowances ? 'included' : 'excluded'}`;
+  document.getElementById('fcChart').setAttribute('aria-label', `Projected balances for ${plural(liveAccountIds.length, 'account')} over ${forecastState.days} days. ${lowValue !== null ? `Lowest ${featured}: ${fmt(lowValue)} on ${fmtDate(dates[lowIdx])}.` : ''} Detailed figures follow the chart.`);
   // Summary table
   const finalIdx = dates.length - 1;
   const rows = liveAccountIds.map(id => {
@@ -6640,7 +6734,7 @@ function drawForecast() {
       const una = allowanceInfo.unassigned || [];
       const incRows = inc.map(x =>
         `<tr><td>${esc(x.name)}</td><td>${esc(x.accountName)}</td><td class="num">${fmt(x.monthly)}${
-          x.covered > 0.005 ? ` <span style="color:var(--text-dim);font-weight:400;font-size:11px;" title="Budget ${fmt(x.monthly + x.covered)} less ${fmt(x.covered)} already modelled by recurring entries">net of ${fmt(x.covered)}</span>` : ''
+          x.covered > 0.005 ? ` <span style="color:var(--text-dim);font-weight:400;font-size:13px;" title="Budget ${fmt(x.monthly + x.covered)} less ${fmt(x.covered)} already modelled by recurring entries">net of ${fmt(x.covered)}</span>` : ''
         }</td></tr>`
       ).join('');
       const skpList = skp.length
@@ -6661,7 +6755,7 @@ function drawForecast() {
               </tr>
             </tbody>
           </table>
-          <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">
+          <p style="color:var(--text-dim);font-size:13px;margin-top:8px;">
             Smoothed evenly across each calendar month, so every month drains exactly this much. Amounts
             already modelled by a recurring entry are netted out. The spending account is inferred from the
             most recent expense for each envelope. Each envelope's own balance absorbs this spending first —
@@ -6723,6 +6817,7 @@ function bindNetWorth() {
   };
 }
 function drawNetWorth() {
+  applyChartTheme();
   const snaps = data.netWorthSnapshots;
   if (currentChart) currentChart.destroy();
   const ctx = document.getElementById("nwChart").getContext("2d");
@@ -6956,6 +7051,7 @@ function renderReports() {
   `;
 }
 function bindReports() {
+  applyChartTheme();
   // Reuse the single-scan aggregates renderReports just computed.
   const { months, envSpend, tagSpend } = _reportsAgg || reportsAggregates();
 
@@ -7072,7 +7168,7 @@ function renderSettings() {
     </div>
     <div class="setting-row">
       <div><div class="label">Forecast warning floor</div>
-        <div class="desc">The dashboard's "lowest in period" tile turns amber when the projected low dips under this amount, and red when it goes below zero. Leave empty for red-only.</div></div>
+        <div class="desc">The dashboard's "Lowest projected spendable" figure turns amber when the projected low dips under this amount, and red when it goes below zero. Leave empty for red-only.</div></div>
       <input id="s_fcfloor" type="text" inputmode="decimal" value="${typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''}" placeholder="none" style="width:120px;text-align:right;">
     </div>
     <div class="setting-row">
@@ -7282,29 +7378,30 @@ function renderHelp() {
       <dt>Total balance</dt>
       <dd>The sum of your accounts' real balances. This is the actual money you have.</dd>
       <dt>Spendable cash</dt>
-      <dd>Total balance minus the sum of your envelope balances. This is the money <em>not yet claimed</em> by any envelope — what's free to allocate or spend on uncategorised things. When a forecast selects only some accounts, only the envelopes those accounts hold are subtracted: each envelope can name the account it is <strong>backed by</strong> (envelope dialog); one that names none is household-wide and counts everywhere.</dd>
+      <dd>Total balance minus the positive balances reserved in your envelopes. Negative envelope balances do not increase spendable cash. This is the money <em>not yet claimed</em> by any envelope — what's free to allocate or spend on uncategorised things. When a forecast selects only some accounts, only the envelopes those accounts hold are subtracted: each envelope can name the account it is <strong>backed by</strong> (envelope dialog); one that names none is household-wide and counts everywhere.</dd>
       <dt>Allowances</dt>
       <dd>A forecasting smoothing option: subtract each envelope's monthly equivalent from accounts daily, simulating the intent to spend the budget evenly over time. Toggled on the Forecast tab.</dd>
       <dt>Headroom / "lowest in period"</dt>
-      <dd>The lowest projected balance over your chosen forecast horizon — the constraint that tells you the maximum you can safely allocate today without driving the forecast underwater. Shown on the Dashboard and used by Fund-the-month.</dd>
+      <dd>The lowest projected spendable balance over your selected horizon, including due entries still to be recorded. It assumes no new funding. Fund the month recalculates the projection for the specific envelopes and amounts you propose; the low is not a single maximum safe funding amount.</dd>
     </dl>
 
     <h3>Workflows</h3>
 
     <p><strong>First-time setup.</strong> Add your accounts (Accounts tab), create envelopes grouped by category (Envelopes tab), set up recurring transactions for income and fixed bills (Recurring tab), then click <strong>Fund the month</strong> on the Envelopes tab to allocate the current month's budgets.</p>
 
-    <p><strong>Funding the month.</strong> On the Envelopes tab, click <strong>Fund the month</strong>. The dialog shows your projected lowest balance and the maximum safe to allocate today. Enter funding amounts per envelope — the live preview updates the post-funding lowest point as you type. A soft confirm prompts you if you try to over-allocate.</p>
+    <p><strong>Funding the month.</strong> On the Envelopes tab, click <strong>Fund the month</strong>. The dialog shows the projected low before funding and recalculates it for your proposal. Enter funding amounts per envelope — the live preview updates the post-funding lowest point as you type. A soft confirm prompts you if you try to over-allocate.</p>
 
-    <p><strong>Monthly close-out.</strong> At the start of each new month, the Dashboard shows a "Close out [last month]" banner. Click <strong>Review</strong> to walk through each envelope's leftover balance and pick rollover, reset or sweep. Reset envelopes return their leftover to spendable cash; rollover envelopes carry it forward; sweep moves it into the reserve envelope. If you have a reserve envelope, a "Set all" row lets you sweep every envelope's leftover in one click.</p>
+    <p><strong>Monthly close-out.</strong> At the start of each new month, the Dashboard's <strong>Needs attention</strong> panel shows "Close out [last month]". Click the month's <strong>Review</strong> button to walk through each envelope's leftover balance and pick rollover, reset or sweep. Reset envelopes return their leftover to spendable cash; rollover envelopes carry it forward; sweep moves it into the reserve envelope. If you have a reserve envelope, a "Set all" row lets you sweep every envelope's leftover in one click.</p>
 
     <p><strong>Logging a one-off transaction.</strong> Press <kbd>N</kbd> from anywhere, or use <strong>+ Add transaction</strong> on the Transactions tab. Pick a type (expense, income, transfer-account, transfer-envelope), an account, optionally an envelope, and an amount.</p>
 
-    <p><strong>Applying recurring entries.</strong> When recurring entries are due, the Dashboard shows a banner with the count and a net total. Click <strong>Apply</strong> to record them all, or <strong>Review</strong> to untick or adjust amounts before applying.</p>
+    <p><strong>Applying recurring entries.</strong> When recurring entries are due, <strong>Needs attention</strong> shows their count and net total. Choose <strong>Review recurring</strong> to record, link, skip or defer each occurrence before applying your choices.</p>
 
+    <h3>Finding your way</h3><p>Desktop navigation groups everyday budgeting, analysis and administration. On phones, the bottom bar opens Dashboard, Envelopes, Transactions and Forecast. <strong>More</strong> opens Accounts, Recurring, Net Worth, Reports, Settings and Help. On Transactions, search is always visible; <strong>Filters</strong> opens type, account, envelope, tag and date controls. Its count shows how many of those filters are active, even when collapsed.</p>
     <h3>Tabs at a glance</h3>
     <dl>
       <dt>Dashboard</dt>
-      <dd>Net worth, forecast horizons, upcoming entries, lowest envelopes, pinned accounts, and recent transactions.</dd>
+      <dd>Spendable today and the lowest projected spendable balance, followed by items needing attention, wealth totals, upcoming entries, lowest envelopes, pinned accounts and recent transactions.</dd>
       <dt>Accounts</dt>
       <dd>Manage real-money accounts. Pin to dashboard with the pin icon, drag rows by their grip to reorder.</dd>
       <dt>Envelopes</dt>
@@ -7314,7 +7411,7 @@ function renderHelp() {
       <dt>Recurring</dt>
       <dd>Templates for repeating entries (salary, rent, subscriptions). The app reminds you when occurrences are due rather than auto-applying them.</dd>
       <dt>Forecast</dt>
-      <dd>Projects account and spendable balances 1 week to 2 years forward. Save view configurations as profiles for quick switching.</dd>
+      <dd>Projects account and spendable balances 1 week to 2 years forward. Set the horizon above the chart; expand Saved profiles, Accounts or Chart &amp; assumptions to adjust the projection. Open sections stay open as you change the horizon. Save configurations as profiles for quick switching.</dd>
       <dt>Net Worth</dt>
       <dd>Historical net-worth chart. One snapshot is captured automatically per day (today's value updates as balances change); use Manual snapshot to backfill past dates.</dd>
       <dt>Reports</dt>
@@ -7374,7 +7471,7 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>What if I miss a month's close-out?</summary>
-    <div>The Dashboard banner only ever surfaces the most recent unreviewed month, so you won't see a multi-month catch-up. If you want to close out a specific older month manually, go to Settings → Envelope close-out and pick the month.</div>
+    <div>The Dashboard attention panel only ever surfaces the most recent unreviewed month, so you won't see a multi-month catch-up. If you want to close out a specific older month manually, go to Settings → Envelope close-out and pick the month.</div>
     </details>
 
     <details class="faq"><summary>Why is an envelope balance negative?</summary>
@@ -7385,9 +7482,11 @@ function renderHelp() {
     <div>Yes. Editing a recurring template changes future occurrences only — already-applied transactions stay exactly as they were recorded. If you need to edit a past occurrence, find it on the Transactions tab and edit the individual record.</div>
     </details>
 
-    <details class="faq"><summary>What does "Lowest in period" mean on the Dashboard forecast card?</summary>
-    <div>It's the lowest projected balance over the selected forecast horizon (e.g. 3 months). Treat it as a budgeting constraint — it tells you the maximum amount you can safely commit today without making the worst future point go underwater. Fund-the-month uses the same number to flag over-allocation.
-    <p style="margin:8px 0 0;">The <strong>spendable</strong> version of this number is the one to watch when you're deciding how much to set aside. Projected spending for an envelope is paid out of that envelope's own balance first, and only starts reducing spendable once the envelope is empty — so money you've already funded is never counted against you twice, and topping up an envelope doesn't make your own forecast look worse.</p></div>
+    <details class="faq"><summary>Why can Spendable today differ from the projected starting balance?</summary>
+    <div><strong>Spendable today</strong> uses recorded account balances, less positive envelope reservations. The projection also folds in recurring entries that are due but have not been recorded yet. An unpaid bill can therefore lower the forecast's starting point before it changes today's actual balance. Both figures use the accounts selected in Forecast, including each envelope's backing account.</div>
+    </details>
+    <details class="faq"><summary>What does Lowest projected spendable mean?</summary>
+    <div>The lowest point over exactly the horizon selected in Forecast, using the same accounts and envelope-allowance setting. The Dashboard always shows spendable cash, even if the chart displays only total or individual account lines. The assumption chips state whether allowances are included. The projection assumes no new envelope funding: <strong>Fund the month</strong> recalculates the low for the amounts you propose. Money already set aside pays for its envelope's projected spending first, so it is not charged twice.</div>
     </details>
 
     <details class="faq"><summary>Fund the month vs. Fund vs. Move funds vs. Return — which do I use?</summary>
@@ -7400,28 +7499,35 @@ function renderHelp() {
 //=============================================================================
 // EVENT WIRING
 //=============================================================================
-document.querySelectorAll("nav.tabs button").forEach(b => {
-  b.onclick = () => { activeView = b.dataset.view; render(); };
+document.querySelectorAll("button[data-view]").forEach(b => {
+  b.onclick = () => navigateToView(b.dataset.view);
 });
-// Edge fades on the phone tab strip: data-fade = left | right | both | none,
-// from the scroll position. Cheap, so it runs on every scroll and resize.
-function updateTabFades() {
-  // The sticky table header on the Transactions tab needs the app header's
-  // current height (one row, or two with the tab strip wrapped).
-  const hdr = document.querySelector("header.top");
-  if (hdr) document.documentElement.style.setProperty("--header-h", hdr.offsetHeight + "px");
-  const nav = document.getElementById("tabs");
-  if (!nav) return;
-  const max = nav.scrollWidth - nav.clientWidth;
-  let fade = "none";
-  if (max > 1) {
-    const atStart = nav.scrollLeft <= 1, atEnd = nav.scrollLeft >= max - 1;
-    fade = atStart ? "right" : atEnd ? "left" : "both";
-  }
-  if (nav.dataset.fade !== fade) nav.dataset.fade = fade;
+function navigateToView(view) {
+  activeView = view;
+  render();
+  window.scrollTo({ top: 0, behavior: 'instant' });
 }
-document.getElementById("tabs").addEventListener("scroll", updateTabFades, { passive: true });
-window.addEventListener("resize", updateTabFades);
+document.getElementById('mobileMore').onclick = () => {
+  const groups = [
+    ['Everyday', [['accounts', 'Accounts'], ['recurring', 'Recurring']]],
+    ['Explore', [['networth', 'Net Worth'], ['reports', 'Reports']]],
+    ['Manage', [['settings', 'Settings'], ['help', 'Help']]]
+  ];
+  openModal(`<h2>More</h2><div class="more-sections">${groups.map(([label, items]) =>
+    `<section><h3>${label}</h3>${items.map(([view, title]) =>
+      `<button class="btn more-destination ${activeView === view ? 'selected' : ''}" data-more-view="${view}" ${activeView === view ? 'aria-current="page"' : ''}>${title}</button>`).join('')}</section>`).join('')}</div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Close</button></div>`, { className: 'more-modal' });
+  document.querySelectorAll('[data-more-view]').forEach(b => b.onclick = () => {
+    closeModal(); navigateToView(b.dataset.moreView);
+    document.getElementById('main').querySelector('h2')?.focus();
+  });
+};
+// Publish the header height for sticky table headings.
+function updateTabFades() {
+  const hdr = document.querySelector('header.top');
+  if (hdr) document.documentElement.style.setProperty('--header-h', hdr.offsetHeight + 'px');
+}
+window.addEventListener('resize', updateTabFades);
 updateTabFades();
 // Pull the server's copy again — useful after editing on another device.
 // Refuses to discard unsaved local edits without a confirmation.

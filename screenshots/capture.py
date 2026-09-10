@@ -8,6 +8,7 @@ reads or writes finance-data.json. Viewport 1400x900, dark theme (the demo's
 default), one PNG per view into this folder. The browser UI language is forced
 to English because native <input type="month"> follows the browser language,
 not the page locale.
+Set BROWSER_CHANNEL=msedge or chrome to use an installed browser.
 """
 import os
 from pathlib import Path
@@ -19,7 +20,7 @@ BASE = os.environ.get("SERVER", "http://127.0.0.1:8765") + "/?demo=1"
 VIEWS = ["dashboard", "envelopes", "transactions", "forecast", "reports"]
 
 with sync_playwright() as p:
-    browser = p.chromium.launch(args=["--lang=en-GB"])
+    browser = p.chromium.launch(args=["--lang=en-GB"], channel=os.environ.get("BROWSER_CHANNEL"))
     page = browser.new_page(viewport={"width": 1400, "height": 900}, device_scale_factor=1,
                             color_scheme="dark", locale="en-GB")
     for view in VIEWS:

@@ -5,6 +5,24 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased — visual refresh for review
+
+- Dashboard features actual spendable cash and the projected spendable low,
+  using the exact selected horizon and labelled assumptions. Pending recurring
+  entries affect the projection, not the recorded-cash figure. No accounting
+  engine or stored-data schema change.
+- Consolidated attention panel, quieter wealth totals, grouped desktop
+  navigation and a five-item phone navigation bar with a More dialog.
+- Responsive Forecast and Reports, horizon controls above the chart,
+  collapsible forecast settings, clearer envelope balances and labelled pace
+  markers, more readable supporting text and theme-aware chart labels.
+- Transactions hides its bulk toolbar when nothing is selected and keeps
+  secondary filters behind a counted toggle. Transaction entry features the
+  amount, grouped allocations, expandable notes, persistent inline errors and
+  an always-visible action footer. Incomplete splits and invalid calculations
+  are refused without clearing the form.
+- Review checklist: `docs/VISUAL-REFRESH-REVIEW.md`.
+
 ## 2026-09-10 — v0.9.0, review fixes: allowance netting, server guards, every amount field
 
 - **Review fixes (accounting: forecast allowance only).** A one-off

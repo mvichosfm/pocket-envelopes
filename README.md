@@ -13,7 +13,7 @@
 
 - **You own the file.** The whole budget is `finance-data.json` next to the server. Back it up, `git` it, open it in an editor. When the project stops existing, your data does not.
 - **Nothing leaves your machine.** No sync service, no bank connection, no analytics, no CDN. The one third-party library (Chart.js) is vendored.
-- **Forecasting is first-class.** Recurring income and bills, envelope allowances, and due-but-unrecorded entries are all folded into a day-by-day projection. The dashboard's "lowest in period" figure is the single number the app is built around.
+- **Forecasting is first-class.** Recurring income and bills, envelope allowances, and due-but-unrecorded entries are all folded into a day-by-day projection. The dashboard's "Lowest projected spendable" figure is the single number the app is built around.
 - **It is small enough to read.** One HTML file and a 300-line Python server. No framework, no build. If something looks wrong you can find out why in an afternoon.
 
 **Who it is not for.** There is no bank sync: you record transactions by hand or import a CSV statement. There is no multi-user permission model and no authentication; it is a household tool, not a service. And it is a single maintainer's opinionated budget app: features are added when the maintainer's own budget needs them.
@@ -61,6 +61,23 @@ All three start the server on `http://localhost:8765/`, bound to this machine on
 On first run, click **Create new budget**. That writes `finance-data.json` into the folder; every later visit loads and saves it automatically.
 
 > **Why a server for a single HTML file?** The server *is* the storage layer. It owns the JSON, hands it to whichever device asks, and writes it back atomically. Opening the app straight from the file system would leave it with nowhere to save. The file is named `pocket-envelopes.app` rather than `.html` precisely so a double-click cannot open it that way by accident.
+
+## Using the refreshed interface
+
+The Dashboard leads with **Spendable today** (recorded cash less positive
+envelope reservations) and **Lowest projected spendable** over the exact
+Forecast horizon. The projection includes due entries still to be recorded;
+its assumptions state whether envelope allowances are included. Account
+selection and allowances carry over from Forecast, while chart-line visibility
+does not hide the dashboard's spendable summary.
+
+On phones, the bottom navigation opens the four main views; **More** holds
+Accounts, Recurring, Net Worth, Reports, Settings and Help. Forecast puts its
+horizon above the chart, with collapsible settings. Transactions keeps search
+visible and tucks secondary filters behind **Filters**. The transaction dialog
+accepts arithmetic, keeps validation beside the field, and expands optional
+notes when needed. Envelope cards label available funds separately from this
+month's spending; **Today** marks the calendar pace on each budget bar.
 
 ## Your first ten minutes
 
