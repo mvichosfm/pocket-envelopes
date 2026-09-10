@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased — visual refresh for review
+## 2026-09-10 — v0.10.0, interface refresh: spendable-cash dashboard, phone navigation, clearer entry
 
 - Dashboard features actual spendable cash and the projected spendable low,
   using the exact selected horizon and labelled assumptions. Pending recurring
@@ -21,7 +21,8 @@ because those are the ones worth re-checking your own figures after.
   amount, grouped allocations, expandable notes, persistent inline errors and
   an always-visible action footer. Incomplete splits and invalid calculations
   are refused without clearing the form.
-- Review checklist: `docs/VISUAL-REFRESH-REVIEW.md`.
+- No accounting engine, server or data-schema change. Review checklist:
+  `docs/VISUAL-REFRESH-REVIEW.md`.
 
 ## 2026-09-10 — v0.9.0, review fixes: allowance netting, server guards, every amount field
 
