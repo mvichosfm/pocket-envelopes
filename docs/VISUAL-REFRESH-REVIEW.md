@@ -1,6 +1,6 @@
 # Visual refresh — review checklist
 
-Branch: `codex/visual-refresh-ten-proposals`.
+Landed on `main` as commit `654b589` (2026-09-10); reviewed the same day (see CLAUDE.md decision #51 and the CHANGELOG).
 
 Open **http://127.0.0.1:8765/?demo=1** while the server is running from
 this checkout. The demo is synthetic and does not read or write the real
