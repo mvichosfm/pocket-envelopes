@@ -7,6 +7,9 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased — reliability and contributor checks
 
+- Recurring rows have a Duplicate action that opens an editable copy before
+  adding it. Settings and paused status carry over; payment and skip history
+  do not. Review the copied start date; adding the copy supports Undo.
 - Saves are serialized and drain edits made during an earlier save, using the
   latest ETag. A completed earlier request cannot label a newer edit saved,
   and duplicate save triggers do not conflict with the same tab's own write.

@@ -5925,6 +5925,7 @@ function renderRecurring() {
           })()}</td>
           <td class="actions">
             <button class="btn sm" data-edit-rec="${r.id}">Edit</button>
+            <button class="btn sm ghost" data-dup-rec="${r.id}" aria-label="Duplicate recurring ${esc(r.name)}" title="Duplicate recurring">${icon('copy')}</button>
             ${r.active===false
               ? ''
               : `<button class="btn sm ghost" data-apply-rec="${r.id}" ${pending ? `title="Apply next instance today (scheduled ${fmtDate(pending)})" aria-label="Apply next instance of ${esc(r.name)} today"` : `disabled title="No pending or upcoming instance" aria-label="No pending instance of ${esc(r.name)} to apply"`}>${icon('bolt')}</button>
@@ -5945,6 +5946,8 @@ function bindRecurring() {
   document.getElementById("addRec").onclick = () => editRecurring();
   document.querySelectorAll("[data-edit-rec]").forEach(b =>
     b.onclick = () => editRecurring(b.dataset.editRec));
+  document.querySelectorAll("[data-dup-rec]").forEach(b =>
+    b.onclick = () => editRecurring(b.dataset.dupRec, { duplicate: true }));
   document.querySelectorAll("[data-apply-rec]").forEach(b =>
     b.onclick = () => applyRecurringInstanceNow(b.dataset.applyRec));
   document.querySelectorAll("[data-skip-rec]").forEach(b =>
@@ -6005,11 +6008,20 @@ function applyRecurringInstanceNow(recId) {
   });
 }
 
-function editRecurring(id) {
-  const r = id ? data.recurring.find(x => x.id === id) :
+function editRecurring(id, { duplicate = false } = {}) {
+  let r = id ? data.recurring.find(x => x.id === id) :
     { id: uid(), type: "expense", schedule: "monthly", startDate: todayISO(), active: true };
+  if (!r) return;
+  if (duplicate) {
+    // A new template owns its own history; leave the source untouched even on Cancel.
+    r = { ...structuredClone(r), id: uid(), name: `${r.name || ''} (copy)` };
+    delete r.lastAppliedDate;
+    delete r.skippedDates;
+  }
+  const editing = !!id && !duplicate;
   openModal(`
-    <h2>${id ? 'Edit' : 'Add'} recurring</h2>
+    <h2>${duplicate ? 'Duplicate' : editing ? 'Edit' : 'Add'} recurring</h2>
+    ${duplicate ? '<p class="micro">Review the start date before adding. The copy has no payment or skip history; past dates can create overdue occurrences.</p>' : ''}
     <div class="field"><label>Name</label><input id="r_name" value="${esc(r.name||'')}"></div>
     <div class="field" ${tagList().length || r.tag ? '' : 'style="display:none;"'}><label>Tag</label><select id="r_tag">${tagOptions(r.tag)}</select></div>
     <div class="field-row">
@@ -6083,7 +6095,7 @@ function editRecurring(id) {
     <div class="field"><label>Notes</label><textarea id="r_notes" rows="2">${esc(r.notes||'')}</textarea></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" id="r_save">${id?'Save':'Add'}</button>
+      <button class="btn primary" id="r_save">${duplicate ? 'Add copy' : editing ? 'Save' : 'Add'}</button>
     </div>
   `);
   // Live arithmetic preview for the Amount field (matches Add Tx + Move Funds).
@@ -6138,11 +6150,12 @@ function editRecurring(id) {
       out.fromAccountId = null; out.toAccountId = null;
       out.fromEnvelopeId = null; out.toEnvelopeId = null;
     }
-    if (!id) {
+    if (!editing) {
       // Anchor lastAppliedDate to the day before startDate so the first
       // occurrence on/after startDate is detected as due/overdue. Without this,
       // migrate() would later anchor it to today and miss backdated occurrences.
       out.lastAppliedDate = isoDate(addDays(parseDate(out.startDate), -1));
+      if (duplicate) pushUndo('Duplicate recurring');
       data.recurring.push(out);
     } else {
       // If the user moved startDate to before the current lastAppliedDate,
