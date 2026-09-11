@@ -1,0 +1,298 @@
+{
+  "commit": "126021e2b1da2ad1054cb2b514214c2b081fa697",
+  "date": "2026-09-11",
+  "scope": "Synthetic disposable-budget probes; application unchanged",
+  "github_checks_url": "https://github.com/mvichosfm/pocket-envelopes/actions/runs/34561431169",
+  "core_checks_passed": 28,
+  "server_tests_passed": 5,
+  "existing_browser_visual_checks_passed": 108,
+  "branch_protected": false,
+  "browser_and_behavior_probes": [
+    {
+      "name": "Saving an unchanged recurring preserves history",
+      "passed": false,
+      "details": {
+        "before": {
+          "watermark": "2026-09-01",
+          "due": 0,
+          "txs": 3
+        },
+        "after": {
+          "watermark": "2026-06-30",
+          "due": 3,
+          "txs": 3
+        }
+      }
+    },
+    {
+      "name": "Rejected account edit leaves original intact",
+      "passed": false,
+      "details": {
+        "expected": "Checking",
+        "actual": "Rejected name"
+      }
+    },
+    {
+      "name": "Rejected envelope edit leaves original intact",
+      "passed": false,
+      "details": {
+        "expected": "Groceries",
+        "actual": "Rejected envelope"
+      }
+    },
+    {
+      "name": "Move funds creates an undo snapshot",
+      "passed": false,
+      "details": {
+        "undo_depth": 0
+      }
+    },
+    {
+      "name": "Update investment creates an undo snapshot",
+      "passed": false,
+      "details": {
+        "undo_depth": 0
+      }
+    },
+    {
+      "name": "Edit account creates an undo snapshot",
+      "passed": false,
+      "details": {
+        "undo_depth": 0
+      }
+    },
+    {
+      "name": "Edit recurring creates an undo snapshot",
+      "passed": false,
+      "details": {
+        "undo_depth": 0
+      }
+    },
+    {
+      "name": "Pause recurring creates an undo snapshot",
+      "passed": false,
+      "details": {
+        "undo_depth": 0
+      }
+    },
+    {
+      "name": "Change reserve creates an undo snapshot",
+      "passed": false,
+      "details": {
+        "undo_depth": 0
+      }
+    },
+    {
+      "name": "Undo Move funds retains preceding purchase",
+      "passed": false,
+      "details": {
+        "preceding_purchase_retained": false
+      }
+    },
+    {
+      "name": "Dismissed toast cannot receive focus",
+      "passed": false,
+      "details": {
+        "opacity": "0",
+        "visibility": "visible",
+        "focused": "toast-action"
+      }
+    },
+    {
+      "name": "Row edit restores usable keyboard focus",
+      "passed": false,
+      "details": {
+        "tag": "BODY",
+        "id": ""
+      }
+    },
+    {
+      "name": "Settings controls have explicit accessible labels",
+      "passed": false,
+      "details": [
+        "s_curr",
+        "s_loc",
+        "s_fcfloor",
+        "s_taglimit",
+        "s_theme"
+      ]
+    },
+    {
+      "name": "edge first budget arithmetic",
+      "passed": true,
+      "details": {
+        "account": 975,
+        "envelope": 75,
+        "spendable": 900
+      }
+    },
+    {
+      "name": "edge saved budget reload",
+      "passed": true,
+      "details": {
+        "transactions": 2
+      }
+    },
+    {
+      "name": "edge export/import round trip",
+      "passed": true,
+      "details": {
+        "exact_budget_match": true
+      }
+    },
+    {
+      "name": "edge all views fit desktop and phones",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "edge no browser exceptions",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "edge tested version",
+      "passed": true,
+      "details": "152.0.4191.66"
+    },
+    {
+      "name": "firefox first budget arithmetic",
+      "passed": true,
+      "details": {
+        "account": 975,
+        "envelope": 75,
+        "spendable": 900
+      }
+    },
+    {
+      "name": "firefox saved budget reload",
+      "passed": true,
+      "details": {
+        "transactions": 2
+      }
+    },
+    {
+      "name": "firefox export/import round trip",
+      "passed": true,
+      "details": {
+        "exact_budget_match": true
+      }
+    },
+    {
+      "name": "firefox all views fit desktop and phones",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "firefox no browser exceptions",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "firefox tested version",
+      "passed": true,
+      "details": "151.0"
+    },
+    {
+      "name": "webkit first budget arithmetic",
+      "passed": true,
+      "details": {
+        "account": 975,
+        "envelope": 75,
+        "spendable": 900
+      }
+    },
+    {
+      "name": "webkit saved budget reload",
+      "passed": true,
+      "details": {
+        "transactions": 2
+      }
+    },
+    {
+      "name": "webkit export/import round trip",
+      "passed": true,
+      "details": {
+        "exact_budget_match": true
+      }
+    },
+    {
+      "name": "webkit all views fit desktop and phones",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "webkit no browser exceptions",
+      "passed": true,
+      "details": []
+    },
+    {
+      "name": "webkit tested version",
+      "passed": true,
+      "details": "26.5"
+    }
+  ],
+  "invalid_input_probes": [
+    {
+      "name": "Blank recurring start is rejected",
+      "passed": false,
+      "details": {
+        "count": 2,
+        "start": "",
+        "watermark": "NaN-NaN-NaN"
+      }
+    },
+    {
+      "name": "Correcting start repairs the recurring",
+      "passed": true,
+      "details": {
+        "watermark": "NaN-NaN-NaN",
+        "next": "2026-09-01"
+      }
+    },
+    {
+      "name": "Invalid locale cannot persist and blank dashboard",
+      "passed": false,
+      "details": {
+        "persisted_locale": "el_GR",
+        "dashboard_empty": true,
+        "errors": [
+          "Invalid language tag: el_GR"
+        ]
+      }
+    },
+    {
+      "name": "Settings can recover invalid locale",
+      "passed": true,
+      "details": {
+        "dashboard_restored": true
+      }
+    },
+    {
+      "name": "Forecast works when browser storage is blocked",
+      "passed": false,
+      "details": {
+        "error": "SecurityError: Blocked",
+        "chart": false
+      }
+    }
+  ],
+  "launcher": "Staged runtime checksum, first/second launch, MIME, isolated DATA_DIR, persistence across restart passed; installer compilation and install/upgrade/uninstall not exercised.",
+  "repair_verification": {
+    "date": "2026-09-11",
+    "status": "R1-R4 and related focus, labels, hidden toast, blocked forecast storage repaired in working tree",
+    "application_sha256": "84a674a0aaa395925c9666ad5435d7d501e61f8533d020bb2a97a2383e947ce2",
+    "regression_script": "audit/browser_release_regressions.py",
+    "core_checks_passed": 28,
+    "server_tests_passed": 5,
+    "visual_checks_passed": 108,
+    "browser_persistence": "passed",
+    "release_regression_tests_per_engine": {
+      "Edge": 12,
+      "Firefox": 12,
+      "WebKit": 12
+    },
+    "github_for_repairs": "not run; changes uncommitted",
+    "remaining": "candidate installer installation/upgrade/recovery, independent user trials, release preparation"
+  }
+}

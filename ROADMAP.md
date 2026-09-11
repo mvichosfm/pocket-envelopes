@@ -18,7 +18,8 @@ are implemented in the working tree; see CHANGELOG.md for released versions.
 - [x] Exercise disk save/load, concurrent edits, backup rotation and restoration
   with disposable budgets, plus browser save/conflict/restore checks.
 - [x] Add pull-request checks for Windows, macOS and Linux and browser checks for Chromium.
-- [ ] Observe the new workflow passing on GitHub and configure required checks.
+- [x] Observe the new workflow passing on GitHub (all five jobs on `126021e`).
+- [ ] Configure required checks (`main` was unprotected on 2026-09-11).
 - [ ] Recheck and triage the remaining findings in the September review before
   claiming the audit backlog is resolved.
 
@@ -26,6 +27,13 @@ The historical [review](docs/REVIEW-360-2026-09-10.md) describes an older commit
 its findings are not all current bugs. Its status note records the fixed groups.
 Further audit fixes should get a reproduction and regression check before
 being marked complete.
+
+The [2026-09-11 focused release check](docs/RELEASE-CHECK-2026-09-11.md) found
+four defect groups: recurring edit history, undo coverage, invalid locale recovery,
+and form validation before model mutation. Those groups are repaired in the working
+tree with permanent browser regressions, together with focus/label/hidden-action
+and blocked Forecast storage fixes. Candidate installation, independent household
+trials and GitHub checks on the repaired commit still remain release gates.
 
 ## Newcomer milestone
 

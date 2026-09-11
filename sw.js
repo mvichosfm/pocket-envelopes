@@ -21,7 +21,7 @@
  *
  * Bump CACHE_NAME to force every client to drop its old shell.
  */
-const CACHE_NAME = "pocket-envelopes-shell-v5";
+const CACHE_NAME = "pocket-envelopes-shell-v6";
 
 // Kept deliberately small: the app is one file, plus Chart.js and the icons.
 const SHELL = [

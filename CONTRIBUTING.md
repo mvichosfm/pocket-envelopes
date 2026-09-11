@@ -63,7 +63,9 @@ python audit/run_browser.py
 On Linux, use `python -m playwright install --with-deps chromium` if system
 browser libraries are missing. `run_browser.py` creates and cleans up its own
 scratch server on a free port. It runs responsive/theme checks and a browser
-save/conflict/restore scenario. There is no need to start your normal server.
+save/conflict/restore scenario, followed by the release regressions for recurring
+history, undo/redo, rejected edits, locale recovery and keyboard focus. There is
+no need to start your normal server.
 To use an installed Edge or Chrome, set `BROWSER_CHANNEL=msedge` or `chrome`.
 
 The **Checks** workflow runs on pull requests and pushes to `main`: core checks

@@ -7,6 +7,21 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased — reliability and contributor checks
 
+- Editing a recurring entry preserves already-recorded/skipped history, including
+  when its start date or schedule changes. Blank starts, reversed date ranges and
+  empty custom-month schedules are refused. A malformed legacy history date can
+  be corrected explicitly in the editor; duplicating still starts fresh history.
+- Account/envelope edits validate drafts before changing live records. Add/edit,
+  Move funds, investment-value updates and recurring pause/resume now capture Undo;
+  unchanged forms and rejected saves leave Undo alone. Reserve changes and balance
+  adjustments are undone together.
+- Invalid formatting locales are rejected with an inline message; previously
+  saved/imported invalid locales use a safe display fallback across all views.
+- Settings controls have labels, row actions restore focus after saving, and hidden
+  toast actions cannot receive focus. Modals take focus immediately, including in
+  WebKit. Forecast resizing tolerates blocked browser storage.
+- Added twelve browser regression tests with multiple cases for the release-check
+  failures, integrated into the existing browser checks.
 - Recurring rows have a Duplicate action that opens an editable copy before
   adding it. Settings and paused status carry over; payment and skip history
   do not. Review the copied start date; adding the copy supports Undo.

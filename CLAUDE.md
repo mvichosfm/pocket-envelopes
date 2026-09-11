@@ -217,6 +217,28 @@ data = {
 
 53. **Envelope spending means real expenditure (2026-09-10, unreleased).** `envelopeMonthSpendMap` and `envelopeMonthSummary.spent` now exclude ALL envelope transfers, including manual Move funds and Close-out sweep. Before: spend 250 and sweep the remaining 50 from a 300 envelope, and Reports called it 300 spent. After: 250 spent, 50 under budget, balance still zero. This intentionally supersedes the old "transfers out count" rule: reallocating reservations is not expenditure, and the card, budget-vs-actual, close-out and forecast allowance must agree. Income and incoming envelope transfers still count as funding. Both month summaries and Reports cap actual activity at today; the month-end balance remains a projection through month end. Tagged ACCOUNT transfers retain their separate tag-report semantics (decision #36). Report month keys are built from day 1, never by subtracting months from today's day number.
 
+54. **Release-check repairs (2026-09-11, unreleased).** Editing a recurring preserves
+`lastAppliedDate` across name, amount, start-date and cadence changes: resolved
+history is never automatically reopened. Duplicate creates a separate series with
+history anchored before its chosen start. The editor requires real ISO dates,
+end >= start and at least one custom month. For an existing malformed history date,
+the editor requires the user to choose "Already recorded or skipped through";
+it does not guess that past bills were paid or silently rewrite history on load.
+Account/envelope forms work on drafts; validate all fields before `pushUndo` and
+before replacing the record or clearing another reserve flag. Their add/edit saves,
+recurring add/edit/pause/resume, Move funds and investment updates snapshot once.
+`modalFormState()` skips unchanged forms, preserving both the original stored shape
+and Undo. A balance adjustment and reserve changes share one snapshot. Formatting
+goes through `displayLocale()` (validated stored locale, then browser locale, then
+en-US); Settings validates/canonicalizes before saving, while invalid imported
+values fall back for display without silently replacing the file's preference.
+`render()` restores row actions via matching data attributes, with the main heading
+as fallback after deletion. Main buttons are focused in click capture for WebKit;
+`openModal` focuses synchronously so stale timers cannot steal another dialog's
+focus. Dismissed toasts are inert. `audit/browser_release_regressions.py`, included
+in `audit/run_browser.py`, covers these cases plus rejected-input atomicity,
+undo/redo isolation, malformed-history correction and blocked Forecast storage.
+
 The reliability checks are `node audit/run-audit.mjs`, `python audit/test_server.py`,
 and optional `python audit/run_browser.py`; the latter two create disposable
 loopback servers and never read the user's data. See CONTRIBUTING.md for setup

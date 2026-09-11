@@ -521,6 +521,7 @@
   .setting-row { display: flex; justify-content: space-between; align-items: center;
     padding: 10px 0; border-bottom: 1px solid var(--border); max-width: 720px; }
   .setting-row:last-child { border-bottom: none; }
+  .setting-row:has(.field-error) { flex-wrap: wrap; }
   /* Promotion of the inline 11px muted micro-copy used in ~15 places. */
   .micro { font-size: 13px; color: var(--text-dim); }
   .setting-row .label { font-weight: 500; }
@@ -1544,9 +1545,17 @@ function exportFile() {
 //=============================================================================
 // FORMATTERS
 //=============================================================================
+function validLocale(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  try { return Intl.getCanonicalLocales(value.trim())[0] || null; }
+  catch { return null; }
+}
+function displayLocale() {
+  return validLocale(data?.settings?.locale) || validLocale(DEFAULT_LOCALE) || 'en-US';
+}
 function fmt(n) {
   if (n == null || isNaN(n)) return "—";
-  const locale = data?.settings?.locale || DEFAULT_LOCALE;
+  const locale = displayLocale();
   const currency = data?.settings?.currency || "EUR";
   // A free-text typo in Settings (e.g. "EU" instead of "EUR") makes Intl throw
   // a RangeError and blanks the page mid-render. Fall back to EUR rather than
@@ -1558,15 +1567,20 @@ function fmt(n) {
   }
 }
 function fmtNum(n) {
-  return new Intl.NumberFormat(data?.settings?.locale || DEFAULT_LOCALE,
+  return new Intl.NumberFormat(displayLocale(),
     { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 function fmtDate(iso) {
   if (!iso) return '';
-  return new Intl.DateTimeFormat(data?.settings?.locale || DEFAULT_LOCALE,
+  return new Intl.DateTimeFormat(displayLocale(),
     { day: 'numeric', month: 'short', year: 'numeric' }).format(parseDate(iso));
 }
 function parseDate(s) { return new Date(s + "T00:00:00"); }
+function validISODate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = parseDate(s);
+  return !isNaN(d.getTime()) && isoDate(d) === s;
+}
 function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
 function addMonths(d, n) { const r = new Date(d); r.setMonth(r.getMonth() + n); return r; }
 // Step forward `n` months from a base date while preserving the original
@@ -1631,6 +1645,7 @@ function toast(msg, ms = 2400, kind, action) {
     btn.textContent = action.label;
     btn.addEventListener('click', () => {
       t.classList.remove('show', 'has-action');
+      t.inert = true;
       clearTimeout(toast._t);
       action.onClick();
     });
@@ -1650,9 +1665,13 @@ function toast(msg, ms = 2400, kind, action) {
   } else {
     t.textContent = msg;
   }
+  t.inert = false;
   t.className = classes;
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => t.classList.remove("show", "has-action"), ms);
+  toast._t = setTimeout(() => {
+    t.classList.remove("show", "has-action");
+    t.inert = true;
+  }, ms);
 }
 
 // Modal a11y state — track which element was focused before opening so we can
@@ -1735,14 +1754,13 @@ function openModal(html, opts) {
   linkHelpTips(modal);
   if (heading) makeModalDraggable(modal, heading);
   document.getElementById("modalBg").classList.add("open");
-  // Focus the first focusable element on next tick (modal must be visible).
-  setTimeout(() => {
-    const f = _modalFocusables();
-    const preferred = opts?.focusId ? document.getElementById(opts.focusId) : null;
-    if (preferred && modal.contains(preferred)) preferred.focus();
-    else if (f.length) f[0].focus();
-    else modal.focus();
-  }, 0);
+  // The open class makes the dialog visible now. Focus synchronously so an
+  // immediate Escape reaches it, and an old dialog cannot steal a new one's focus.
+  const f = _modalFocusables();
+  const preferred = opts?.focusId ? document.getElementById(opts.focusId) : null;
+  if (preferred && modal.contains(preferred)) preferred.focus();
+  else if (f.length) f[0].focus();
+  else modal.focus();
 }
 function closeModal() {
   document.getElementById("modalBg").classList.remove("open");
@@ -1753,6 +1771,17 @@ function closeModal() {
   }
   _modalPrevFocus = null;
 }
+// Detect a no-op without adding defaults to a stored record or cluttering Undo.
+function modalFormState() {
+  return JSON.stringify([...document.querySelectorAll('#modal input, #modal select, #modal textarea')]
+    .map(el => [el.id, el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value]));
+}
+// Safari does not focus buttons on pointer activation by default. Remember the
+// actual trigger through focus, just as keyboard activation does, for modal return.
+document.getElementById('main').addEventListener('click', event => {
+  const button = event.target.closest('button:not([disabled])');
+  if (button) button.focus({ preventScroll: true });
+}, true);
 // Backdrop click closes — but ONLY when the press *started* on the backdrop.
 // Resizing a modal (grip at its corner) or dragging its title bar can release
 // the pointer over the backdrop, which would otherwise fire a click whose target
@@ -2874,6 +2903,9 @@ function render() {
   const focusId = main.contains(focused) ? focused.id : '';
   const focusHorizon = main.contains(focused) ? focused.dataset.fcH : null;
   const focusRadio = main.contains(focused) && focused.name === 'fcLines' ? focused.value : null;
+  const focusAttrs = main.contains(focused) ? [...focused.attributes]
+    .filter(a => a.name.startsWith('data-')).map(a => [a.name, a.value]) : [];
+  const restoreMainFocus = main.contains(focused);
   if (!data) {
     main.innerHTML = renderWelcome();
     bindWelcome();
@@ -2907,9 +2939,14 @@ function render() {
     }
     linkHelpTips(main);
     main.querySelector('h2')?.setAttribute('tabindex', '-1');
-    if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
-    else if (focusHorizon) main.querySelector(`[data-fc-h="${focusHorizon}"]`)?.focus({ preventScroll: true });
-    else if (focusRadio) main.querySelector(`input[name="fcLines"][value="${focusRadio}"]`)?.focus({ preventScroll: true });
+    if (restoreMainFocus) {
+      let target = focusId ? document.getElementById(focusId) : null;
+      if (!target && focusHorizon) target = main.querySelector(`[data-fc-h="${focusHorizon}"]`);
+      if (!target && focusRadio) target = main.querySelector(`input[name="fcLines"][value="${focusRadio}"]`);
+      if (!target && focusAttrs.length) target = [...main.querySelectorAll(FOCUSABLE_SEL)].find(el =>
+        el.tagName === focused.tagName && focusAttrs.every(([name, value]) => el.getAttribute(name) === value));
+      (target || main.querySelector('h2'))?.focus({ preventScroll: true });
+    }
     // ensure today's snapshot updates
     if (data) snapshotIfNeeded();
   } finally { balanceCacheEnd(); }
@@ -3645,7 +3682,8 @@ function toggleAccountPin(id) {
 }
 
 function editAccount(id) {
-  const a = id ? accountById(id) : { id: uid(), type: "checking", owner: "joint", currency: "EUR", openingBalance: 0, includeInNetWorth: true };
+  if (id && !accountById(id)) return;
+  const a = id ? { ...accountById(id) } : { id: uid(), type: "checking", owner: "joint", currency: "EUR", openingBalance: 0, includeInNetWorth: true };
   openModal(`
     <h2>${id ? "Edit" : "Add"} account</h2>
     <div class="field"><label>Name</label><input id="f_name" value="${esc(a.name || '')}"></div>
@@ -3702,6 +3740,7 @@ function editAccount(id) {
       if (!isNaN(v)) fOpen.value = (v - txDelta).toFixed(2);
     });
   }
+  const initialFields = modalFormState();
   document.getElementById("f_save").onclick = () => {
     a.name = document.getElementById("f_name").value.trim();
     if (!a.name) { toast("Name required"); return; }
@@ -3712,6 +3751,9 @@ function editAccount(id) {
     const openRaw = document.getElementById("f_open").value.trim();
     const openVal = openRaw ? evalAmount(openRaw) : 0;
     if (isNaN(openVal)) { toast("Opening balance: invalid expression", 3000, 'error'); return; }
+    if (isNaN(evalAmount(document.getElementById('f_current').value))) {
+      toast("Current balance: invalid expression", 3000, 'error'); return;
+    }
     a.openingBalance = openVal;
     // a.currency is left as stored. Nothing converts by it, so the editor no
     // longer shows it — a visible field implied FX that never happened
@@ -3719,7 +3761,10 @@ function editAccount(id) {
     a.isInvestment = document.getElementById("f_inv").checked;
     a.includeInNetWorth = document.getElementById("f_nw").checked;
     a.notes = document.getElementById("f_notes").value;
+    if (id && modalFormState() === initialFields) { closeModal(); return; }
+    pushUndo(id ? 'Edit account' : 'Add account');
     if (!id) data.accounts.push(a);
+    else data.accounts[data.accounts.findIndex(x => x.id === id)] = a;
     saveDirty(); closeModal(); render();
   };
 }
@@ -3804,6 +3849,7 @@ function updateInvestmentValue(id) {
     const diff = newVal - cur;
     if (Math.abs(diff) < 0.005) { toast("No change"); closeModal(); return; }
     const notes = document.getElementById("iv_notes").value || "Market value adjustment";
+    pushUndo('Update investment value');
     data.transactions.push({
       id: uid(),
       date: todayISO(),
@@ -4083,7 +4129,8 @@ function unarchiveEnvelope(id) {
 }
 
 function editEnvelope(id) {
-  const e = id ? envelopeById(id) : { id: uid(), budgetAmount: 0, cadence: "monthly", openingBalance: 0, category: "", rolloverPolicy: "rollover", pinned: false, isReserve: false };
+  if (id && !envelopeById(id)) return;
+  const e = id ? { ...envelopeById(id) } : { id: uid(), budgetAmount: 0, cadence: "monthly", openingBalance: 0, category: "", rolloverPolicy: "rollover", pinned: false, isReserve: false };
   // The existing reserve envelope, if any and if it isn't this one — used to
   // label the sweep policy and to warn that ticking the box moves the flag.
   const otherReserve = data.envelopes.find(x => x.isReserve && x.id !== e.id) || null;
@@ -4207,6 +4254,7 @@ function editEnvelope(id) {
     };
     _adjIn.addEventListener('input', _updateAdjPreview);
   }
+  const initialFields = modalFormState();
   document.getElementById("f_save").onclick = () => {
     const name = document.getElementById("f_name").value.trim();
     if (!name) { toast("Name required"); return; }
@@ -4243,10 +4291,6 @@ function editEnvelope(id) {
       }
     }
 
-    if (adjustmentTx) {
-      pushUndo(`Adjust "${name}" balance by ${adjustmentTx.type === 'income' ? '+' : '−'}${fmt(adjustmentTx.amount)}`);
-    }
-
     e.name = name;
     e.category = document.getElementById("f_cat").value.trim();
     // Both amounts go through evalAmount; empty means 0, an expression that
@@ -4270,7 +4314,6 @@ function editEnvelope(id) {
       // Exactly one reserve envelope: the flag is the sweep destination, so a
       // second one would make "sweep to the reserve" ambiguous. Ticking it here
       // takes it away from whoever held it.
-      for (const x of data.envelopes) { if (x.id !== e.id) x.isReserve = false; }
       e.budgetAmount = 0;
       e.cadence = "monthly";
       e.rolloverPolicy = "rollover";
@@ -4286,7 +4329,15 @@ function editEnvelope(id) {
     }
     e.pinned = document.getElementById("f_pin").checked;
     e.notes = document.getElementById("f_notes").value;
+    if (id && modalFormState() === initialFields) { closeModal(); return; }
+    pushUndo(adjustmentTx
+      ? `Adjust "${name}" balance by ${adjustmentTx.type === 'income' ? '+' : '−'}${fmt(adjustmentTx.amount)}`
+      : id ? 'Edit envelope' : 'Add envelope');
+    if (e.isReserve) {
+      for (const x of data.envelopes) { if (x.id !== e.id) x.isReserve = false; }
+    }
     if (!id) data.envelopes.push(e);
+    else data.envelopes[data.envelopes.findIndex(x => x.id === id)] = e;
     if (adjustmentTx) data.transactions.push(adjustmentTx);
     saveDirty(); closeModal(); render();
     if (adjustmentTx) {
@@ -4972,6 +5023,7 @@ function transferEnvelopes(fromId) {
     const to = document.getElementById("tr_to").value;
     const amt = Math.abs(evalAmount(document.getElementById("tr_amt").value) || 0);
     if (!from || !to || from === to || !amt) { toast("Fill all fields"); return; }
+    pushUndo('Move funds between envelopes');
     data.transactions.push({
       id: uid(), date: document.getElementById("tr_date").value || todayISO(),
       type: "transfer-envelope", amount: amt,
@@ -5132,7 +5184,7 @@ function txDayLabel(iso) {
   const today = todayISO();
   const rel = daysBetween(parseDate(today), parseDate(iso));
   const name = rel === 0 ? 'Today' : rel === -1 ? 'Yesterday' : rel === 1 ? 'Tomorrow' : '';
-  const full = new Intl.DateTimeFormat(data?.settings?.locale || DEFAULT_LOCALE,
+  const full = new Intl.DateTimeFormat(displayLocale(),
     { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(parseDate(iso));
   const sched = rel > 0 ? '<span class="badge scheduled" title="Dated after today — not yet counted in any balance">scheduled</span> ' : '';
   return `${sched}${name ? `<strong>${name}</strong> · ` : ''}${full}`;
@@ -6019,9 +6071,11 @@ function editRecurring(id, { duplicate = false } = {}) {
     delete r.skippedDates;
   }
   const editing = !!id && !duplicate;
+  const needsHistoryRepair = editing && !validISODate(r.lastAppliedDate);
   openModal(`
     <h2>${duplicate ? 'Duplicate' : editing ? 'Edit' : 'Add'} recurring</h2>
     ${duplicate ? '<p class="micro">Review the start date before adding. The copy has no payment or skip history; past dates can create overdue occurrences.</p>' : ''}
+    ${editing ? '<p class="micro">Changes affect unrecorded occurrences. Dates already recorded or skipped are kept.</p>' : ''}
     <div class="field"><label>Name</label><input id="r_name" value="${esc(r.name||'')}"></div>
     <div class="field" ${tagList().length || r.tag ? '' : 'style="display:none;"'}><label>Tag</label><select id="r_tag">${tagOptions(r.tag)}</select></div>
     <div class="field-row">
@@ -6060,6 +6114,7 @@ function editRecurring(id, { duplicate = false } = {}) {
     </div>
     <div class="field"><label>End date (optional)</label>
       <input type="date" id="r_end" value="${r.endDate||''}"></div>
+    ${needsHistoryRepair ? '<div class="field"><label>Already recorded or skipped through</label><input type="date" id="r_history"><p class="micro">This entry has an invalid history date. Choose the last date already handled, or the day before the start date to review all occurrences.</p></div>' : ''}
 
     <div id="r_simple" style="display:${(r.type==='transfer-account'||r.type==='transfer-envelope')?'none':''};">
       <div class="field"><label>Account</label>
@@ -6100,6 +6155,7 @@ function editRecurring(id, { duplicate = false } = {}) {
   `);
   // Live arithmetic preview for the Amount field (matches Add Tx + Move Funds).
   wireAmountPreview("r_amt", "r_amt_preview")();
+  const initialFields = modalFormState();
 
   document.getElementById("r_sched").onchange = (e) =>
     document.getElementById("r_months_wrap").style.display = e.target.value === 'custom-months' ? '' : 'none';
@@ -6126,9 +6182,18 @@ function editRecurring(id, { duplicate = false } = {}) {
     };
     if (!out.name) { toast("Name required"); return; }
     if (!out.amount) { toast("Amount required"); return; }
+    if (!validISODate(out.startDate)) { toast("A valid start date is required", 3000, 'error'); document.getElementById('r_start').focus(); return; }
+    if (out.endDate && (!validISODate(out.endDate) || out.endDate < out.startDate)) {
+      toast("End date must be on or after the start date", 3000, 'error'); document.getElementById('r_end').focus(); return;
+    }
+    if (needsHistoryRepair) {
+      out.lastAppliedDate = document.getElementById('r_history').value;
+      if (!validISODate(out.lastAppliedDate)) { toast("Choose the last date already recorded or skipped", 4000, 'error'); document.getElementById('r_history').focus(); return; }
+    }
     if (out.schedule === 'custom-months') {
       out.months = document.getElementById("r_months").value.split(",")
         .map(s => parseInt(s.trim())).filter(n => n >= 1 && n <= 12);
+      if (!out.months.length) { toast("Choose at least one month (1–12)", 3000, 'error'); return; }
     }
     if (out.type === 'transfer-account') {
       out.fromAccountId = document.getElementById("r_facc").value;
@@ -6150,20 +6215,20 @@ function editRecurring(id, { duplicate = false } = {}) {
       out.fromAccountId = null; out.toAccountId = null;
       out.fromEnvelopeId = null; out.toEnvelopeId = null;
     }
+    if (editing && modalFormState() === initialFields) { closeModal(); return; }
+    pushUndo(duplicate ? 'Duplicate recurring' : editing ? 'Edit recurring' : 'Add recurring');
     if (!editing) {
       // Anchor lastAppliedDate to the day before startDate so the first
       // occurrence on/after startDate is detected as due/overdue. Without this,
       // migrate() would later anchor it to today and miss backdated occurrences.
       out.lastAppliedDate = isoDate(addDays(parseDate(out.startDate), -1));
-      if (duplicate) pushUndo('Duplicate recurring');
       data.recurring.push(out);
     } else {
-      // If the user moved startDate to before the current lastAppliedDate,
-      // reset lastAppliedDate so occurrences from the new startDate are detected.
-      const newStart = parseDate(out.startDate);
-      const lastApp = out.lastAppliedDate ? parseDate(out.lastAppliedDate) : null;
-      if (lastApp && newStart < lastApp) {
-        out.lastAppliedDate = isoDate(addDays(newStart, -1));
+      // Editing a schedule never reopens resolved history. A separate series
+      // starts via Duplicate; a malformed legacy history is corrected explicitly.
+      if (needsHistoryRepair && out.skippedDates) {
+        out.skippedDates = out.skippedDates.filter(d => validISODate(d) && d > out.lastAppliedDate);
+        if (!out.skippedDates.length) delete out.skippedDates;
       }
       const i = data.recurring.findIndex(x => x.id === id); data.recurring[i] = out;
     }
@@ -6185,6 +6250,8 @@ function deleteRecurring(id) {
 }
 function toggleRecurring(id) {
   const r = data.recurring.find(x => x.id === id);
+  if (!r) return;
+  pushUndo(r.active === false ? 'Resume recurring' : 'Pause recurring');
   r.active = r.active === false ? true : false;
   saveDirty(); render();
 }
@@ -6504,7 +6571,8 @@ function setupForecastSplitter() {
   const splitter = document.getElementById("forecastSplitter");
   if (!row || !splitter) return;
   // Restore saved width
-  const saved = parseInt(localStorage.getItem("forecastControlsW") || "", 10);
+  let saved;
+  try { saved = parseInt(localStorage.getItem("forecastControlsW") || "", 10); } catch {}
   if (saved && saved > 280) row.style.setProperty("--forecast-controls-w", Math.min(saved, 420) + "px");
 
   const onDown = (e) => {
@@ -6529,7 +6597,7 @@ function setupForecastSplitter() {
       splitter.classList.remove("dragging");
       document.body.classList.remove("forecast-resizing");
       const w = parseInt(getComputedStyle(row).getPropertyValue("--forecast-controls-w"), 10);
-      if (w) localStorage.setItem("forecastControlsW", String(w));
+      try { if (w) localStorage.setItem("forecastControlsW", String(w)); } catch {}
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("touchmove", onMove);
@@ -6545,7 +6613,7 @@ function setupForecastSplitter() {
   // Double-click to reset to default
   splitter.addEventListener("dblclick", () => {
     row.style.removeProperty("--forecast-controls-w");
-    localStorage.removeItem("forecastControlsW");
+    try { localStorage.removeItem("forecastControlsW"); } catch {}
     if (currentChart) currentChart.resize();
   });
 }
@@ -6688,7 +6756,7 @@ function drawForecast() {
   // Axis labels: "16 Sep" rather than a rotated ISO date; the year joins in
   // only when the horizon crosses into another year.
   const spansYears = dates.length > 1 && dates[0].slice(0, 4) !== dates[dates.length - 1].slice(0, 4);
-  const axisFmt = new Intl.DateTimeFormat(data?.settings?.locale || DEFAULT_LOCALE,
+  const axisFmt = new Intl.DateTimeFormat(displayLocale(),
     spansYears ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' });
 
   if (currentChart) currentChart.destroy();
@@ -7201,27 +7269,27 @@ function renderSettings() {
   <h2>Settings</h2>
   <div class="card">
     <div class="setting-row">
-      <div><div class="label">Currency</div>
+      <div><label class="label" for="s_curr">Currency</label>
         <div class="desc">All values displayed in this currency.</div></div>
       <input id="s_curr" value="${esc(data.settings.currency)}" style="width:80px;text-align:center;">
     </div>
     <div class="setting-row">
-      <div><div class="label">Locale (number formatting)</div>
+      <div><label class="label" for="s_loc">Locale (number formatting)</label>
         <div class="desc">e.g. en-US for 1,234.56, de-DE or el-GR for 1.234,56</div></div>
       <input id="s_loc" value="${esc(data.settings.locale)}" style="width:120px;text-align:center;">
     </div>
     <div class="setting-row">
-      <div><div class="label">Forecast warning floor</div>
+      <div><label class="label" for="s_fcfloor">Forecast warning floor</label>
         <div class="desc">The dashboard's "Lowest projected spendable" figure turns amber when the projected low dips under this amount, and red when it goes below zero. Leave empty for red-only.</div></div>
       <input id="s_fcfloor" type="text" inputmode="decimal" value="${typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''}" placeholder="none" style="width:120px;text-align:right;">
     </div>
     <div class="setting-row">
-      <div><div class="label">Tag limit</div>
+      <div><label class="label" for="s_taglimit">Tag limit</label>
         <div class="desc">How many tags you can define under Tags below (default ${TAG_LIMIT_DEFAULT}). Chip and chart colours repeat after ${chartPalette().length - 1}. Lowering it below the tags you already have keeps them all; it only stops you adding more.</div></div>
       <input id="s_taglimit" type="number" min="${TAG_LIMIT_MIN}" max="${TAG_LIMIT_MAX}" step="1" value="${Number.isInteger(data.settings.tagLimit) ? data.settings.tagLimit : ''}" placeholder="${TAG_LIMIT_DEFAULT}" style="width:80px;text-align:center;">
     </div>
     <div class="setting-row">
-      <div><div class="label">Theme</div></div>
+      <div><label class="label" for="s_theme">Theme</label></div>
       <select id="s_theme">
         <option value="auto" ${(data.settings.theme||'auto')==='auto'?'selected':''}>Auto (system)</option>
         <option value="dark" ${data.settings.theme==='dark'?'selected':''}>Dark</option>
@@ -7287,7 +7355,30 @@ function renderSettings() {
 }
 function bindSettings() {
   document.getElementById("s_curr").onchange = e => { data.settings.currency = e.target.value || "EUR"; saveDirty(); render(); };
-  document.getElementById("s_loc").onchange = e => { data.settings.locale = e.target.value || DEFAULT_LOCALE; saveDirty(); render(); };
+  const localeInput = document.getElementById('s_loc');
+  localeInput.oninput = () => {
+    document.getElementById('s_loc_error')?.remove();
+    localeInput.removeAttribute('aria-invalid');
+    localeInput.removeAttribute('aria-describedby');
+  };
+  localeInput.onchange = () => {
+    const locale = validLocale(localeInput.value || DEFAULT_LOCALE);
+    if (!locale) {
+      localeInput.oninput();
+      const error = document.createElement('div');
+      error.id = 's_loc_error'; error.className = 'field-error'; error.setAttribute('role', 'alert');
+      error.textContent = 'Enter a valid locale, such as en-US or el-GR.';
+      localeInput.insertAdjacentElement('afterend', error);
+      localeInput.setAttribute('aria-invalid', 'true');
+      localeInput.setAttribute('aria-describedby', error.id);
+      localeInput.focus();
+      return;
+    }
+    localeInput.oninput();
+    localeInput.value = locale;
+    if (data.settings.locale === locale) return;
+    data.settings.locale = locale; saveDirty(); render();
+  };
   document.getElementById("s_fcfloor").onchange = e => {
     const raw = e.target.value.trim();
     if (!raw) { delete data.settings.forecastWarnBelow; saveDirty(); render(); return; }

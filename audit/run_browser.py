@@ -8,7 +8,7 @@ from scratch_server import scratch_server
 
 with scratch_server() as (port, _):
     environment = dict(os.environ, SERVER="http://127.0.0.1:" + str(port), POCKET_AUDIT_SCRATCH="1")
-    for script in ("visual-smoke.py", "browser_persistence.py"):
+    for script in ("visual-smoke.py", "browser_persistence.py", "browser_release_regressions.py"):
         result = subprocess.run([sys.executable, str(Path(__file__).with_name(script))], env=environment)
         if result.returncode:
             break
