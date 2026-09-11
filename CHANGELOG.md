@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased — reliability and contributor checks
+## 2026-09-11 — v0.95, reliability, recurring copies and release-check repairs
 
 - Editing a recurring entry preserves already-recorded/skipped history, including
   when its start date or schedule changes. Blank starts, reversed date ranges and
