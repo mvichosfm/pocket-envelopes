@@ -30,6 +30,9 @@
 //        - a hand-logged transaction matches a due occurrence only on type, account,
 //          exact amount and a 3-day window, never one generated from a recurring
 //        - "fund one month" assigns the budget, not the overspend gap
+//        - the Fund-envelope solver lands the projected low at zero to the cent,
+//          absorbs an overspend for free, and returns null for an envelope the
+//          selected accounts do not hold
 //        - envelope-only adjustments are not cashflow
 //   4. sw.js compiles, never intercepts /data, and keeps the shell network-first.
 //   5. serve.py compiles under the local Python (py -3 on Windows, python3 elsewhere).
@@ -157,6 +160,7 @@ function logicApi() {
     "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
+    "spendableToday", "fundingToZeroLow",
     "lastDayOfMonthKey", "envelopeMonthSummary", "envelopeMonthSpendMap", "reportsAggregates",
   ];
   const bundle = [
@@ -451,6 +455,44 @@ if (api) {
     });
     const suggestion = api.envelopeFundSuggestion(api.getData().envelopes[0], "month");
     assert.equal(suggestion.suggested, 1000);
+  });
+
+  check("Fund envelope: the projected-low solver lands the low at zero, fills a hole for free, and knows when it cannot help", () => {
+    const today = api.todayISO();
+    api.setData({
+      accounts: [
+        { id: "cash", openingBalance: 1000, includeInNetWorth: true },
+        { id: "other", openingBalance: 500, includeInNetWorth: true },
+      ],
+      envelopes: [
+        { id: "reserve", isReserve: true, openingBalance: 200, budgetAmount: 0, cadence: "monthly" },
+        { id: "living", openingBalance: 300, budgetAmount: 300, cadence: "monthly" },
+        { id: "hole", openingBalance: -100, budgetAmount: 0, cadence: "monthly" },
+        { id: "theirs", accountId: "other", openingBalance: 50, budgetAmount: 0, cadence: "monthly" },
+      ],
+      transactions: [], recurring: [],
+    });
+    const opts = { includeAllowances: false };
+    // cash 1000 less 200 + 300 reserved: the hole is floored at zero and
+    // "theirs" sits in the other account, so neither counts here.
+    const base = api.spendableLow(api.forecastAccountBalances(["cash"], 30, opts));
+    assert.ok(Math.abs(base.min - 500) < 0.005, `base low ${base.min}`);
+    assert.equal(api.spendableToday(["cash"]), 500);
+    // The reserve has no allowance and a positive balance: the answer is the low itself,
+    // and funding it lands the low at zero.
+    const z = api.fundingToZeroLow("reserve", ["cash"], 30, opts, today);
+    assert.equal(z, 500);
+    const after = api.spendableMinAfterFunding(["cash"], 30, opts, [{ envelopeId: "reserve", amount: z, date: today }]);
+    assert.ok(Math.abs(after.min) < 0.005, `low after funding ${after.min}`);
+    // An overspent envelope absorbs its overspend before it costs spendable anything.
+    assert.equal(api.fundingToZeroLow("hole", ["cash"], 30, opts, today), 600);
+    // Backed by an account outside the selection: no amount moves this low.
+    assert.equal(api.fundingToZeroLow("theirs", ["cash"], 30, opts, today), null);
+    // Over both accounts it counts, and the low is 1500 - 550.
+    assert.equal(api.fundingToZeroLow("theirs", ["cash", "other"], 30, opts, today), 950);
+    // Already below zero: nothing can be set aside.
+    api.getData().accounts[0].openingBalance = 400;
+    assert.equal(api.fundingToZeroLow("reserve", ["cash"], 30, opts, today), 0);
   });
 
   check("Envelope-only adjustments are excluded from cashflow", () => {

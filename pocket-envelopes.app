@@ -693,6 +693,7 @@
   .cash-low.tone-warn .hero-low { color: var(--warn); }
   .cash-hero-figures p { margin: 4px 0 0; }
   .hero-context { display: flex; gap: 10px 18px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--text-dim); }
+  .hero-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .assumption-chip { padding: 4px 10px; border-radius: 6px; background: var(--bg-3); color: var(--text); }
   .assumption-chip.allowances-off { color: var(--warn); }
   .hero-note { color: var(--text-dim); font-size: 13px; margin: 14px 0 0; max-width: 90ch; }
@@ -2888,6 +2889,60 @@ function spendableMinAfterFunding(accountIds, days, opts, fundings) {
   }
 }
 
+// The account set the Dashboard's spending-room card and the Fund envelope
+// dialog forecast over: the Forecast tab's selection when there is one (an
+// explicit empty selection stays empty — decision #51), else every active
+// cash account that counts towards net worth.
+function forecastSelectedAccountIds() {
+  return forecastState.accountIds === null
+    ? activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id)
+    : forecastState.accountIds.filter(id => accountById(id));
+}
+
+// Today's unallocated cash over `accountIds`: recorded balances less the
+// positive balances of the envelopes those accounts hold (household ones and
+// ones backed by a selected account — decision #41). Distinct from forecast
+// index 0, which already folds in due-but-unrecorded occurrences.
+function spendableToday(accountIds) {
+  return accountIds.reduce((sum, id) => sum + accountBalance(accountById(id)), 0)
+    - data.envelopes.filter(e => envelopeCountsFor(e, accountIds))
+      .reduce((sum, e) => sum + Math.max(0, envelopeBalance(e)), 0);
+}
+
+// The largest amount that can be set aside in `envelopeId` today before the
+// projected spendable low over `accountIds` reaches zero — "fund the envelope
+// with the projected low" — found by re-forecasting, never by reading the low
+// off the chart. For the reserve (no allowance, non-negative balance) it IS the
+// projected low, to the cent; for an overspent envelope it is the low plus the
+// overspend, because filling the hole costs spendable nothing (decision #22);
+// for an envelope with an allowance it is larger still, because funded money is
+// spent back down inside the horizon (decision #27). Funding only ever lowers
+// the spendable line, so the answer is found by doubling and then bisecting on
+// whole cents; every probe is one forecast (~2 ms at 2000 transactions).
+// Returns 0 when the low is already at or below zero, and null when the
+// envelope does not count against this account set at all (backed by an
+// account outside it) — no amount would move that low.
+function fundingToZeroLow(envelopeId, accountIds, days, opts, date) {
+  const env = envelopeById(envelopeId);
+  if (!env || !accountIds.length || !envelopeCountsFor(env, accountIds)) return null;
+  const base = spendableLow(forecastAccountBalances(accountIds, days, opts));
+  if (!(base.min > 0.005)) return 0;
+  date = date || todayISO();
+  const ok = cents => spendableMinAfterFunding(accountIds, days, opts,
+    [{ envelopeId, amount: cents / 100, date }]).min >= -0.005;
+  let lo = 0, hi = Math.max(1, Math.ceil(base.min * 100));
+  let guard = 0;
+  while (ok(hi)) {                    // find a ceiling the low does cross
+    lo = hi; hi *= 2;
+    if (++guard > 30) return null;    // funding never bites — not a real answer
+  }
+  while (hi - lo > 1) {               // largest whole-cent amount still >= 0
+    const mid = Math.floor((lo + hi) / 2);
+    if (ok(mid)) lo = mid; else hi = mid;
+  }
+  return lo / 100;
+}
+
 //=============================================================================
 // VIEW ROUTER
 //=============================================================================
@@ -3123,9 +3178,7 @@ function renderDashboard() {
   // The dashboard always features spendable cash. Chart visibility is a
   // presentation choice on Forecast; its accounts, horizon and allowances
   // still determine this summary. An explicit empty selection stays empty.
-  const fcAccountIds = forecastState.accountIds === null
-    ? activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id)
-    : forecastState.accountIds.filter(id => accountById(id));
+  const fcAccountIds = forecastSelectedAccountIds();
   const activeProfile = data.forecastProfiles.find(p => p.id === forecastState.selectedProfileId);
   const fcDays = forecastState.days || 90;
   const fc = fcAccountIds.length
@@ -3133,9 +3186,8 @@ function renderDashboard() {
   const low = fc ? spendableLow(fc) : null;
   // Today's actual, unallocated balance is distinct from forecast index 0,
   // which already folds in due-but-unrecorded recurring entries.
-  const availableToday = fc ? fcAccountIds.reduce((sum, id) => sum + accountBalance(accountById(id)), 0)
-    - data.envelopes.filter(e => envelopeCountsFor(e, fcAccountIds))
-      .reduce((sum, e) => sum + Math.max(0, envelopeBalance(e)), 0) : null;
+  const availableToday = fc ? spendableToday(fcAccountIds) : null;
+  const dashReserve = reserveEnvelope();
 
   const due = dueRecurringOccurrences();
   const dueTotal = due.reduce((s, u) =>
@@ -3152,7 +3204,7 @@ function renderDashboard() {
   <div class="page-heading"><div><h2>Dashboard</h2><p>Your money, with a view ahead.</p></div>
     <button class="btn primary" id="dashAddTx">${icon('plus')}Add transaction</button></div>
   <section class="card cash-hero" aria-label="Available cash and forecast">
-    <div class="section-heading"><h3>Your spending room</h3><button class="btn" id="dashForecast">Explore forecast</button></div>
+    <div class="section-heading"><h3>Your spending room</h3><div class="hero-actions">${fc && dashReserve && !dashReserve.archived ? `<button class="btn" id="dashFundReserve" title="Set the projected low aside in ${esc(dashReserve.name)}, so the low lands at zero">Fund reserve</button>` : ''}<button class="btn" id="dashForecast">Explore forecast</button></div></div>
     ${fc ? `<div class="cash-hero-figures">
       <div><div class="stat-label">Spendable today</div><div class="hero-amount ${availableToday < 0 ? 'neg' : ''}" id="dashSpendableToday">${fmt(availableToday)}</div>
         <p class="muted">After money set aside in envelopes</p></div>
@@ -3163,7 +3215,7 @@ function renderDashboard() {
     <div class="hero-context"><span>${plural(fcAccountIds.length, 'account')}${activeProfile ? ' · ' + esc(activeProfile.name) : ''}</span>
       <span class="assumption-chip ${forecastState.includeAllowances ? '' : 'allowances-off'}">Envelope allowances ${forecastState.includeAllowances ? 'included' : 'excluded'}</span>
       <span>Recurring income &amp; bills included</span></div>
-    <p class="hero-note">The projection includes due entries still to be recorded and assumes no new envelope funding. Fund the month previews a funding proposal.</p>`
+    <p class="hero-note">The projection includes due entries still to be recorded and assumes no new envelope funding. Fund the month previews a funding proposal${dashReserve && !dashReserve.archived ? `; Fund reserve sets the projected low aside in ${esc(dashReserve.name)}` : ''}.</p>`
       : '<p class="muted">Select accounts in Forecast to see your available cash and projection.</p>'}
   </section>
   ${(closeYM || due.length) ? `<section class="card attention-panel" aria-label="Needs attention">
@@ -3256,6 +3308,8 @@ function bindDashboard() {
   if (add) add.onclick = () => editTransaction();
   const forecast = document.getElementById('dashForecast');
   if (forecast) forecast.onclick = () => navigateToView('forecast');
+  const fundRes = document.getElementById('dashFundReserve');
+  if (fundRes) fundRes.onclick = () => { const r = reserveEnvelope(); if (r) fundEnvelope(r.id, { prefillLow: true }); };
   const apply = document.getElementById("dueApply");
   if (apply) apply.onclick = () => {
     const n = applyDueRecurring();
@@ -4031,7 +4085,7 @@ function envelopeCard(e, bal, spent) {
   }
   return `<div class="card envelope" data-state="${state}">
     <div class="ev-head">
-      <div class="ev-name">${isPinned ? `<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">${icon('pin', 'Pinned')}</span>` : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — never funded by Fund the month; receives close-out sweeps">reserve</span>' : ''}</div>
+      <div class="ev-name">${isPinned ? `<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">${icon('pin', 'Pinned')}</span>` : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — Fund the month never proposes it; fund it from this card or by sweeping leftovers at close-out">reserve</span>' : ''}</div>
       <div class="ev-balance"><span class="stat-label">Available</span><div class="ev-bal ${bal<0?'neg':''}">${fmt(bal)}</div></div>
     </div>
     <div class="ev-meta">
@@ -4043,7 +4097,7 @@ function envelopeCard(e, bal, spent) {
     ${bar}
     <div class="ev-actions">
       <button class="btn sm" data-spend="${e.id}">Spend</button>
-      <button class="btn sm" data-fund="${e.id}">Fund</button>
+      <button class="btn sm" data-fund="${e.id}" title="Set money aside in this envelope out of spendable cash — no account is touched">Fund</button>
       <button class="btn sm" data-return="${e.id}" title="Un-earmark money from this envelope and return it to spendable cash (no account is touched)" ${bal <= 0 ? 'disabled' : ''}>${icon('return')}Return</button>
       <details class="ev-more">
         <summary class="btn sm ghost" aria-label="More actions for ${esc(e.name)}" title="Edit, archive or delete">${icon('more')}</summary>
@@ -4067,7 +4121,7 @@ function bindEnvelopes() {
   document.querySelectorAll("[data-spend]").forEach(b =>
     b.onclick = () => quickTx("expense", { envelopeId: b.dataset.spend }));
   document.querySelectorAll("[data-fund]").forEach(b =>
-    b.onclick = () => quickTx("income", { envelopeId: b.dataset.fund }));
+    b.onclick = () => fundEnvelope(b.dataset.fund));
   document.querySelectorAll("[data-return]").forEach(b =>
     b.onclick = () => returnEnvelopeFunds(b.dataset.return));
   document.querySelectorAll("[data-archive-env]").forEach(b =>
@@ -4206,7 +4260,7 @@ function editEnvelope(id) {
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);">
         <input type="checkbox" id="f_reserve" ${e.isReserve ? 'checked' : ''} style="width:auto;margin:0;">
         Reserve envelope (emergency / catch-all)
-        <span class="help-tip" tabindex="0" title="A reserve envelope has no budget and is never proposed by 'Fund the month'. It just sits holding money you've set aside. At month-end close-out you can sweep any envelope's leftover into it, and you move money back out with 'Move funds' whenever a real envelope needs it. Only one envelope can be the reserve.">?</span>
+        <span class="help-tip" tabindex="0" title="A reserve envelope has no budget and is never proposed by 'Fund the month'. It just sits holding money you've set aside. Its own Fund button sets money aside mid-month — 'Use projected low' parks the forecast's low in it — and at month-end close-out you can sweep any envelope's leftover into it; you move money back out with 'Move funds' whenever a real envelope needs it. Only one envelope can be the reserve.">?</span>
       </label>
       <div class="micro" id="f_reserve_note" style="margin-top:4px;">
         ${otherReserve ? `Currently: <strong>${esc(otherReserve.name)}</strong> — ticking this moves the flag here.` : ''}
@@ -4457,6 +4511,169 @@ function returnEnvelopeFunds(id) {
   };
 }
 
+// Mid-month funding of ONE envelope — the reserve included, which "Fund the
+// month" deliberately never proposes (decision #33). It sets money aside out
+// of cash the accounts already hold: a one-sided income (accountId null), the
+// same row Fund the month books, so no account balance moves and spendable
+// cash goes down. "From account" names the account the money sits in: it
+// picks the account set the figures are forecast over, is written into the
+// notes, and can — opt-in — become a household envelope's backing account.
+// "Use projected low" fills the largest amount that keeps the projected
+// spendable low at zero (fundingToZeroLow); for the reserve that is the low
+// itself, so parking the month's surplus is two clicks from the Dashboard.
+function fundEnvelope(envelopeId, opts) {
+  opts = opts || {};
+  const envs = activeEnvelopes();
+  if (!envs.length) { toast("No envelopes to fund yet"); return; }
+  const reserve = reserveEnvelope();
+  const startId = envs.some(e => e.id === envelopeId) ? envelopeId
+    : (reserve && !reserve.archived) ? reserve.id : envs[0].id;
+  const state = { envId: startId, accId: '' };
+  const cashAccounts = activeAccounts().filter(a => !a.isInvestment);
+  const fcDays = forecastState.days || 90;
+  const fcOpts = { includeAllowances: forecastState.includeAllowances };
+  const today = todayISO();
+
+  const env = () => envelopeById(state.envId);
+  const acc = () => state.accId ? accountById(state.accId) : null;
+  // '' = the accounts the Dashboard forecasts over (decision #51).
+  const accIds = () => state.accId ? [state.accId] : forecastSelectedAccountIds();
+  // A backed envelope's money sits in its backing account — start there.
+  const defaultAccFor = e => { const b = envelopeBackingAccount(e); return b && !b.archived && !b.isInvestment ? b.id : ''; };
+  state.accId = defaultAccFor(env());
+
+  const envOpts = () => envs.map(e =>
+    `<option value="${e.id}" ${e.id === state.envId ? 'selected' : ''}>${esc(e.name)}${e.isReserve ? ' (reserve)' : ''} — ${fmt(envelopeBalance(e))}</option>`).join('');
+  const accOpts = () => [`<option value="" ${state.accId ? '' : 'selected'}>All forecast accounts (${forecastSelectedAccountIds().length})</option>`]
+    .concat(cashAccounts.map(a => `<option value="${a.id}" ${a.id === state.accId ? 'selected' : ''}>${esc(a.name)} — ${fmt(accountBalance(a))}</option>`)).join('');
+
+  openModal(`
+    <h2>Fund envelope</h2>
+    <p class="muted" style="margin-top:-4px;">Sets money aside in an envelope out of cash your accounts already hold. No account balance changes; your spendable cash goes down by what you set aside. Books a one-sided funding entry dated today.</p>
+    <div class="field-row">
+      <div class="field"><label>Envelope</label><select id="fe_env">${envOpts()}</select></div>
+      <div class="field"><label>From account <span class="help-tip" tabindex="0" title="The account the money sits in. It chooses which accounts the figures below are forecast over and is noted on the funding entry; no cash moves between accounts. A backed envelope starts on its backing account.">?</span></label><select id="fe_acc">${accOpts()}</select></div>
+    </div>
+    <div class="micro" id="fe_acc_note" style="margin:-6px 0 10px;"></div>
+    <div id="fe_figures"></div>
+    <div class="field"><label>Amount</label>
+      <input type="text" inputmode="decimal" id="fe_amt" placeholder="e.g. 150 or 412.30-12" autocomplete="off">
+      <div class="micro" id="fe_amt_preview" style="margin-top:4px;min-height:14px;"></div>
+    </div>
+    <div class="field" id="fe_back_field" style="display:none;">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text);">
+        <input type="checkbox" id="fe_back" style="width:auto;margin:0;">
+        <span id="fe_back_label"></span>
+      </label>
+    </div>
+    <div class="field"><label>Notes (optional)</label><input id="fe_notes" placeholder="e.g. parking this month's surplus"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" id="fe_save">Fund</button>
+    </div>
+  `, { focusId: 'fe_amt' });
+
+  const $ = id => document.getElementById(id);
+  let solved = null;   // fundingToZeroLow for the current envelope + account set
+
+  const preview = () => {
+    const e = env(); const ids = accIds();
+    const raw = $('fe_amt').value;
+    const pv = $('fe_amt_preview');
+    pv.style.color = '';
+    if (!e || !raw.trim()) { pv.textContent = ''; return; }
+    const amt = evalAmount(raw);
+    if (isNaN(amt)) { pv.textContent = '⚠ invalid expression'; return; }
+    if (amt <= 0) { pv.textContent = '⚠ amount must be positive'; return; }
+    let text = `→ envelope balance after: ${fmt(envelopeBalance(e) + amt)}`;
+    if (ids.length) {
+      const lo = spendableMinAfterFunding(ids, fcDays, fcOpts, [{ envelopeId: e.id, amount: amt, date: today }]);
+      text += ` · projected spendable low after: ${fmt(lo.min)} on ${fmtDate(lo.date)}`;
+      if (lo.min < -0.005) { text += ` — over-allocates by ${fmt(-lo.min)}`; pv.style.color = 'var(--bad)'; }
+    }
+    pv.textContent = text;
+  };
+
+  const refresh = () => {
+    const e = env(); const a = acc(); const ids = accIds();
+    if (!e) return;
+    const backing = envelopeBackingAccount(e);
+    let note = '';
+    if (a && backing && backing.id !== a.id) note = `"${esc(e.name)}" is backed by ${esc(backing.name)}: its money counts against ${esc(backing.name)}'s forecasts, not ${esc(a.name)}'s. Change Backed by in Edit if it has moved.`;
+    else if (a && !backing && !e.isReserve) note = `"${esc(e.name)}" is a household envelope: it counts against every account selection, so the account is a note on the entry, not a rule — tick the box below to make it one.`;
+    else if (a && e.isReserve) note = `The reserve is always household-wide: it counts against every account selection.`;
+    $('fe_acc_note').innerHTML = note;
+    const showBack = !!(a && !backing && !e.isReserve);
+    $('fe_back_field').style.display = showBack ? '' : 'none';
+    if (showBack) $('fe_back_label').textContent = `Back "${e.name}" by ${a.name} from now on (its money counts against ${a.name}'s forecasts)`;
+    else $('fe_back').checked = false;
+    // Figures over the chosen accounts — the Dashboard's engine and horizon.
+    solved = null;
+    if (!ids.length) {
+      $('fe_figures').innerHTML = `<p class="muted">Select accounts in Forecast to see spendable cash and the projected low.</p>`;
+      preview(); return;
+    }
+    const low = spendableLow(forecastAccountBalances(ids, fcDays, fcOpts));
+    solved = fundingToZeroLow(e.id, ids, fcDays, fcOpts, today);
+    const can = solved !== null && solved > 0.005;
+    const why = solved === null ? 'not in this forecast — its money sits outside the selected accounts'
+      : solved <= 0.005 ? 'the projected low is already at or below zero' : '';
+    $('fe_figures').innerHTML = `
+      <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end;padding:10px 12px;margin:0 0 12px 0;background:var(--bg-2);border:1px solid var(--border);border-radius:6px;">
+        <div>
+          <div class="stat-label">Spendable today</div>
+          <div style="font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;">${fmt(spendableToday(ids))}</div>
+        </div>
+        <div>
+          <div class="stat-label">Lowest projected spendable</div>
+          <div style="font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;color:${lowTone(low.min) === 'bad' ? 'var(--bad)' : 'var(--warn)'};">${fmt(low.min)}
+            <span style="font-size:13px;font-weight:400;color:var(--text-dim);">on ${fmtDate(low.date)}</span></div>
+          <div class="micro">next ${fcDays} days · ${plural(ids.length, 'account')} · allowances ${fcOpts.includeAllowances ? 'included' : 'excluded'} · if you fund nothing</div>
+        </div>
+        <div style="margin-left:auto;">
+          <button type="button" class="btn sm" id="fe_use_low" ${can ? '' : 'disabled'} title="${can ? `Fill in the most you can set aside in ${esc(e.name)} before the projected spendable low reaches zero` : why}">Use projected low${can ? ` (${fmt(solved)})` : ''}</button>
+          ${can ? '' : `<div class="micro" style="max-width:220px;margin-top:4px;">${why}</div>`}
+        </div>
+      </div>`;
+    if (can) $('fe_use_low').onclick = () => { $('fe_amt').value = solved.toFixed(2); preview(); $('fe_amt').focus(); };
+    preview();
+  };
+
+  $('fe_env').onchange = ev => { state.envId = ev.target.value; state.accId = defaultAccFor(env()); $('fe_acc').innerHTML = accOpts(); refresh(); };
+  $('fe_acc').onchange = ev => { state.accId = ev.target.value; refresh(); };
+  $('fe_amt').addEventListener('input', preview);
+  refresh();
+  if (opts.prefillLow && solved !== null && solved > 0.005) { $('fe_amt').value = solved.toFixed(2); preview(); }
+
+  $('fe_save').onclick = () => {
+    const e = env();
+    if (!e) { toast("That envelope no longer exists", 3000, 'error'); return; }
+    const amt = evalAmount($('fe_amt').value);
+    if (isNaN(amt) || amt <= 0) { toast("Enter a valid positive amount", 3000, 'error'); return; }
+    const a = acc(); const ids = accIds();
+    // Soft block, as in Fund the month: a forecast is not a fact.
+    if (ids.length) {
+      const lo = spendableMinAfterFunding(ids, fcDays, fcOpts, [{ envelopeId: e.id, amount: amt, date: today }]);
+      if (lo.min < -0.005 && !confirm(
+        `This sets aside ${fmt(amt)} in "${e.name}".\n\n` +
+        `Projected spendable cash would dip to ${fmt(lo.min)} on ${fmtDate(lo.date)} ` +
+        `over the next ${fcDays} days (over-allocates by ${fmt(-lo.min)}).\n\nContinue anyway?`)) return;
+    }
+    const backNow = !!(a && !e.isReserve && !envelopeBackingAccount(e) && $('fe_back').checked);
+    const userNotes = $('fe_notes').value.trim();
+    pushUndo(`Fund "${e.name}"`);
+    if (backNow) e.accountId = a.id;
+    data.transactions.push({
+      id: uid(), date: today, type: 'income', amount: amt,
+      accountId: null, envelopeId: e.id,
+      payee: 'Envelope refill',
+      notes: userNotes || (a ? `Set aside from ${a.name}` : '')
+    });
+    saveDirty(); closeModal(); render();
+    toast(`Set aside ${fmt(amt)} in "${e.name}"${a ? ` from ${a.name}` : ''}`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+  };
+}
+
 // The two funding modes answer genuinely different questions:
 //
 //   "month" — ASSIGN one month's budget. Monthly envelope gets budgetAmount,
@@ -4503,7 +4720,7 @@ function refillEnvelopes() {
     return;
   }
   if (fundable.length === 0) {
-    toast("Only reserve envelopes exist — those are never funded");
+    toast("Only the reserve envelope exists — Fund the month never proposes it; use Fund on its card");
     return;
   }
 
@@ -7540,7 +7757,7 @@ function renderHelp() {
       <dt>Accounts</dt>
       <dd>Manage real-money accounts. Pin to dashboard with the pin icon, drag rows by their grip to reorder.</dd>
       <dt>Envelopes</dt>
-      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only) and <strong>Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope.</dd>
+      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only, mid-month — say which account the money sits in, or take the forecast's projected low in one click) and <strong>Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope.</dd>
       <dt>Transactions</dt>
       <dd>Every recorded movement: expenses, income, account-to-account transfers, envelope-to-envelope transfers. Searchable and filterable by type, account, envelope and tag. An expense can be <strong>split</strong> across several envelopes, and <strong>Import CSV</strong> brings in a bank statement through a column-mapping wizard (mappings save as named profiles), with duplicate detection and a review step before anything is recorded.</dd>
       <dt>Recurring</dt>
@@ -7594,7 +7811,7 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>What is a reserve envelope?</summary>
-    <div>Tick <strong>Reserve envelope (emergency / catch-all)</strong> when editing an envelope to make it your emergency buffer. A reserve envelope has no budget and no cadence, and <strong>Fund the month</strong> never proposes funding it — it just sits holding money. You fill it at month-end close-out by choosing <strong>Sweep</strong> on the envelopes whose leftovers you want set aside, and you take money back out with <strong>Move funds</strong> whenever a real envelope needs it. Sweeping an envelope that ended the month <em>overspent</em> pulls from the reserve to bring it back to zero. Only one envelope can be the reserve; ticking the box on another moves the flag. Sweeps are envelope-to-envelope transfers, so no account is touched: sweeping a positive leftover leaves your spendable cash unchanged (the money stays earmarked, just in a different envelope), while covering an overspend from the reserve raises spendable, because reserved money fills the hole.</div>
+    <div>Tick <strong>Reserve envelope (emergency / catch-all)</strong> when editing an envelope to make it your emergency buffer. A reserve envelope has no budget and no cadence, and <strong>Fund the month</strong> never proposes funding it — it just sits holding money. You fill it mid-month with its own <strong>Fund</strong> button (or <strong>Fund reserve</strong> on the Dashboard, which offers the forecast's projected low so the low lands at zero), and at month-end close-out by choosing <strong>Sweep</strong> on the envelopes whose leftovers you want set aside, and you take money back out with <strong>Move funds</strong> whenever a real envelope needs it. Sweeping an envelope that ended the month <em>overspent</em> pulls from the reserve to bring it back to zero. Only one envelope can be the reserve; ticking the box on another moves the flag. Sweeps are envelope-to-envelope transfers, so no account is touched: sweeping a positive leftover leaves your spendable cash unchanged (the money stays earmarked, just in a different envelope), while covering an overspend from the reserve raises spendable, because reserved money fills the hole.</div>
     </details>
 
     <details class="faq"><summary>Why are some accounts missing from the forecast?</summary>
@@ -7621,7 +7838,7 @@ function renderHelp() {
     <div><strong>Spendable today</strong> uses recorded account balances, less positive envelope reservations. The projection also folds in recurring entries that are due but have not been recorded yet. An unpaid bill can therefore lower the forecast's starting point before it changes today's actual balance. Both figures use the accounts selected in Forecast, including each envelope's backing account.</div>
     </details>
     <details class="faq"><summary>What does Lowest projected spendable mean?</summary>
-    <div>The lowest point over exactly the horizon selected in Forecast, using the same accounts and envelope-allowance setting. The Dashboard always shows spendable cash, even if the chart displays only total or individual account lines. The assumption chips state whether allowances are included. The projection assumes no new envelope funding: <strong>Fund the month</strong> recalculates the low for the amounts you propose. Money already set aside pays for its envelope's projected spending first, so it is not charged twice.</div>
+    <div>The lowest point over exactly the horizon selected in Forecast, using the same accounts and envelope-allowance setting. The Dashboard always shows spendable cash, even if the chart displays only total or individual account lines. The assumption chips state whether allowances are included. The projection assumes no new envelope funding: <strong>Fund the month</strong> recalculates the low for the amounts you propose, and <strong>Fund reserve</strong> offers to set exactly that low aside in your reserve envelope. Money already set aside pays for its envelope's projected spending first, so it is not charged twice.</div>
     </details>
 
     <details class="faq"><summary>What counts as spent this month?</summary>
@@ -7629,7 +7846,7 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>Fund the month vs. Fund vs. Move funds vs. Return — which do I use?</summary>
-    <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button does the same for just that envelope, mid-month, from spendable cash. <strong>Move funds</strong> shifts money from one envelope to another (no account or spendable effect). <strong>Return</strong> un-earmarks money from an envelope back to spendable cash. All of these only move virtual allocations — your account totals stay the same.</div>
+    <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button sets money aside in just that envelope, mid-month, out of spendable cash — the reserve included. Its dialog asks which account the money sits in (that account's forecast supplies the figures and is noted on the entry; a household envelope can opt to be <em>backed</em> by it from then on), shows spendable today and the projected low, and <strong>Use projected low</strong> fills the most you can set aside before that low reaches zero. For the reserve that is the projected low itself, which is how you park a month's surplus: the Dashboard's <strong>Fund reserve</strong> button opens the same dialog with that amount filled in. <strong>Move funds</strong> shifts money from one envelope to another (no account or spendable effect). <strong>Return</strong> un-earmarks money from an envelope back to spendable cash. All of these only move virtual allocations — your account totals stay the same.</div>
     </details>
   </div>
   `;
@@ -7774,6 +7991,8 @@ function _buildCommands() {
     { label: 'Manage tags', keywords: 'tags tag label categorise settings', run: () => { activeView = 'settings'; render(); document.getElementById('btnAddTag')?.scrollIntoView({ block: 'center' }); } },
     { label: 'Add recurring entry', keywords: 'new recurring salary bill subscription', run: () => editRecurring() },
     { label: 'Fund the month', keywords: 'refill envelopes allocate budget', run: () => refillEnvelopes() },
+    { label: 'Fund an envelope…', keywords: 'fund envelope set aside earmark mid-month from account', run: () => fundEnvelope() },
+    { label: 'Fund the reserve with the projected low', keywords: 'reserve catch-all emergency projected low park surplus', run: () => { const r = reserveEnvelope(); if (r) fundEnvelope(r.id, { prefillLow: true }); else toast('No reserve envelope yet — tick "Reserve envelope" on one envelope first'); } },
     { label: 'Apply due recurring', keywords: 'apply due recurring', run: () => { const n = applyDueRecurring(); if (n > 0) toast(`Applied ${n} recurring ${n === 1 ? 'entry' : 'entries'}`, 5000, 'success', { label: 'Undo', onClick: performUndo }); else toast('Nothing due'); render(); } },
     { label: 'Review due recurring', keywords: 'review due recurring', run: () => showDueReview() },
     { label: 'Close out month', keywords: 'close out month rollover reset', run: () => showCloseOut() },

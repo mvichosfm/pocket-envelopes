@@ -5,6 +5,21 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **Fund envelope** replaces the envelope card's Fund button, which opened the generic
+  transaction form (choosing an account there recorded real income). The new dialog
+  sets money aside in any envelope — the reserve included — as the same one-sided
+  entry Fund the month books, lets you say which account the money sits in (that
+  account's forecast supplies the figures, the account is noted on the entry, and a
+  household envelope can opt to be backed by it from then on), and **Use projected
+  low** fills the most you can set aside before the forecast's low reaches zero.
+- The Dashboard gains **Fund reserve**: it opens that dialog on the reserve envelope
+  with the projected low filled in, so parking a month's surplus lands the low at
+  exactly zero. Two command-palette entries do the same from the keyboard.
+- The audit checks the solver: the low itself for the reserve, low plus overspend for
+  an overspent envelope, and no answer for an envelope the selected accounts do not hold.
+
 ## 2026-09-11 — v0.95, reliability, recurring copies and release-check repairs
 
 - Editing a recurring entry preserves already-recorded/skipped history, including
