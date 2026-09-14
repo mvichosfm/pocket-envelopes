@@ -2068,6 +2068,12 @@ function evalAmount(s) {
 function icon(name, label) {
   return `<svg class="ic" ${label ? `role="img" aria-label="${esc(label)}"` : 'aria-hidden="true"'}><use href="#i-${name}"/></svg>`;
 }
+// A page title with the Add transaction button on the right, as on the Dashboard.
+// render() binds every [data-add-tx]; Forecast, Net Worth and Reports leave it out.
+function addTxHeading(title) {
+  return `<div class="page-heading"><h2>${title}</h2>
+    <button class="btn primary" data-add-tx title="Add transaction (press 'n' anywhere)">${icon('plus')}Add transaction</button></div>`;
+}
 function plural(n, one, many) {
   return `${n} ${n === 1 ? one : (many || one + 's')}`;
 }
@@ -2993,6 +2999,7 @@ function render() {
       case "help": main.innerHTML = renderHelp(); break;
     }
     linkHelpTips(main);
+    main.querySelectorAll('[data-add-tx]').forEach(b => { b.onclick = () => editTransaction(); });
     main.querySelector('h2')?.setAttribute('tabindex', '-1');
     if (restoreMainFocus) {
       let target = focusId ? document.getElementById(focusId) : null;
@@ -3615,7 +3622,7 @@ function renderAccounts() {
   // Archived accounts keep counting: archiving hides, it does not close.
   const total = allAccs.filter(x => x.a.includeInNetWorth !== false).reduce((s,x) => s + x.b, 0);
   return `
-  <h2>Accounts</h2>
+  ${addTxHeading('Accounts')}
   <div class="toolbar">
     <button class="btn primary" id="addAcc">+ Add account</button>
     <div class="spacer"></div>
@@ -3997,7 +4004,7 @@ function renderEnvelopes() {
   const totalBudget = envs.reduce((s,x)=>s+envMonthlyEquiv(x.e),0);
 
   return `
-  <h2>Envelopes</h2>
+  ${addTxHeading('Envelopes')}
   <div class="toolbar">
     <button class="btn primary" id="addEnv">+ Add envelope</button>
     <button class="btn" id="refillBtn" title="Assign one month's budget to each envelope (or top up to full target)">${icon('refresh')}Fund the month</button>
@@ -6156,7 +6163,7 @@ function renderRecurring() {
     })
     .map(x => x.r);
   return `
-  <h2>Recurring transactions</h2>
+  ${addTxHeading('Recurring transactions')}
   <div class="toolbar">
     <button class="btn primary" id="addRec">+ Add recurring</button>
     <div class="spacer"></div>
@@ -7483,7 +7490,7 @@ function renderTagList() {
 }
 function renderSettings() {
   return `
-  <h2>Settings</h2>
+  ${addTxHeading('Settings')}
   <div class="card">
     <div class="setting-row">
       <div><label class="label" for="s_curr">Currency</label>
@@ -7709,7 +7716,7 @@ function bindSettings() {
 // needed to make them collapsible.
 function renderHelp() {
   return `
-  <h2>Help</h2>
+  ${addTxHeading('Help')}
   <div class="help">
     <p class="help-lead">A quick reference to how the app thinks. The README covers installation and first-run setup; this page covers concepts, workflows, and answers to questions that come up while you're using it.</p>
 
@@ -7745,7 +7752,7 @@ function renderHelp() {
 
     <p><strong>Monthly close-out.</strong> At the start of each new month, the Dashboard's <strong>Needs attention</strong> panel shows "Close out [last month]". Click the month's <strong>Review</strong> button to walk through each envelope's leftover balance and pick rollover, reset or sweep. Reset envelopes return their leftover to spendable cash; rollover envelopes carry it forward; sweep moves it into the reserve envelope. If you have a reserve envelope, a "Set all" row lets you sweep every envelope's leftover in one click.</p>
 
-    <p><strong>Logging a one-off transaction.</strong> Press <kbd>N</kbd> from anywhere, or use <strong>+ Add transaction</strong> on the Transactions tab. Pick a type (expense, income, transfer-account, transfer-envelope), an account, optionally an envelope, and an amount.</p>
+    <p><strong>Logging a one-off transaction.</strong> Press <kbd>N</kbd> from anywhere, or use <strong>Add transaction</strong> at the top of any page except Forecast, Net Worth and Reports. Pick a type (expense, income, transfer-account, transfer-envelope), an account, optionally an envelope, and an amount.</p>
 
     <p><strong>Applying recurring entries.</strong> When recurring entries are due, <strong>Needs attention</strong> shows their count and net total. Choose <strong>Review recurring</strong> to record, link, skip or defer each occurrence before applying your choices.</p>
 
