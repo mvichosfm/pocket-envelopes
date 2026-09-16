@@ -697,6 +697,8 @@
   .assumption-chip { padding: 4px 10px; border-radius: 6px; background: var(--bg-3); color: var(--text); }
   .assumption-chip.allowances-off { color: var(--warn); }
   .hero-note { color: var(--text-dim); font-size: 13px; margin: 14px 0 0; max-width: 90ch; }
+  /* Occurrences dialog: a skipped date reads as struck out */
+  tr.occ-skipped td:first-child { text-decoration: line-through; color: var(--text-dim); }
   .attention-panel { margin: 0 0 24px; background: var(--bg-2); }
   .attention-row { display: flex; gap: 16px; align-items: center; padding: 12px 0; }
   .attention-row + .attention-row { border-top: 1px solid var(--border); }
@@ -1153,6 +1155,7 @@ function migrate(raw) {
   const today = todayISO();
   for (const r of raw.recurring) {
     if (r.lastAppliedDate === undefined) r.lastAppliedDate = today;
+    sanitizeRecurringOverrides(r);   // decision #60: unreadable per-occurrence amounts are dropped, valid ones kept
   }
   // Envelope cadence migration: rename monthlyBudget → budgetAmount, default
   // cadence to "monthly". Annual envelopes store the full yearly amount in
@@ -2322,15 +2325,92 @@ function firstPendingOccurrence(rec) {
   return null;
 }
 
-// A deliberately skipped occurrence — the "this month's gym fee was waived"
-// case. rec.skippedDates holds ISO dates the user chose to skip in the due
-// review. It only ever lists dates AFTER lastAppliedDate: once the watermark
-// moves past a skipped date the entry is pruned (see showDueReview), so the
-// list stays short and lastAppliedDate keeps its single meaning. Both
-// pending-occurrence readers honour it; the forecast doesn't need to, since
-// skips are past dates and the forecast projects from tomorrow.
+// PER-OCCURRENCE DEVIATIONS (decisions #38 and #60). A template has one
+// amount and one schedule; two small maps on it let single scheduled dates
+// differ without touching the template or any other date:
+//   rec.skippedDates  — ISO dates the user chose to skip (a waived fee, no
+//                       Christmas bonus this year). Past dates come from the
+//                       due review, future ones from the Occurrences dialog.
+//   rec.overrides     — { [iso]: { amount } }: that one date's own amount.
+// Both are keyed by the dates recurringOccurrences() yields and only ever
+// hold dates AFTER lastAppliedDate: once the watermark passes a date the
+// entry is implied and pruneResolvedOccurrences drops it, so the lists stay
+// short and lastAppliedDate keeps its single meaning. Every reader of an
+// occurrence — the pending/due scans, the Dashboard's Upcoming panel, the
+// forecast's future loop, the due review, both apply paths and hand-log
+// matching — goes through isSkippedOccurrence and occurrenceAmount.
 function isSkippedOccurrence(rec, iso) {
   return !!(rec.skippedDates && rec.skippedDates.includes(iso));
+}
+// The amount one scheduled occurrence books: its own when the user set one,
+// else the template's. THE reader for an occurrence's amount; rec.amount is
+// only right for the template editor, the delete confirm and the monthly
+// equivalent used for allowance netting (a one-off deviation is not the
+// stream's rate).
+function occurrenceAmount(rec, iso) {
+  const o = rec.overrides && rec.overrides[iso];
+  return o && Number.isFinite(o.amount) && o.amount > 0 ? o.amount : rec.amount;
+}
+// Give one date its own amount, or clear it: an amount equal to the template
+// (to the cent), non-finite or non-positive removes the entry, and an empty
+// map is deleted so an untouched file exports unchanged. Returns whether rec
+// changed.
+function setOccurrenceOverride(rec, iso, amount) {
+  const has = !!(rec.overrides && rec.overrides[iso]);
+  const clears = !Number.isFinite(amount) || amount <= 0 || Math.abs(amount - (rec.amount || 0)) < 0.005;
+  if (clears) {
+    if (!has) return false;
+    delete rec.overrides[iso];
+    if (!Object.keys(rec.overrides).length) delete rec.overrides;
+    return true;
+  }
+  if (has && Math.abs(rec.overrides[iso].amount - amount) < 0.005) return false;
+  rec.overrides = rec.overrides || {};
+  rec.overrides[iso] = { amount };
+  return true;
+}
+// Skip or unskip one date. Returns whether rec changed.
+function setOccurrenceSkipped(rec, iso, skipped) {
+  const has = isSkippedOccurrence(rec, iso);
+  if (!!skipped === has) return false;
+  if (skipped) {
+    rec.skippedDates = (rec.skippedDates || []).concat(iso).sort();
+  } else {
+    rec.skippedDates = rec.skippedDates.filter(d => d !== iso);
+    if (!rec.skippedDates.length) delete rec.skippedDates;
+  }
+  return true;
+}
+// Drop the skips and custom amounts the watermark now implies (dates at or
+// before lastAppliedDate) and delete either container when empty. The ONE
+// place both are pruned; called after every watermark advance.
+function pruneResolvedOccurrences(rec) {
+  const w = rec.lastAppliedDate;
+  if (!w) return;
+  if (rec.skippedDates) {
+    rec.skippedDates = rec.skippedDates.filter(d => d > w);
+    if (!rec.skippedDates.length) delete rec.skippedDates;
+  }
+  if (rec.overrides) {
+    for (const k of Object.keys(rec.overrides)) if (k <= w) delete rec.overrides[k];
+    if (!Object.keys(rec.overrides).length) delete rec.overrides;
+  }
+}
+// migrate()'s guard for a hand-edited or foreign file: drop an overrides
+// value that is not a plain object, and entries whose key is not a real ISO
+// date or whose amount is not a finite positive number — occurrenceAmount
+// could never read those. Valid entries are never dropped here, even behind
+// the watermark: migrate runs before any pushUndo, and runtime pruning
+// handles them visibly.
+function sanitizeRecurringOverrides(rec) {
+  const o = rec.overrides;
+  if (o === undefined) return;
+  if (!o || typeof o !== 'object' || Array.isArray(o)) { delete rec.overrides; return; }
+  for (const k of Object.keys(o)) {
+    const v = o[k];
+    if (!validISODate(k) || !v || typeof v !== 'object' || !Number.isFinite(v.amount) || v.amount <= 0) delete o[k];
+  }
+  if (!Object.keys(o).length) delete rec.overrides;
 }
 
 // Recurring entries are NOT auto-recorded. This finds occurrences whose date is
@@ -2347,7 +2427,7 @@ function dueRecurringOccurrences() {
     if (fromD > todayD) continue;
     for (const d of recurringOccurrences(rec, fromD, todayD)) {
       if (isSkippedOccurrence(rec, d)) continue;
-      out.push({ rec, date: d });
+      out.push({ rec, date: d, amount: occurrenceAmount(rec, d) });   // rows carry the occurrence's own amount
     }
   }
   out.sort((a, b) => a.date.localeCompare(b.date));
@@ -2390,10 +2470,11 @@ function applyDueRecurring() {
   const due = dueRecurringOccurrences();
   if (!due.length) return 0;
   pushUndo(`Apply ${due.length} recurring ${due.length === 1 ? "entry" : "entries"}`);
-  for (const { rec, date } of due) {
-    const tx = recurringToTx(rec, date, rec.amount);
+  for (const { rec, date, amount } of due) {
+    const tx = recurringToTx(rec, date, amount);
     data.transactions.push(tx);
     rec.lastAppliedDate = date > (rec.lastAppliedDate || '') ? date : rec.lastAppliedDate;
+    pruneResolvedOccurrences(rec);
   }
   // Each rec's lastAppliedDate is now its max applied occurrence — the sole
   // authority. We deliberately do NOT advance it to today: that would bury a
@@ -2575,10 +2656,10 @@ function forecastAccountBalances(accountIds, days, opts) {
   // shows up in the projection. A user who wants to exclude a due (e.g. a
   // cancelled subscription) still dismisses it via the dashboard banner,
   // which advances rec.lastAppliedDate and drops it from this list.
-  for (const { rec } of dueRecurringOccurrences()) {
+  for (const { rec, amount } of dueRecurringOccurrences()) {
     const fakeTx = {
       type: rec.type,
-      amount: rec.amount,
+      amount,   // the occurrence's own amount (decision #60)
       accountId: rec.accountId,
       envelopeId: rec.envelopeId,
       fromAccountId: rec.fromAccountId,
@@ -2610,11 +2691,12 @@ function forecastAccountBalances(accountIds, days, opts) {
     const recFromD = recurringResumeDate(rec, tomorrow);
     const recFromDate = recFromD > tomorrow ? recFromD : tomorrow;
     for (const d of recurringOccurrences(rec, recFromDate, horizon)) {
+      if (isSkippedOccurrence(rec, d)) continue;   // a skipped future date leaves the projection (decision #60)
       const idx = daysBetween(today, parseDate(d));
       if (idx < 0 || idx > days) continue;
       const fakeTx = {
         type: rec.type,
-        amount: rec.amount,
+        amount: occurrenceAmount(rec, d),
         accountId: rec.accountId,
         envelopeId: rec.envelopeId,
         fromAccountId: rec.fromAccountId,
@@ -3275,7 +3357,7 @@ function renderDashboard() {
     const start = fromD > today ? fromD : today;
     for (const d of recurringOccurrences(rec, start, addDays(today, 7))) {
       if (isSkippedOccurrence(rec, d)) continue;
-      upcoming.push({ rec, date: d });
+      upcoming.push({ rec, date: d, amount: occurrenceAmount(rec, d) });
     }
   }
   upcoming.sort((a, b) => a.date.localeCompare(b.date));
@@ -3309,7 +3391,7 @@ function renderDashboard() {
 
   const due = dueRecurringOccurrences();
   const dueTotal = due.reduce((s, u) =>
-    s + (u.rec.type === 'expense' ? -u.rec.amount : (u.rec.type === 'income' ? u.rec.amount : 0)), 0);
+    s + (u.rec.type === 'expense' ? -u.amount : (u.rec.type === 'income' ? u.amount : 0)), 0);
 
   const closeYM = closeOutDue();
   const closeMonthLabel = closeYM ? (() => {
@@ -3359,7 +3441,7 @@ function renderDashboard() {
           <td>${fmtDate(u.date)}</td>
           <td><a href="#" class="rec-link" data-edit-rec="${u.rec.id}" title="Edit recurring entry">${esc(u.rec.name)}</a> <span class="badge ${u.rec.type}">${u.rec.type}</span></td>
           <td class="num ${u.rec.type === 'expense' ? 'neg' : (u.rec.type === 'income' ? 'pos' : '')}">
-            ${u.rec.type === 'expense' ? '-' : (u.rec.type === 'income' ? '+' : '')}${fmt(u.rec.amount)}
+            ${u.rec.type === 'expense' ? '-' : (u.rec.type === 'income' ? '+' : '')}${fmt(u.amount)}${u.rec.overrides && u.rec.overrides[u.date] ? ` <span class="badge" title="This date only — the template amount is ${fmt(u.rec.amount)}">this time</span>` : ''}
           </td>
         </tr>`).join('')}</tbody></table>`}
     </div>
@@ -3536,11 +3618,12 @@ function wireAccountDragReorder() {
 const HAND_LOG_WINDOW_DAYS = 3;
 function findHandLoggedMatch(rec, date, taken) {
   const target = parseDate(date);
+  const want = occurrenceAmount(rec, date);   // the occurrence's own amount, not the template's
   let best = null, bestGap = Infinity;
   for (const tx of data.transactions) {
     if (tx.fromRecurringId || tx.type !== rec.type) continue;
     if (taken && taken.has(tx.id)) continue;
-    if (Math.abs((tx.amount || 0) - (rec.amount || 0)) >= 0.005) continue;
+    if (Math.abs((tx.amount || 0) - (want || 0)) >= 0.005) continue;
     if (rec.type === 'transfer-account') {
       if (tx.fromAccountId !== rec.fromAccountId || tx.toAccountId !== rec.toAccountId) continue;
     } else if (rec.type === 'transfer-envelope') {
@@ -3568,7 +3651,7 @@ function showDueReview() {
       <td>${esc(u.rec.name)} <span class="badge ${esc(u.rec.type)}">${esc(u.rec.type)}</span>${m ? `
         <div class="micro" style="margin-top:3px;">looks already recorded: <strong>${esc(m.payee || m.notes || 'transaction')}</strong> on ${fmtDate(m.date)}, ${fmt(m.amount)}</div>` : ''}</td>
       <td class="num">
-        <input type="text" inputmode="decimal" autocomplete="off" data-due-amt="${i}" value="${(u.rec.amount || 0).toFixed(2)}"
+        <input type="text" inputmode="decimal" autocomplete="off" data-due-amt="${i}" value="${(u.amount || 0).toFixed(2)}"
           style="width:100px;text-align:right;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:${inputColor};font-variant-numeric:tabular-nums;">
       </td>
       <td>${esc(u.rec.type === 'transfer-account'
@@ -3588,7 +3671,7 @@ function showDueReview() {
     <h2>Review due recurring</h2>
     <p style="color:var(--text-dim);margin-top:0;"><strong style="color:var(--text);">Record</strong> books the transaction;
       <strong style="color:var(--text);">skip</strong> marks this one occurrence as never happening (a waived fee, a month you paid nothing) so it stops being offered;
-      <strong style="color:var(--text);">decide later</strong> leaves it due. Where a transaction you typed in by hand looks like this occurrence (same account and amount, within ${HAND_LOG_WINDOW_DAYS} days), <strong style="color:var(--text);">link</strong> marks it as the recorded one instead of booking it twice. Edit an amount for this occurrence only — the template is unchanged.</p>
+      <strong style="color:var(--text);">decide later</strong> leaves it due. Where a transaction you typed in by hand looks like this occurrence (same account and amount, within ${HAND_LOG_WINDOW_DAYS} days), <strong style="color:var(--text);">link</strong> marks it as the recorded one instead of booking it twice. Edit an amount for this occurrence only — the template is unchanged; a custom amount set under Occurrences is already filled in, and an amount you change on a row left for later is kept for that date.</p>
     <div style="margin:-4px 0 10px 0;font-size:13px;color:var(--text-dim);">
       Set all:
       <button type="button" class="btn sm ghost" data-dueall="record">Record</button>
@@ -3612,33 +3695,42 @@ function showDueReview() {
   document.getElementById("dueApplySel").onclick = () => {
     const action = {};
     document.querySelectorAll("[data-due-act]").forEach(sel => { action[+sel.dataset.dueAct] = sel.value; });
-    const anyChange = Object.values(action).some(a => a !== 'later');
-    if (!anyChange) { closeModal(); return; }
-    // Per-row amount overrides go through evalAmount like every other amount
-    // field; blank, invalid or non-positive falls back to the template amount.
-    const overrides = {};
+    // Per-row amounts go through evalAmount like every other amount field;
+    // blank, invalid or non-positive falls back to the occurrence's amount.
+    const rowAmt = {};
     document.querySelectorAll("[data-due-amt]").forEach(inp => {
       const idx = +inp.dataset.dueAmt;
       const v = evalAmount(inp.value);
-      if (!isNaN(v) && v > 0) overrides[idx] = v;
+      if (!isNaN(v) && v > 0) rowAmt[idx] = v;
     });
+    // A "decide later" row whose amount was changed keeps that amount as the
+    // occurrence's own (decision #60): the user has said what it will be, not
+    // yet when — so it counts as a change and is inside the same snapshot.
+    const laterEdit = (u, i) => action[i] === 'later' && rowAmt[i] !== undefined && Math.abs(rowAmt[i] - u.amount) >= 0.005;
+    const anyChange = Object.values(action).some(a => a !== 'later') || due.some(laterEdit);
+    if (!anyChange) { closeModal(); return; }
     pushUndo('Review due recurring');
     let n = 0, skipped = 0, linked = 0;
-    due.forEach(({ rec, date }, i) => {
+    due.forEach((u, i) => {
+      const { rec, date, amount } = u;
       if (action[i] === 'link' && matches[i]) {
         // The hand-logged transaction becomes this occurrence's record: it is
         // stamped with the recurring's id (so it can't be matched again and
         // the forecast's coverage netting treats it like a generated one),
         // and the watermark logic below counts the row as resolved.
         matches[i].fromRecurringId = rec.id;
+        setOccurrenceOverride(rec, date, rec.amount);   // resolved — the record carries the amount
         linked++;
       } else if (action[i] === 'record') {
-        data.transactions.push(recurringToTx(rec, date, overrides[i] !== undefined ? overrides[i] : rec.amount));
+        data.transactions.push(recurringToTx(rec, date, rowAmt[i] !== undefined ? rowAmt[i] : amount));
+        setOccurrenceOverride(rec, date, rec.amount);
         n++;
       } else if (action[i] === 'skip') {
-        rec.skippedDates = rec.skippedDates || [];
-        if (!rec.skippedDates.includes(date)) rec.skippedDates.push(date);
+        setOccurrenceSkipped(rec, date, true);
+        setOccurrenceOverride(rec, date, rec.amount);
         skipped++;
+      } else if (laterEdit(u, i)) {
+        setOccurrenceOverride(rec, date, rowAmt[i]);
       }
     });
     // Advance each recurring's lastAppliedDate ONLY through its contiguous
@@ -3664,12 +3756,9 @@ function showDueReview() {
       if (watermark && (!rec.lastAppliedDate || rec.lastAppliedDate < watermark)) {
         rec.lastAppliedDate = watermark;
       }
-      // Skips at or before the watermark are implied by it now — prune so the
-      // list never grows past the handful of dates still ahead of the watermark.
-      if (rec.skippedDates && rec.lastAppliedDate) {
-        rec.skippedDates = rec.skippedDates.filter(d => d > rec.lastAppliedDate);
-        if (!rec.skippedDates.length) delete rec.skippedDates;
-      }
+      // Skips and custom amounts at or before the watermark are implied by it
+      // now — prune so the lists only ever hold dates still ahead of it.
+      pruneResolvedOccurrences(rec);
     }
     saveDirty();
     closeModal();
@@ -6367,7 +6456,7 @@ function renderRecurring() {
           <td>${esc(r.type==='transfer-envelope' ?
             ((envelopeById(r.fromEnvelopeId)?.name || '?') + '→' + (envelopeById(r.toEnvelopeId)?.name || '?')) :
             (envelopeById(r.envelopeId)?.name || ''))}</td>
-          <td class="num ${r.type==='expense'?'neg':(r.type==='income'?'pos':'')}">${r.type==='expense'?'-':(r.type==='income'?'+':'')}${fmt(r.amount)}</td>
+          <td class="num ${r.type==='expense'?'neg':(r.type==='income'?'pos':'')}">${r.type==='expense'?'-':(r.type==='income'?'+':'')}${fmt(pending ? occurrenceAmount(r, pending) : r.amount)}${pending && r.overrides && r.overrides[pending] ? ` <span class="badge" title="Custom amount for ${fmtDate(pending)} — the template amount is ${fmt(r.amount)}; ${plural(Object.keys(r.overrides).length, 'date has', 'dates have')} a custom amount">this time</span>` : ''}</td>
           <td>${(() => {
             if (!pending) return '—';
             const today = todayISO();
@@ -6380,7 +6469,8 @@ function renderRecurring() {
             <button class="btn sm ghost" data-dup-rec="${r.id}" aria-label="Duplicate recurring ${esc(r.name)}" title="Duplicate recurring">${icon('copy')}</button>
             ${r.active===false
               ? ''
-              : `<button class="btn sm ghost" data-apply-rec="${r.id}" ${pending ? `title="Apply next instance today (scheduled ${fmtDate(pending)})" aria-label="Apply next instance of ${esc(r.name)} today"` : `disabled title="No pending or upcoming instance" aria-label="No pending instance of ${esc(r.name)} to apply"`}>${icon('bolt')}</button>
+              : `<button class="btn sm ghost" data-occ-rec="${r.id}" title="Occurrences — give one date its own amount, or skip one date, without changing the template" aria-label="Occurrences of ${esc(r.name)}">${icon('list')}</button>
+                 <button class="btn sm ghost" data-apply-rec="${r.id}" ${pending ? `title="Apply next instance today (scheduled ${fmtDate(pending)})" aria-label="Apply next instance of ${esc(r.name)} today"` : `disabled title="No pending or upcoming instance" aria-label="No pending instance of ${esc(r.name)} to apply"`}>${icon('bolt')}</button>
                  <button class="btn sm ghost" data-skip-rec="${r.id}" ${pending ? `title="Skip the next occurrence (${fmtDate(pending)}) — it will never be offered; the one after moves up" aria-label="Skip next occurrence of ${esc(r.name)}"` : `disabled title="No pending or upcoming instance" aria-label="No pending occurrence of ${esc(r.name)} to skip"`}>${icon('skip')}</button>`}
             ${r.active===false
               ? `<button class="btn sm" data-toggle-rec="${r.id}">${icon('play')}Enable</button>`
@@ -6404,6 +6494,8 @@ function bindRecurring() {
     b.onclick = () => applyRecurringInstanceNow(b.dataset.applyRec));
   document.querySelectorAll("[data-skip-rec]").forEach(b =>
     b.onclick = () => skipRecurringOccurrence(b.dataset.skipRec));
+  document.querySelectorAll("[data-occ-rec]").forEach(b =>
+    b.onclick = () => editRecurringOccurrences(b.dataset.occRec));
   document.querySelectorAll("[data-del-rec]").forEach(b =>
     b.onclick = () => deleteRecurring(b.dataset.delRec));
   document.querySelectorAll("[data-toggle-rec]").forEach(b =>
@@ -6432,13 +6524,126 @@ function skipRecurringOccurrence(recId) {
   if (!confirm(`Skip "${rec.name}" on ${fmtDate(pending)}?\n\nThis occurrence will never be offered or recorded; the following one becomes "next". Ctrl+Z undoes it.`)) return;
   pushUndo(`Skip ${rec.name} (${fmtDate(pending)})`);
   if (!rec.lastAppliedDate || rec.lastAppliedDate < pending) rec.lastAppliedDate = pending;
-  if (rec.skippedDates) {
-    rec.skippedDates = rec.skippedDates.filter(d => d > rec.lastAppliedDate);
-    if (!rec.skippedDates.length) delete rec.skippedDates;
-  }
+  pruneResolvedOccurrences(rec);
   saveDirty(); render();
   const next = firstPendingOccurrence(rec);
   toast(`Skipped ${rec.name} on ${fmtDate(pending)}${next ? ` · next ${fmtDate(next)}` : ''}`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+}
+
+// OCCURRENCES DIALOG (decision #60): the next scheduled dates of one template,
+// each with its own amount field and a skip toggle. An amount that differs
+// from the template is stored in rec.overrides for that date only; a skipped
+// date goes into rec.skippedDates (future dates included — the forecast's
+// future loop honours them). Unlike the row's skip button, skipping here
+// never moves the watermark, so the dates around it are untouched. One
+// snapshot per save; an unchanged form closes without one.
+const OCCURRENCE_DIALOG_ROWS = 12;
+// The dates the dialog lists: the same window firstPendingOccurrence scans,
+// skipped dates included so they can be unskipped.
+function upcomingOccurrenceDates(rec, limit) {
+  const today = parseDate(todayISO());
+  const fromD = recurringResumeDate(rec, rec.startDate ? parseDate(rec.startDate) : today);
+  const horizon = addMonths(today, 24);
+  const upper = fromD > horizon ? addMonths(fromD, 24) : horizon;
+  const out = [];
+  for (const d of recurringOccurrences(rec, fromD, upper)) { out.push(d); if (out.length >= limit) break; }
+  return out;
+}
+function editRecurringOccurrences(recId) {
+  const rec = data.recurring.find(r => r.id === recId);
+  if (!rec) return;
+  const dates = upcomingOccurrenceDates(rec, OCCURRENCE_DIALOG_ROWS);
+  if (!dates.length) { toast("No upcoming occurrences"); return; }
+  const today = todayISO();
+  const listed = new Set(dates);
+  // Custom amounts on dates the schedule no longer produces (a start-date or
+  // cadence edit moved them). Never read; offered for removal.
+  const orphans = Object.keys(rec.overrides || {}).filter(k => !listed.has(k) && (!rec.lastAppliedDate || k > rec.lastAppliedDate)).sort();
+  const inputStyle = 'width:110px;text-align:right;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-variant-numeric:tabular-nums;';
+  const rows = dates.map(iso => {
+    const skipped = isSkippedOccurrence(rec, iso);
+    const custom = !!(rec.overrides && rec.overrides[iso]);
+    const when = iso < today ? `<span class="badge due" title="Overdue — scheduled but not yet recorded">Overdue</span> `
+      : iso === today ? `<span class="badge due" title="Due today">Today</span> ` : '';
+    return `<tr data-occ-row="${iso}" class="${skipped ? 'occ-skipped' : ''}">
+      <td style="white-space:nowrap;">${when}${fmtDate(iso)}</td>
+      <td class="num"><input type="text" inputmode="decimal" autocomplete="off" data-occ-amt="${iso}" value="${occurrenceAmount(rec, iso).toFixed(2)}" aria-label="Amount on ${fmtDate(iso)}" ${skipped ? 'disabled' : ''} style="${inputStyle}"></td>
+      <td><span class="badge" data-occ-custom="${iso}" ${custom && !skipped ? '' : 'hidden'} title="Differs from the template amount ${fmt(rec.amount)}">custom</span><span class="badge" data-occ-skipbadge="${iso}" ${skipped ? '' : 'hidden'}>skipped</span></td>
+      <td class="actions" style="white-space:nowrap;">
+        <button type="button" class="btn sm ghost" data-occ-reset="${iso}" title="Reset to the template amount" aria-label="Reset ${fmtDate(iso)} to the template amount" ${custom && !skipped ? '' : 'disabled'}>${icon('return')}</button>
+        <button type="button" class="btn sm ghost" data-occ-skip="${iso}" aria-pressed="${skipped}" title="${skipped ? 'Unskip this date' : 'Skip this date only'}" aria-label="${skipped ? 'Unskip' : 'Skip'} ${esc(rec.name)} on ${fmtDate(iso)}">${icon(skipped ? 'play' : 'skip')}</button>
+      </td>
+    </tr>`;
+  }).join('');
+  openModal(`
+    <h2>Occurrences of ${esc(rec.name)}</h2>
+    <p class="micro" style="margin-top:-4px;">Template amount <strong>${fmt(rec.amount)}</strong>, ${esc(rec.schedule)}${rec.schedule === 'custom-months' ? ` (${(rec.months || []).join(', ')})` : ''}, next ${plural(dates.length, 'date')}. An amount that differs applies to that date only — the template and every other date are unchanged; set it back to the template amount to remove it. A skipped date is never offered, recorded or projected; the dates around it are untouched.</p>
+    <div style="max-height:55vh;overflow:auto;">
+      <table>
+        <thead><tr><th>Date</th><th class="num">Amount</th><th></th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${orphans.length ? `<p class="micro">Custom amounts on dates the schedule no longer produces: ${orphans.map(k => `${fmtDate(k)} ${fmt(rec.overrides[k].amount)}`).join(', ')}
+      <button type="button" class="btn sm ghost" id="occDropOrphans">Remove</button></p>` : ''}
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" id="occSave">Save</button>
+    </div>
+  `, { className: 'wide' });
+  const $ = sel => document.querySelector(sel);
+  const skipState = {};
+  for (const iso of dates) skipState[iso] = isSkippedOccurrence(rec, iso);
+  let dropOrphans = false;
+  const paint = iso => {
+    const skipped = skipState[iso];
+    const inp = $(`[data-occ-amt="${iso}"]`), btn = $(`[data-occ-skip="${iso}"]`);
+    const v = evalAmount(inp.value);
+    const custom = !isNaN(v) && v > 0 && Math.abs(v - (rec.amount || 0)) >= 0.005;
+    $(`[data-occ-row="${iso}"]`).classList.toggle('occ-skipped', skipped);
+    inp.disabled = skipped;
+    $(`[data-occ-custom="${iso}"]`).hidden = !custom || skipped;
+    $(`[data-occ-skipbadge="${iso}"]`).hidden = !skipped;
+    $(`[data-occ-reset="${iso}"]`).disabled = !custom || skipped;
+    btn.setAttribute('aria-pressed', String(skipped));
+    btn.title = skipped ? 'Unskip this date' : 'Skip this date only';
+    btn.setAttribute('aria-label', `${skipped ? 'Unskip' : 'Skip'} ${rec.name} on ${fmtDate(iso)}`);
+    btn.innerHTML = icon(skipped ? 'play' : 'skip');
+  };
+  document.querySelectorAll('[data-occ-amt]').forEach(inp => inp.addEventListener('input', () => paint(inp.dataset.occAmt)));
+  document.querySelectorAll('[data-occ-reset]').forEach(b => b.onclick = () => {
+    $(`[data-occ-amt="${b.dataset.occReset}"]`).value = (rec.amount || 0).toFixed(2); paint(b.dataset.occReset);
+  });
+  document.querySelectorAll('[data-occ-skip]').forEach(b => b.onclick = () => {
+    skipState[b.dataset.occSkip] = !skipState[b.dataset.occSkip]; paint(b.dataset.occSkip);
+  });
+  const drop = $('#occDropOrphans');
+  if (drop) drop.onclick = () => { dropOrphans = true; drop.disabled = true; drop.textContent = 'Removed on save'; };
+
+  $('#occSave').onclick = () => {
+    // Work on a copy so a refused save or Cancel leaves the template untouched.
+    const draft = structuredClone(rec);
+    for (const iso of dates) {
+      if (skipState[iso]) { setOccurrenceSkipped(draft, iso, true); continue; }
+      setOccurrenceSkipped(draft, iso, false);
+      const inp = $(`[data-occ-amt="${iso}"]`);
+      const v = evalAmount(inp.value);
+      if (isNaN(v) || v <= 0) { toast(`Enter a valid amount for ${fmtDate(iso)}`, 3000, 'error'); inp.focus(); return; }
+      setOccurrenceOverride(draft, iso, Math.abs(v));
+    }
+    if (dropOrphans && draft.overrides) {
+      for (const k of orphans) delete draft.overrides[k];
+      if (!Object.keys(draft.overrides).length) delete draft.overrides;
+    }
+    const same = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+    if (same(draft.overrides, rec.overrides) && same(draft.skippedDates, rec.skippedDates)) { closeModal(); return; }
+    pushUndo(`Edit occurrences of ${rec.name}`);
+    if (draft.overrides) rec.overrides = draft.overrides; else delete rec.overrides;
+    if (draft.skippedDates) rec.skippedDates = draft.skippedDates; else delete rec.skippedDates;
+    saveDirty(); closeModal(); render();
+    const nCustom = Object.keys(rec.overrides || {}).length, nSkip = (rec.skippedDates || []).length;
+    toast(`${rec.name}: ${plural(nCustom, 'custom amount')}, ${plural(nSkip, 'skipped date')} (Ctrl+Z to undo)`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+  };
 }
 
 function applyRecurringInstanceNow(recId) {
@@ -6446,7 +6651,7 @@ function applyRecurringInstanceNow(recId) {
   if (!rec) return;
   const scheduled = firstPendingOccurrence(rec);
   if (!scheduled) { toast("No pending or upcoming instance to apply"); return; }
-  const tx = recurringToTx(rec, todayISO(), rec.amount);
+  const tx = recurringToTx(rec, todayISO(), occurrenceAmount(rec, scheduled));   // that occurrence's own amount
   txFormModal(tx, true, {
     banner: `From recurring: <strong>${esc(rec.name)}</strong> · scheduled <strong>${fmtDate(scheduled)}</strong>`,
     afterSave: () => {
@@ -6456,6 +6661,7 @@ function applyRecurringInstanceNow(recId) {
       if (!rec.lastAppliedDate || rec.lastAppliedDate < scheduled) {
         rec.lastAppliedDate = scheduled;
       }
+      pruneResolvedOccurrences(rec);
     }
   });
 }
@@ -6469,12 +6675,13 @@ function editRecurring(id, { duplicate = false } = {}) {
     r = { ...structuredClone(r), id: uid(), name: `${r.name || ''} (copy)` };
     delete r.lastAppliedDate;
     delete r.skippedDates;
+    delete r.overrides;
   }
   const editing = !!id && !duplicate;
   const needsHistoryRepair = editing && !validISODate(r.lastAppliedDate);
   openModal(`
     <h2>${duplicate ? 'Duplicate' : editing ? 'Edit' : 'Add'} recurring</h2>
-    ${duplicate ? '<p class="micro">Review the start date before adding. The copy has no payment or skip history; past dates can create overdue occurrences.</p>' : ''}
+    ${duplicate ? '<p class="micro">Review the start date before adding. The copy has no payment, skip or custom-amount history; past dates can create overdue occurrences.</p>' : ''}
     ${editing ? '<p class="micro">Changes affect unrecorded occurrences. Dates already recorded or skipped are kept.</p>' : ''}
     <div class="field"><label>Name</label><input id="r_name" value="${esc(r.name||'')}"></div>
     <div class="field" ${tagList().length || r.tag ? '' : 'style="display:none;"'}><label>Tag</label><select id="r_tag">${tagOptions(r.tag)}</select></div>
@@ -6626,9 +6833,9 @@ function editRecurring(id, { duplicate = false } = {}) {
     } else {
       // Editing a schedule never reopens resolved history. A separate series
       // starts via Duplicate; a malformed legacy history is corrected explicitly.
-      if (needsHistoryRepair && out.skippedDates) {
-        out.skippedDates = out.skippedDates.filter(d => validISODate(d) && d > out.lastAppliedDate);
-        if (!out.skippedDates.length) delete out.skippedDates;
+      if (needsHistoryRepair) {
+        if (out.skippedDates) out.skippedDates = out.skippedDates.filter(d => validISODate(d));
+        pruneResolvedOccurrences(out);   // skips and custom amounts behind the repaired watermark go too
       }
       const i = data.recurring.findIndex(x => x.id === id); data.recurring[i] = out;
     }
@@ -7951,7 +8158,7 @@ function renderHelp() {
 
     <p><strong>Logging a one-off transaction.</strong> Press <kbd>N</kbd> from anywhere, or use <strong>Add transaction</strong> at the top of any page except Forecast, Net Worth and Reports. Pick a type (expense, income, transfer-account, transfer-envelope), an account, optionally an envelope, and an amount.</p>
 
-    <p><strong>Applying recurring entries.</strong> When recurring entries are due, <strong>Needs attention</strong> shows their count and net total. Choose <strong>Review recurring</strong> to record, link, skip or defer each occurrence before applying your choices.</p>
+    <p><strong>Applying recurring entries.</strong> When recurring entries are due, <strong>Needs attention</strong> shows their count and net total. Choose <strong>Review recurring</strong> to record, link, skip or defer each occurrence before applying your choices. To give one future date its own amount, or skip one date only, use the <strong>Occurrences</strong> button on the entry's row in the Recurring tab.</p>
 
     <h3>Finding your way</h3><p>Desktop navigation groups everyday budgeting, analysis and administration. On phones, the bottom bar opens Dashboard, Envelopes, Transactions and Forecast. <strong>More</strong> opens Accounts, Recurring, Net Worth, Reports, Settings and Help. On Transactions, search is always visible; <strong>Filters</strong> opens type, account, envelope, tag and date controls. Its count shows how many of those filters are active, even when collapsed.</p>
     <h3>Tabs at a glance</h3>
@@ -7965,7 +8172,7 @@ function renderHelp() {
       <dt>Transactions</dt>
       <dd>Every recorded movement: expenses, income, account-to-account transfers, envelope-to-envelope transfers. Searchable and filterable by type, account, envelope and tag. An expense can be <strong>split</strong> across several envelopes, and <strong>Import CSV</strong> brings in a bank statement through a column-mapping wizard (mappings save as named profiles), with duplicate detection and a review step before anything is recorded.</dd>
       <dt>Recurring</dt>
-      <dd>Templates for repeating entries (salary, rent, subscriptions). The app reminds you when occurrences are due rather than auto-applying them.</dd>
+      <dd>Templates for repeating entries (salary, rent, subscriptions). The app reminds you when occurrences are due rather than auto-applying them. One occurrence can carry its own amount, or be skipped, without changing the template.</dd>
       <dt>Forecast</dt>
       <dd>Projects account and spendable balances 1 week to 2 years forward. Set the horizon above the chart; expand Saved profiles, Accounts or Chart &amp; assumptions to adjust the projection. Open sections stay open as you change the horizon. Save configurations as profiles for quick switching.</dd>
       <dt>Net Worth</dt>
@@ -8035,7 +8242,10 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>Can I edit a recurring template after I've already applied some occurrences?</summary>
-    <div>Yes. Editing a recurring template changes future occurrences only — already-applied transactions stay exactly as they were recorded. If you need to edit a past occurrence, find it on the Transactions tab and edit the individual record.</div>
+    <div>Yes. Editing a recurring template changes every unrecorded occurrence — already-applied transactions stay exactly as they were recorded. If you need to edit a past occurrence, find it on the Transactions tab and edit the individual record. To change just one future occurrence, use Occurrences instead (next question).</div>
+    </details>
+    <details class="faq"><summary>Can one occurrence of a recurring entry have a different amount, or be skipped?</summary>
+    <div>Yes. The <strong>Occurrences</strong> button on the entry's row (Recurring tab) lists its next dates. Type a different amount on a row and that date alone uses it — the template and every other date keep the template amount; set it back to the template amount to remove it. The skip button on a row skips that one date without touching the dates around it (unlike the row's skip button on the Recurring tab, which skips the <em>next</em> occurrence). The forecast, the Dashboard's Upcoming panel and the due review all use the date's own amount and leave a skipped date out, the Recurring tab marks a changed next occurrence with <em>this time</em>, and a hand-typed transaction is matched against the date's own amount. Once an occurrence is recorded or skipped and the entry's history moves past it, its custom amount is dropped — the recorded transaction carries it.</div>
     </details>
 
     <details class="faq"><summary>Why can Spendable today differ from the projected starting balance?</summary>

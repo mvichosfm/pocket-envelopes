@@ -53,6 +53,15 @@ because those are the ones worth re-checking your own figures after.
   that money; until now the forecast kept spending the full budget out of the emptied
   envelope, so only part of a return reached the projected low. The Return dialog shows
   the projected low before and after.
+- **(accounting)** One occurrence of a recurring entry can now have its own amount, or be
+  skipped, without changing the template. The new **Occurrences** button on a Recurring row
+  lists the next dates: type a different amount on one and only that date uses it (set it back
+  to the template amount to remove it); skip one date and the dates around it are untouched,
+  unlike the row's skip button, which skips the next occurrence. The forecast, the Dashboard's
+  Upcoming panel and due total, the due review, apply-now and hand-typed matching all use the
+  date's own amount and leave a skipped date out; the Recurring tab marks a changed next
+  occurrence with "this time". A changed amount on a due row left for later is kept for that
+  date. Envelope allowance netting still uses the template's monthly rate.
 - **(accounting)** Projected envelope spending is spread evenly over the first 28 days of
   every month, with nothing spent on the 29th to 31st, so each month spends exactly one
   month's budget at the same daily rhythm whatever its length. Previously each month used

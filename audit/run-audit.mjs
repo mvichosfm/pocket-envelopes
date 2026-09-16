@@ -34,6 +34,9 @@
 //          absorbs an overspend for free, and returns null for an envelope the
 //          selected accounts do not hold
 //        - envelope-only adjustments are not cashflow
+//        - one occurrence of a recurring can carry its own amount or be skipped: every
+//          reader (pending, due, forecast, hand-log matching) honours it, the template and
+//          its allowance netting do not move, resolved dates are pruned, bad entries sanitised
 //   4. sw.js compiles, never intercepts /data, and keeps the shell network-first.
 //   5. serve.py compiles under the local Python (py -3 on Windows, python3 elsewhere).
 //      Skipped with a WARN if no Python is found.
@@ -155,7 +158,9 @@ function logicApi() {
     "txEnvelopePortion", "txEnvelopeDelta", "accountById", "envelopeById",
     "balanceCacheBegin", "balanceCacheEnd", "_balCacheLive", "findHandLoggedMatch",
     "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
-    "dueRecurringOccurrences", "isSkippedOccurrence", "recurringToTx", "recurringResumeDate",
+    "dueRecurringOccurrences", "isSkippedOccurrence", "firstPendingOccurrence", "occurrenceAmount",
+    "setOccurrenceOverride", "setOccurrenceSkipped", "pruneResolvedOccurrences", "sanitizeRecurringOverrides",
+    "validISODate", "recurringToTx", "recurringResumeDate",
     "recurringMonthlyEquiv", "recurringMonthlyForEnvelope", "recurringCoversEnvelope", "recurringCoversAllowanceOf",
     "withProbeTxs", "isReturnTx",
     "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
@@ -621,6 +626,84 @@ if (api) {
     api.setData(fixture(300, [ret(300, "2026-09-16", "Balance adjustment")]));
     assert.ok(low() - plain < 300 - 0.005, "a balance adjustment is not a return");
     assert.equal(anchor().smoothDays, 28);
+  });
+
+  check("One occurrence can carry its own amount or be skipped; every reader honours it, the template does not move", () => {
+    api.setToday("2026-09-16");
+    // 1. the accessor: an override for that date only, unreadable values fall back
+    const yearly = { id: "xmas", name: "Xmas", type: "expense", amount: 2500, schedule: "yearly", startDate: "2025-12-20", accountId: "cash", envelopeId: "gifts", active: true, lastAppliedDate: "2025-12-20" };
+    assert.equal(api.occurrenceAmount(yearly, "2026-12-20"), 2500);
+    yearly.overrides = { "2026-12-20": { amount: 2000 } };
+    assert.equal(api.occurrenceAmount(yearly, "2026-12-20"), 2000);
+    assert.equal(api.occurrenceAmount(yearly, "2027-12-20"), 2500, "later years keep the template amount");
+    assert.equal(api.occurrenceAmount({ amount: 9, overrides: { d: { amount: 0 } } }, "d"), 9);
+    assert.equal(api.occurrenceAmount({ amount: 9, overrides: { d: { amount: "x" } } }, "d"), 9);
+    // 2. set / clear: equal to the template (to the cent) removes the entry, empty map deleted
+    const r = { amount: 2500 };
+    assert.equal(api.setOccurrenceOverride(r, "d", 2000), true);
+    assert.equal(r.overrides.d.amount, 2000);
+    assert.equal(api.setOccurrenceOverride(r, "d", 2000.004), false, "same amount to the cent is no change");
+    assert.equal(api.setOccurrenceOverride(r, "d", 2500), true);
+    assert.equal(r.overrides, undefined, "back to the template removes the entry and the map");
+    assert.equal(api.setOccurrenceOverride(r, "d", 2500.004), false);
+    assert.equal(api.setOccurrenceOverride(r, "d", NaN), false);
+    // 3. skip / unskip one date; the pending, due and FORECAST readers all leave it out
+    api.setData({
+      accounts: [{ id: "cash", openingBalance: 1000, includeInNetWorth: true }],
+      envelopes: [{ id: "gifts", name: "Gifts", budgetAmount: 0, cadence: "monthly" }],
+      transactions: [], recurring: [yearly],
+    });
+    const dec20 = 14 + 31 + 30 + 20;   // 2026-12-20 is day 95 from 2026-09-16
+    let fc = api.forecastAccountBalances(["cash"], 120, { includeAllowances: false });
+    assert.equal(fc.dates[dec20], "2026-12-20");
+    assert.ok(Math.abs(fc.total[dec20 - 1] - 1000) < 0.005);
+    assert.ok(Math.abs(fc.total[dec20] - (1000 - 2000)) < 0.005, "the future loop books the date's own amount");
+    delete yearly.overrides;
+    fc = api.forecastAccountBalances(["cash"], 120, { includeAllowances: false });
+    assert.ok(Math.abs(fc.total[dec20] - (1000 - 2500)) < 0.005, "without an override the template amount is booked");
+    assert.equal(api.setOccurrenceSkipped(yearly, "2026-12-20", true), true);
+    assert.equal(api.setOccurrenceSkipped(yearly, "2026-12-20", true), false);
+    assert.equal(api.firstPendingOccurrence(yearly), "2027-12-20", "the pending scan steps over a skipped future date");
+    fc = api.forecastAccountBalances(["cash"], 120, { includeAllowances: false });
+    assert.ok(Math.abs(fc.total[120] - 1000) < 0.005, "a skipped future occurrence leaves the projection");
+    assert.equal(api.setOccurrenceSkipped(yearly, "2026-12-20", false), true);
+    assert.equal(yearly.skippedDates, undefined);
+    // 4. due rows carry the date's own amount and the idx-0 fold books it
+    const monthly = { id: "gym", name: "Gym", type: "expense", amount: 100, schedule: "monthly", startDate: "2026-01-05", accountId: "cash", active: true, lastAppliedDate: "2026-08-05", overrides: { "2026-09-05": { amount: 80 } } };
+    api.setData({ accounts: [{ id: "cash", openingBalance: 1000, includeInNetWorth: true }], envelopes: [], transactions: [], recurring: [monthly] });
+    const due = Array.from(api.dueRecurringOccurrences());
+    assert.equal(due.length, 1);
+    assert.equal(due[0].date, "2026-09-05");
+    assert.equal(due[0].amount, 80);
+    assert.ok(Math.abs(api.forecastAccountBalances(["cash"], 30, { includeAllowances: false }).total[0] - 920) < 0.005);
+    api.setOccurrenceSkipped(monthly, "2026-09-05", true);
+    assert.equal(api.dueRecurringOccurrences().length, 0, "a skipped due date is not offered");
+    api.setOccurrenceSkipped(monthly, "2026-09-05", false);
+    // 5. a hand-logged transaction is matched against the date's own amount
+    api.getData().transactions.push({ id: "h1", date: "2026-09-04", type: "expense", amount: 80, accountId: "cash" });
+    assert.equal(api.findHandLoggedMatch(monthly, "2026-09-05", new Set()).id, "h1");
+    api.getData().transactions[0].amount = 100;
+    assert.equal(api.findHandLoggedMatch(monthly, "2026-09-05", new Set()), null, "the template amount no longer matches an overridden date");
+    // 6. the prune: everything at or below the watermark goes, containers deleted when empty
+    const p = { amount: 100, lastAppliedDate: "2026-09-05", skippedDates: ["2026-08-05", "2026-10-05"], overrides: { "2026-08-05": { amount: 1 }, "2026-10-05": { amount: 2 } } };
+    api.pruneResolvedOccurrences(p);
+    assert.deepEqual(Array.from(p.skippedDates), ["2026-10-05"]);
+    assert.deepEqual(Object.keys(p.overrides), ["2026-10-05"]);
+    p.lastAppliedDate = "2026-10-05";
+    api.pruneResolvedOccurrences(p);
+    assert.equal(p.skippedDates, undefined);
+    assert.equal(p.overrides, undefined);
+    // 7. migrate's sanitiser drops what cannot be read and keeps what can, even behind the watermark
+    const s = { amount: 100, lastAppliedDate: "2026-09-05", overrides: { "2026-2-3": { amount: 5 }, nope: { amount: 5 }, "2026-10-05": { amount: -5 }, "2026-11-05": { amount: "x" }, "2026-12-05": null, "2026-08-05": { amount: 7 } } };
+    api.sanitizeRecurringOverrides(s);
+    assert.deepEqual(Object.keys(s.overrides), ["2026-08-05"]);
+    const t = { amount: 100, overrides: [1, 2] };
+    api.sanitizeRecurringOverrides(t);
+    assert.equal(t.overrides, undefined);
+    // 8. allowance netting still uses the template's monthly rate
+    api.setData({ accounts: [], envelopes: [{ id: "gifts", name: "Gifts", budgetAmount: 300, cadence: "monthly" }], transactions: [],
+      recurring: [{ ...yearly, overrides: { "2026-12-20": { amount: 2000 } } }] });
+    assert.ok(Math.abs(api.recurringMonthlyForEnvelope(api.getData().envelopes[0]) - 2500 / 12) < 0.005);
   });
 
   check("Move funds probe: transfers leave data untouched and move spendable only across the zero floor", () => {

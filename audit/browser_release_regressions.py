@@ -157,12 +157,38 @@ class ReleaseRegressions(unittest.TestCase):
         for kind in ('expense','income','transfer-account','transfer-envelope'):
             with self.subTest(kind=kind):
                 self.reset();p=self.page
-                p.evaluate("type=>Object.assign(data.recurring[0],{type,active:false,schedule:'custom-months',months:[1,4,12],tag:'Unlisted',notes:'Copy notes',skippedDates:['2030-01-01'],fromAccountId:'a',toAccountId:'b',fromEnvelopeId:'e',toEnvelopeId:'f'})",kind)
+                p.evaluate("type=>Object.assign(data.recurring[0],{type,active:false,schedule:'custom-months',months:[1,4,12],tag:'Unlisted',notes:'Copy notes',skippedDates:['2030-01-01'],overrides:{'2030-04-01':{amount:1}},fromAccountId:'a',toAccountId:'b',fromEnvelopeId:'e',toEnvelopeId:'f'})",kind)
                 p.evaluate('render()');before=self.state()
                 p.locator('[data-dup-rec="r"]').click();p.get_by_role('button',name='Cancel',exact=True).click();self.assertEqual(self.state(),before)
                 p.locator('[data-dup-rec="r"]').click();p.locator('#r_start').fill('2030-01-01');p.locator('#r_save').click()
-                self.assertTrue(p.evaluate("""() => {const [a,b]=data.recurring;return a.id!==b.id && b.lastAppliedDate==='2029-12-31' && !b.skippedDates && b.active===false && b.type===a.type && b.tag===a.tag && b.notes===a.notes && JSON.stringify(b.months)===JSON.stringify(a.months)}"""))
+                self.assertTrue(p.evaluate("""() => {const [a,b]=data.recurring;return a.id!==b.id && b.lastAppliedDate==='2029-12-31' && !b.skippedDates && !b.overrides && b.active===false && b.type===a.type && b.tag===a.tag && b.notes===a.notes && JSON.stringify(b.months)===JSON.stringify(a.months)}"""))
                 p.evaluate('performUndo()');self.assertEqual(self.state(),before)
+
+    def test_occurrences_dialog_changes_one_date_only(self):
+        p=self.page;before=self.state()
+        dates=p.evaluate('upcomingOccurrenceDates(data.recurring[0],3)')
+        # one date gets its own amount, the next is skipped; the template is untouched
+        p.locator('[data-occ-rec="r"]').click()
+        p.locator(f'[data-occ-amt="{dates[0]}"]').fill('75');p.locator(f'[data-occ-skip="{dates[1]}"]').click();p.locator('#occSave').click()
+        self.assertEqual(p.evaluate('JSON.stringify([data.recurring[0].amount,data.recurring[0].overrides,data.recurring[0].skippedDates])'),
+                         f'[50,{{"{dates[0]}":{{"amount":75}}}},["{dates[1]}"]]')
+        self.assertEqual(p.evaluate('firstPendingOccurrence(data.recurring[0])'),dates[0])
+        self.assertIn('this time',p.locator('#main table tbody tr').first.inner_text())
+        self.assertTrue(p.evaluate(f"""() => {{const fc=forecastAccountBalances(['a'],120,{{includeAllowances:false}});
+            const i=fc.dates.indexOf('{dates[0]}'),j=fc.dates.indexOf('{dates[1]}');
+            return i>0 && j>0 && Math.abs(fc.total[i-1]-fc.total[i]-75)<0.005 && Math.abs(fc.total[j-1]-fc.total[j])<0.005;}}"""),
+            'the forecast books the custom amount on its date and nothing on the skipped one')
+        p.evaluate('performUndo()');self.assertEqual(self.state(),before)
+        # back to the template amount removes the entry, unskip removes the date; an unchanged form takes no snapshot
+        p.locator('[data-occ-rec="r"]').click();p.locator(f'[data-occ-amt="{dates[0]}"]').fill('75');p.locator(f'[data-occ-skip="{dates[1]}"]').click();p.locator('#occSave').click()
+        p.locator('[data-occ-rec="r"]').click();p.locator(f'[data-occ-amt="{dates[0]}"]').fill('50');p.locator(f'[data-occ-skip="{dates[1]}"]').click();p.locator('#occSave').click()
+        self.assertEqual(self.state(),before)
+        undo_len=p.evaluate('undoStack.length')
+        p.locator('[data-occ-rec="r"]').click();p.locator('#occSave').click()
+        self.assertEqual(p.evaluate('undoStack.length'),undo_len)
+        # a non-evaluating amount refuses the save and leaves the budget untouched
+        p.locator('[data-occ-rec="r"]').click();p.locator(f'[data-occ-amt="{dates[0]}"]').fill('12+');p.locator('#occSave').click()
+        self.assertEqual(self.state(),before);p.evaluate('closeModal()')
 
     def test_invalid_locale_rejected_and_saved_locale_falls_back(self):
         p=self.page;p.evaluate('activeView="settings";render()');before=self.state()
