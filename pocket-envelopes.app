@@ -1865,6 +1865,12 @@ const archSuffix = x => x.archived ? ' (archived)' : '';
 // Payees the app books on its own; they are bookkeeping, not somewhere the
 // user shops, so they stay out of the payee picker and out of fuzzy matching.
 const BOOKKEEPING_PAYEES = new Set(['Envelope refill', 'Close-out adjustment', 'Close-out sweep', 'Market adjustment']);
+// The payee "Return to spendable" books. The forecast reads it (decision #59):
+// a return dated this month also removes that amount from the envelope's
+// remaining projected spending, because returning money says the envelope
+// will not spend it. Keep the string in one place.
+const RETURN_PAYEE = 'Return to spendable';
+function isReturnTx(tx) { return tx.type === 'expense' && tx.accountId == null && tx.payee === RETURN_PAYEE; }
 
 // Distinct user-typed payees, most recently used first, for the tx form's
 // <datalist>. Capped so a years-old file doesn't ship a 5,000-option list.
@@ -2767,10 +2773,24 @@ function forecastAccountBalances(accountIds, days, opts) {
       if (!rec.envelopeId || !recurringCoversAllowanceOf(rec, rec.envelopeId)) continue;
       (coveringRecs[rec.envelopeId] = coveringRecs[rec.envelopeId] || new Set()).add(rec.id);
     }
+    // Money RETURNED from an envelope this month counts against the same
+    // remainder (decision #59). "Return to spendable" is the user saying the
+    // envelope will not spend that money; without this the projection kept
+    // spending the full budget out of an envelope the user had just emptied,
+    // so a return of 1000 reached the low as 321 — the reservation the
+    // envelope would have carried on that date — instead of 1000. Only the
+    // Return dialog's own payee counts: a close-out reset or a balance
+    // adjustment says nothing about this month's spending.
     const spentThisMonth = {};
+    const returnedThisMonth = {};
     for (const tx of data.transactions) {
       if (tx.date < monthStartKey || tx.date > todayKey) continue;
-      if (tx.type !== 'expense' || !isCashflowTx(tx)) continue;
+      if (tx.type !== 'expense') continue;
+      if (isReturnTx(tx)) {
+        if (tx.envelopeId) returnedThisMonth[tx.envelopeId] = (returnedThisMonth[tx.envelopeId] || 0) + Math.abs(tx.amount);
+        continue;
+      }
+      if (!isCashflowTx(tx)) continue;
       for (const e of data.envelopes) {
         if (tx.fromRecurringId && coveringRecs[e.id] && coveringRecs[e.id].has(tx.fromRecurringId)) continue;
         const portion = txEnvelopePortion(tx, e.id);
@@ -2801,12 +2821,13 @@ function forecastAccountBalances(accountIds, days, opts) {
       allowanceInfo.totalMonthly += monthly;
       const accSeries = series[acc.id];
       const eSeries = envSeries[env.id];
-      // Whatever is left of THIS month's budget for this envelope, spread over
-      // the days that remain. Floored at zero: an envelope already spent past
-      // its monthly budget projects no further allowance (the overspend is
-      // real and already in the balances) rather than a negative drain that
-      // would quietly credit the account back.
-      const curLeft = Math.max(0, monthly - (spentThisMonth[env.id] || 0));
+      // Whatever is left of THIS month's budget for this envelope — after what
+      // it has spent and what the user has returned from it this month —
+      // spread over the days that remain. Floored at zero: an envelope already
+      // spent past its monthly budget projects no further allowance (the
+      // overspend is real and already in the balances) rather than a negative
+      // drain that would quietly credit the account back.
+      const curLeft = Math.max(0, monthly - (spentThisMonth[env.id] || 0) - (returnedThisMonth[env.id] || 0));
       const curRate = curSpendDays > 0 ? curLeft / curSpendDays : 0;
       for (let i = 1; i <= days; i++) {
         const drain = inCurrentMonth[i] ? (curDrainDay[i] ? curRate : 0) : monthly * dayFactor[i];
@@ -4549,7 +4570,8 @@ function returnEnvelopeFunds(id) {
     <p style="color:var(--text-dim);margin-top:-4px;">
       Current balance: <strong style="color:var(--text);">${fmt(current)}</strong>.
       Un-earmarks money from this envelope and returns it to spendable cash —
-      no account is touched. Books a one-sided expense dated today.
+      no account is touched. Books a one-sided expense dated today, and the
+      forecast stops projecting that amount as this month's spending for this envelope.
     </p>
     <div class="field"><label>Amount to return</label>
       <input type="text" inputmode="decimal" id="ret_amt" value="${current.toFixed(2)}"
@@ -4575,7 +4597,18 @@ function returnEnvelopeFunds(id) {
     if (isNaN(amt)) { _retPv.textContent = '⚠ invalid expression'; return; }
     if (amt <= 0) { _retPv.textContent = '⚠ amount must be positive'; return; }
     if (amt > current + 0.005) { _retPv.textContent = `⚠ exceeds current balance of ${fmt(current)}`; return; }
-    _retPv.textContent = `→ new envelope balance: ${fmt(current - amt)} · spendable rises by ${fmt(amt)}`;
+    let text = `→ new envelope balance: ${fmt(current - amt)} · spendable rises by ${fmt(amt)}`;
+    // The projected low, re-forecast with the return as a probe row (decision #27's
+    // rule: never predict it arithmetically). Over the Dashboard's account set.
+    const ids = forecastSelectedAccountIds();
+    if (ids.length) {
+      const fcDays = forecastState.days || 90, fcOpts = forecastOpts();
+      const before = spendableLow(forecastAccountBalances(ids, fcDays, fcOpts));
+      const probe = { id: '__returnProbe', date: todayISO(), type: 'expense', amount: amt, accountId: null, envelopeId: env.id, payee: RETURN_PAYEE };
+      const after = withProbeTxs([probe], () => spendableLow(forecastAccountBalances(ids, fcDays, fcOpts)));
+      text += ` · projected low ${fmt(before.min)} → ${fmt(after.min)}`;
+    }
+    _retPv.textContent = text;
   };
   _retIn.addEventListener('input', _updateRetPreview);
   _updateRetPreview();
@@ -4599,7 +4632,7 @@ function returnEnvelopeFunds(id) {
       amount: amt,
       accountId: null,
       envelopeId: env.id,
-      payee: 'Return to spendable',
+      payee: RETURN_PAYEE,
       notes: userNotes || `Un-earmarked from ${env.name}`
     });
     saveDirty(); closeModal(); render();
@@ -8017,7 +8050,7 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>Fund the month vs. Fund vs. Move funds vs. Return — which do I use?</summary>
-    <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button sets money aside in just that envelope, mid-month, out of spendable cash — the reserve included. Its dialog asks which account the money sits in (that account's forecast supplies the figures and is noted on the entry; a household envelope can opt to be <em>backed</em> by it from then on), shows spendable today and the projected low, and <strong>Use projected low</strong> fills the most you can set aside before that low reaches zero. For the reserve that is the projected low itself, which is how you park a month's surplus: the Dashboard's <strong>Fund reserve</strong> button opens the same dialog with that amount filled in. <strong>Move funds</strong> shifts money from one envelope to another; no account changes, and its dialog shows what the move does to spendable today and the projected low before you confirm. <strong>Return</strong> un-earmarks money from an envelope back to spendable cash. All of these only move virtual allocations — your account totals stay the same.</div>
+    <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button sets money aside in just that envelope, mid-month, out of spendable cash — the reserve included. Its dialog asks which account the money sits in (that account's forecast supplies the figures and is noted on the entry; a household envelope can opt to be <em>backed</em> by it from then on), shows spendable today and the projected low, and <strong>Use projected low</strong> fills the most you can set aside before that low reaches zero. For the reserve that is the projected low itself, which is how you park a month's surplus: the Dashboard's <strong>Fund reserve</strong> button opens the same dialog with that amount filled in. <strong>Move funds</strong> shifts money from one envelope to another; no account changes, and its dialog shows what the move does to spendable today and the projected low before you confirm. <strong>Return</strong> un-earmarks money from an envelope back to spendable cash, and the forecast stops projecting that amount as the envelope's spending this month. All of these only move virtual allocations — your account totals stay the same.</div>
     </details>
     <details class="faq"><summary>Why did Move funds change my spendable or projected low? No cash moved.</summary>
     <div>Spendable is cash minus the money set aside in envelopes. <strong>Spendable today</strong> only moves when an envelope crosses zero: moving more out of an envelope than it holds lowers spendable by the shortfall (only its positive balance was earmarked), and covering an overspent envelope from another raises spendable by the overspend covered (that overspend had already come out of spendable, and the other envelope now pays for it). The <strong>projected low</strong>, with the default setting that Forecast assumes <strong>Fund the month</strong> on the 1st, does not move for a transfer between two positive envelopes: every budgeted envelope is topped up each month, so its money is as kept as the reserve's, and the only exception is a <em>reset</em> envelope, which hands its leftover back to spendable at month end. If you switch refills off in Forecast, the projection treats a budgeted envelope's balance as pre-paid spending that frees up inside the horizon while an envelope with no budget (the reserve, an archived envelope) keeps its balance — then reserve → Food raises the low by the amount moved and Food → reserve or a close-out sweep lowers it. The Move funds dialog shows both figures before and after, with the reason.</div>

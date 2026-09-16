@@ -48,6 +48,11 @@ because those are the ones worth re-checking your own figures after.
 - The Dashboard chip, the Forecast caption and the Fund and Move funds dialogs all state
   which reading is in force, and the Move funds reason explains a shortfall or a reset
   release when a move does change the low with refills on.
+- **(accounting)** Returning money from an envelope also removes it from that envelope's
+  projected spending for the current month. Returning says the envelope will not spend
+  that money; until now the forecast kept spending the full budget out of the emptied
+  envelope, so only part of a return reached the projected low. The Return dialog shows
+  the projected low before and after.
 - **(accounting)** Projected envelope spending is spread evenly over the first 28 days of
   every month, with nothing spent on the 29th to 31st, so each month spends exactly one
   month's budget at the same daily rhythm whatever its length. Previously each month used

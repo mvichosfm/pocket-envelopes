@@ -157,7 +157,7 @@ function logicApi() {
     "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
     "dueRecurringOccurrences", "isSkippedOccurrence", "recurringToTx", "recurringResumeDate",
     "recurringMonthlyEquiv", "recurringMonthlyForEnvelope", "recurringCoversEnvelope", "recurringCoversAllowanceOf",
-    "withProbeTxs",
+    "withProbeTxs", "isReturnTx",
     "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
@@ -168,6 +168,7 @@ function logicApi() {
     "var data = null;",
     "let _balCache = null;",
     "const HAND_LOG_WINDOW_DAYS = 3;",
+    "const RETURN_PAYEE = 'Return to spendable';",
     "const uid = () => 'audit-id';",
     "const tagColor = () => 'grey', themeColor = () => 'grey';",
     "const allTags = () => data.settings?.tags || [];",
@@ -586,6 +587,40 @@ if (api) {
     const off = api.forecastAccountBalances(["cash"], 60, { includeAllowances: false });
     assert.ok(Math.abs(api.spendableLow(off).min - 700) < 0.005);
     assert.equal(off.allowanceInfo.assumeRefill, false);
+  });
+
+  check("Returning money from an envelope also removes it from this month's projected spending", () => {
+    api.setToday("2026-09-16");
+    const fixture = (balance, extraTx = []) => ({
+      accounts: [{ id: "cash", openingBalance: 1000, includeInNetWorth: true }],
+      envelopes: [{ id: "food", name: "Food", openingBalance: balance, budgetAmount: 300, cadence: "monthly" }],
+      transactions: extraTx, recurring: [],
+    });
+    const ret = (amount, date = "2026-09-16", payee = "Return to spendable") =>
+      ({ id: "r-" + amount + date, date, type: "expense", amount, accountId: null, envelopeId: "food", payee });
+    const low = () => api.spendableLow(api.forecastAccountBalances(["cash"], 60, { includeAllowances: true })).min;
+    const anchor = () => api.forecastAccountBalances(["cash"], 60, { includeAllowances: true }).allowanceInfo.calendarAnchor;
+    // Food holds exactly its budget, nothing spent yet: returning all of it raises today AND the low by 300.
+    api.setData(fixture(300));
+    const base = { today: api.spendableToday(["cash"]), low: low() };
+    api.setData(fixture(300, [ret(300)]));
+    assert.equal(api.spendableToday(["cash"]) - base.today, 300);
+    assert.ok(Math.abs(low() - base.low - 300) < 0.005, `return of the whole budget: low +300, got ${low() - base.low}`);
+    // Returning a surplus above the budget still only cancels this month's projection (floored at zero)
+    // and every returned euro reaches the low.
+    api.setData(fixture(500));
+    const surplus = low();
+    api.setData(fixture(500, [ret(500)]));
+    assert.ok(Math.abs(low() - surplus - 500) < 0.005, `return above the budget: low +500, got ${low() - surplus}`);
+    // A return dated last month, or a balance adjustment, does not touch this month's projection:
+    // the low rises only by the reservation the envelope would have carried at the low date.
+    api.setData(fixture(300));
+    const plain = low();
+    api.setData(fixture(300, [ret(300, "2026-08-20")]));
+    assert.ok(low() - plain < 300 - 0.005, "last month's return is not this month's signal");
+    api.setData(fixture(300, [ret(300, "2026-09-16", "Balance adjustment")]));
+    assert.ok(low() - plain < 300 - 0.005, "a balance adjustment is not a return");
+    assert.equal(anchor().smoothDays, 28);
   });
 
   check("Move funds probe: transfers leave data untouched and move spendable only across the zero floor", () => {
