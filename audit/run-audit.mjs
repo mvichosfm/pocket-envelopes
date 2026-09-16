@@ -157,7 +157,8 @@ function logicApi() {
     "todayISO", "daysBetween", "validateData", "evalAmount", "txAccountDelta",
     "txEnvelopePortion", "txEnvelopeDelta", "accountById", "envelopeById",
     "balanceCacheBegin", "balanceCacheEnd", "_balCacheLive", "findHandLoggedMatch",
-    "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
+    "accountBalance", "envelopeBalance", "envMonthlyEquiv", "envelopeSuspendedBudget", "recurringOccurrences",
+    "recurringBudgetLineOf", "recurringSuspendsBudgetOf",
     "dueRecurringOccurrences", "isSkippedOccurrence", "firstPendingOccurrence", "occurrenceAmount",
     "setOccurrenceOverride", "setOccurrenceSkipped", "pruneResolvedOccurrences", "sanitizeRecurringOverrides",
     "validISODate", "recurringToTx", "recurringResumeDate",
@@ -265,7 +266,53 @@ if (api) {
     assert.equal(api.recurringMonthlyForEnvelope(env), 0, "ended last month → no longer nets");
     api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ endDate: iso(new Date(t.getFullYear(), t.getMonth() + 2, 1)) })] });
     assert.equal(api.recurringMonthlyForEnvelope(env), 300, "ending in a future month still nets this month");
-    assert.equal(api.recurringCoversEnvelope(mk({ active: false })), false);
+    // a paused template is a stream that has stopped for now (decision #62); it suspends its budget line
+    // instead of netting the drain (decision #63)
+    assert.equal(api.recurringCoversEnvelope(mk({ active: false })), true);
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ active: false })] });
+    assert.equal(api.recurringMonthlyForEnvelope(env), 0, "a paused monthly does not net the drain");
+    assert.equal(api.envelopeSuspendedBudget(env), 300, "…it suspends its budget line");
+    assert.equal(api.envMonthlyEquiv(env), 0, "…so the envelope's effective budget is what is left, floored at zero");
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ active: false, amount: 50 })] });
+    assert.equal(api.envMonthlyEquiv(env), 250);
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ active: false, amount: 50, schedule: "once" })] });
+    assert.equal(api.envMonthlyEquiv(env), 300, "a paused one-off suspends nothing");
+    api.setData({ accounts: [], envelopes: [env], transactions: [], recurring: [mk({ active: false, amount: 50, type: "income" })] });
+    assert.equal(api.envMonthlyEquiv(env), 300, "a paused income suspends nothing");
+  });
+
+  check("Pausing a recurring expense suspends its budget line: the projection, spendable and the refill all drop by it", () => {
+    // A €50 monthly subscription inside a €300 rollover envelope. Active: the allowance drains 250, the
+    // occurrences book 50 and each 1st refills 300. Paused: the occurrences leave, the effective budget is
+    // 250, the allowance still drains 250, each 1st refills 250 — so the account line keeps every skipped
+    // 50 and spendable gains 50 on every future 1st (the month already funded keeps its 50 in the envelope).
+    const mk = (active) => ({
+      accounts: [{ id: "cash", openingBalance: 5000, includeInNetWorth: true }],
+      envelopes: [{ id: "fun", name: "Fun", openingBalance: 300, budgetAmount: 300, cadence: "monthly", rolloverPolicy: "rollover" }],
+      transactions: [],
+      recurring: [{ id: "sub", name: "Sub", type: "expense", amount: 50, schedule: "monthly", startDate: "2020-01-15",
+                    accountId: "cash", envelopeId: "fun", active, lastAppliedDate: api.todayISO() }],
+    });
+    const DAYS = 120;
+    api.setData(mk(true));  const on = api.forecastAccountBalances(["cash"], DAYS, { includeAllowances: true });
+    api.setData(mk(false)); const off = api.forecastAccountBalances(["cash"], DAYS, { includeAllowances: true });
+    const today = api.parseDate(api.todayISO());
+    const horizon = api.addDays(today, DAYS);
+    const skipped = Array.from(api.recurringOccurrences(mk(true).recurring[0], api.addDays(today, 1), horizon));
+    assert.ok(skipped.length >= 3, `expected at least three occurrences in ${DAYS} days, got ${skipped.length}`);
+    let firsts = 0; for (let i = 1; i <= DAYS; i++) if (api.addDays(today, i).getDate() === 1) firsts++;
+    const dTotal = off.total.at(-1) - on.total.at(-1), dSpend = off.spendable.at(-1) - on.spendable.at(-1);
+    assert.ok(Math.abs(dTotal - 50 * skipped.length) < 0.05, `total should rise by ${50 * skipped.length}, rose by ${dTotal}`);
+    assert.ok(Math.abs(dSpend - 50 * firsts) < 0.05, `spendable should rise by ${50 * firsts} (one 50 per future refill), rose by ${dSpend}`);
+    const drain = (fc) => fc.allowanceInfo.included.find(x => x.name === "Fun");
+    assert.deepEqual([drain(on).monthly, drain(on).covered], [250, 50], "active: 300 budget, 50 covered by occurrences");
+    assert.deepEqual([drain(off).monthly, drain(off).covered], [250, 0], "paused: 250 budget, nothing covered — never netted twice");
+    assert.equal(api.envMonthlyEquiv(mk(false).envelopes[0]), 250, "Fund the month and the refill read the suspended budget");
+    // Fund the month proposes the same figure the projection refills — in both of its modes
+    const fun = api.getData().envelopes[0];                       // data is still the paused set
+    assert.equal(api.envelopeFundSuggestion(fun, "month").suggested, 250, "month mode proposes the suspended budget");
+    assert.deepEqual([api.envelopeFundSuggestion(fun, "full").target, api.envelopeFundSuggestion(fun, "full").suggested], [250, 0],
+      "full mode tops up to the suspended budget (the envelope already holds 300)");
   });
 
   check("Forecast floors overspent envelopes instead of inflating spendable cash", () => {

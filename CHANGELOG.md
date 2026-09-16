@@ -7,6 +7,22 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **(accounting)** Pausing a recurring expense now **suspends its budget line**. Its
+  occurrences already left the projection, but the envelope it belongs to went on spending
+  its full budget, so the paused amount was simply spent as "other" allowance and neither
+  the forecast nor spendable moved. While an entry is paused, its monthly equivalent is
+  taken off its envelope's effective budget everywhere the budget is read — the Envelopes
+  tab (the card shows "(35.00 paused)" next to the budget, the tooltip names the entry),
+  Fund the month, close-out, Reports, and the forecast's allowance and monthly refill — so
+  the forecast, spendable and the projected low all rise by that amount per month. A posted
+  occurrence from before the pause still counts against its own line, not the allowance.
+  Delete an entry or give it an end date when it is gone for good.
+- Editing a recurring entry now shows its **next unrecorded occurrence** in the date box
+  (labelled "Next occurrence") instead of the date the series started, which on an old
+  template could be years back. Change it to move that and every later occurrence; leave
+  it and the series keeps its original schedule, so a save that only changes the amount
+  never shifts an end-of-month entry onto a shorter month's last day. A note under the box
+  says when the series started. Adding, duplicating and the history repair are unchanged.
 - **Fund envelope** replaces the envelope card's Fund button, which opened the generic
   transaction form (choosing an account there recorded real income). The new dialog
   sets money aside in any envelope — the reserve included — as the same one-sided

@@ -2186,10 +2186,28 @@ function envelopeBalance(env) {
 // Monthly-equivalent budget: an annual envelope of €600 contributes €50/month
 // to dashboard burn-rate totals and forecast smoothing. Monthly envelopes
 // contribute their full amount.
+//
+// NET OF SUSPENDED BUDGET LINES (decision #63). A paused expense recurring on
+// this envelope suspends the part of the budget it stands for: while a €35
+// subscription is paused the envelope's effective budget is €965 — here, and
+// therefore everywhere, because the Envelopes tab, Fund the month, close-out,
+// Reports and the forecast's allowance and refill all read this one function.
+// Floored at zero. `envelopeSuspendedBudget` says how much is suspended.
 function envMonthlyEquiv(e) {
   if (e.archived) return 0;   // out of the budget: no allowance, no totals, no close-out variance
   const b = e.budgetAmount || 0;
-  return e.cadence === "annual" ? b / 12 : b;
+  const full = e.cadence === "annual" ? b / 12 : b;
+  return Math.max(0, full - envelopeSuspendedBudget(e));
+}
+
+// The monthly equivalent of every PAUSED expense recurring that lives on this
+// envelope (decision #63): the part of its budget that is suspended.
+function envelopeSuspendedBudget(e) {
+  let s = 0;
+  for (const rec of data.recurring || []) {
+    if (recurringSuspendsBudgetOf(rec, e.id)) s += recurringMonthlyEquiv(rec);
+  }
+  return s;
 }
 
 // The reserve (emergency / catch-all) envelope, or null. At most one envelope
@@ -2509,8 +2527,20 @@ function recurringMonthlyEquiv(rec) {
 // full amount off the envelope's allowance forever — an applied one-off of
 // 5000 on a 300/mo envelope silenced that envelope's allowance in every
 // month (decision #50).
+//
+// PAUSED templates pass this test too (decisions #62 and #63): a paused
+// template is a stream that has stopped for now, not one that is gone. What
+// differs is the role — an ACTIVE expense stream nets its amount off the
+// envelope's allowance drain (`recurringCoversAllowanceOf`; its occurrences
+// are projected), a PAUSED one suspends its budget line instead
+// (`recurringSuspendsBudgetOf`, read by envMonthlyEquiv; nothing projected).
+// Before #62 this returned false for a paused template, so the allowance
+// drain grew by exactly what the occurrences had stopped booking and pausing
+// a €35 subscription moved the forecast by nothing (the author paused one
+// and saw no change, 2026-09-16). A template that is gone for good should be
+// deleted or given an end date.
 function recurringCoversEnvelope(rec) {
-  if (!rec || rec.active === false) return false;
+  if (!rec) return false;
   if (rec.schedule === 'once') return false;
   if (rec.endDate) {
     const t = new Date();
@@ -2520,9 +2550,12 @@ function recurringCoversEnvelope(rec) {
   return true;
 }
 
-// How much of this envelope's monthly budget is ALREADY modelled by active
-// recurring transactions, and so must not be double-counted as a forecasted
-// allowance outflow. Returns an amount, not a flag: this used to be boolean
+// How much of this envelope's monthly budget is ALREADY modelled by ACTIVE
+// recurring transactions as projected occurrences, and so must not be
+// double-counted as a forecasted allowance outflow. (A paused template is not
+// counted here: it has already left the budget through envMonthlyEquiv,
+// decision #63 — netting it here too would take it off twice.) Returns an
+// amount, not a flag: this used to be boolean
 // (`envelopeIsCoveredByRecurring`), so a single €50/mo subscription wiped out
 // a €300/mo envelope's entire allowance and the forecast under-projected
 // spending by €250 every month.
@@ -2535,8 +2568,20 @@ function recurringCoversEnvelope(rec) {
 // envelope still spent its full budget, and a recurring income on the
 // envelope was optimistic twice over (it adds the cash AND used to reduce
 // the drain). Both used to be counted here.
-function recurringCoversAllowanceOf(rec, envId) {
+// The budget line a template stands for inside an envelope: an expense stream
+// (active or paused) on that envelope. Split by state below. The forecast's
+// spent-this-month exclusion uses the union, because a posted occurrence of a
+// template that was paused later in the month is still its own line's money,
+// not this month's allowance.
+function recurringBudgetLineOf(rec, envId) {
   return recurringCoversEnvelope(rec) && rec.type === 'expense' && rec.envelopeId === envId;
+}
+function recurringCoversAllowanceOf(rec, envId) {
+  return recurringBudgetLineOf(rec, envId) && rec.active !== false;
+}
+// A paused expense stream suspends its budget line (decision #63).
+function recurringSuspendsBudgetOf(rec, envId) {
+  return recurringBudgetLineOf(rec, envId) && rec.active === false;
 }
 function recurringMonthlyForEnvelope(env) {
   let covered = 0;
@@ -2849,10 +2894,11 @@ function forecastAccountBalances(accountIds, days, opts) {
     const todayKey = todayISO();
     const coveringRecs = {};   // envelopeId -> Set of recurring ids netted off below
     for (const rec of data.recurring) {
-      // Same predicate as recurringMonthlyForEnvelope: expense templates only
-      // (decision #56), so what is netted off the allowance and what is skipped
-      // from this month's spend are always the same set.
-      if (!rec.envelopeId || !recurringCoversAllowanceOf(rec, rec.envelopeId)) continue;
+      // Expense templates only (decision #56). The active ones are netted off
+      // the allowance below; the paused ones have left the budget through
+      // envMonthlyEquiv (decision #63). Either way a posted occurrence is its
+      // own line's money, not this month's allowance, so both are skipped here.
+      if (!rec.envelopeId || !recurringBudgetLineOf(rec, rec.envelopeId)) continue;
       (coveringRecs[rec.envelopeId] = coveringRecs[rec.envelopeId] || new Set()).add(rec.id);
     }
     // Money RETURNED from an envelope this month counts against the same
@@ -2882,8 +2928,10 @@ function forecastAccountBalances(accountIds, days, opts) {
     for (const env of data.envelopes) {
       const budgeted = envMonthlyEquiv(env);
       if (budgeted <= 0) continue;
-      // Partial coverage: subtract only what active recurrings already model,
-      // not the whole allowance. A €50/mo subscription on a €300/mo envelope
+      // Partial coverage: subtract only what ACTIVE recurrings already model
+      // as projected occurrences, not the whole allowance (a paused one is
+      // already out of `budgeted`, decision #63). A €50/mo
+      // subscription on a €300/mo envelope
       // used to zero the entire allowance, under-projecting spending by €250 a
       // month on both the total and spendable lines.
       const covered = recurringMonthlyForEnvelope(env);
@@ -4260,8 +4308,13 @@ function envelopeCard(e, bal, spent) {
   // says what's left in the envelope; this says how the month is going.
   const monthly = envMonthlyEquiv(e);
   const left = monthly - (spent || 0);
+  // A paused recurring on this envelope suspends its budget line (decision #63): the card says so next to the
+  // budget, and the tooltip names the paused entries.
+  const suspended = e.isReserve || e.archived ? 0 : envelopeSuspendedBudget(e);
+  const suspendedNote = suspended > 0
+    ? ` <span class="micro" title="${esc(data.recurring.filter(r => recurringSuspendsBudgetOf(r, e.id)).map(r => r.name).join(', '))} paused">(${fmt(suspended)} paused)</span>` : '';
   const monthLine = e.isReserve ? '' : `<div class="ev-month">
-      <span>Spent <strong>${fmt(spent || 0)}</strong>${monthly > 0 ? ` of ${fmt(monthly)}` : ''} this month</span>
+      <span>Spent <strong>${fmt(spent || 0)}</strong>${monthly > 0 || suspended > 0 ? ` of ${fmt(monthly)}${suspendedNote}` : ''} this month</span>
       ${monthly > 0 ? `<span class="${left < 0 ? 'over' : ''}">${left < 0 ? fmt(-left) + ' over budget' : fmt(left) + ' of budget left'}</span>` : ''}
     </div>`;
   const isAnnual = e.cadence === "annual";
@@ -4917,16 +4970,21 @@ function fundEnvelope(envelopeId, opts) {
 // and a rollover envelope is free to accumulate — that is what rollover is for.
 function envelopeFundSuggestion(env, mode) {
   const bal = envelopeBalance(env);
-  const budget = env.budgetAmount || 0;
+  // The budget net of any paused recurring's suspended line (decision #63), read through the one
+  // chokepoint so this proposal and the forecast's assumed refill are the same figure. This used to
+  // read env.budgetAmount directly, which would have proposed the full €1000 while the projection
+  // refilled €965.
+  const monthly = envMonthlyEquiv(env);
+  const budget = env.cadence === "annual" ? monthly * 12 : monthly;
   if (mode === "full") {
     return { bal, target: budget, suggested: Math.max(0, budget - bal) };
   }
   // mode === "month"
   if (env.cadence === "annual") {
     const headroom = Math.max(0, budget - bal);
-    return { bal, target: budget, suggested: Math.max(0, Math.min(budget / 12, headroom)) };
+    return { bal, target: budget, suggested: Math.max(0, Math.min(monthly, headroom)) };
   }
-  return { bal, target: budget, suggested: Math.max(0, budget) };
+  return { bal, target: budget, suggested: Math.max(0, monthly) };
 }
 
 function refillEnvelopes() {
@@ -6679,6 +6737,13 @@ function editRecurring(id, { duplicate = false } = {}) {
   }
   const editing = !!id && !duplicate;
   const needsHistoryRepair = editing && !validISODate(r.lastAppliedDate);
+  // Editing shows the NEXT unrecorded occurrence in the date box, not the series' original start (decision
+  // #61): on a long-running template the anchor is years old and the next date is the one worth moving. An
+  // untouched box keeps startDate as stored (see the save handler), so a Jan-31 anchor is never re-anchored
+  // to a clamped Feb-28 by a save that only changed the amount. A history repair shows the real start: its
+  // hint asks for "the day before the start date".
+  const nextPending = editing && !needsHistoryRepair ? firstPendingOccurrence(r) : null;
+  const shownStart = nextPending || r.startDate || todayISO();
   openModal(`
     <h2>${duplicate ? 'Duplicate' : editing ? 'Edit' : 'Add'} recurring</h2>
     ${duplicate ? '<p class="micro">Review the start date before adding. The copy has no payment, skip or custom-amount history; past dates can create overdue occurrences.</p>' : ''}
@@ -6711,8 +6776,9 @@ function editRecurring(id, { duplicate = false } = {}) {
           <option value="once" ${r.schedule==='once'?'selected':''}>One-time future</option>
         </select>
       </div>
-      <div class="field"><label>Start / on</label>
-        <input type="date" id="r_start" value="${r.startDate||todayISO()}"></div>
+      <div class="field"><label>${nextPending ? 'Next occurrence' : 'Start / on'}</label>
+        <input type="date" id="r_start" value="${shownStart}">
+        ${nextPending && nextPending !== r.startDate ? `<p class="micro">Series started ${fmtDate(r.startDate)}. Leave the date as it is to keep that schedule; change it to move this and every later occurrence.</p>` : ''}</div>
     </div>
     <div class="field" id="r_months_wrap" style="display:${r.schedule==='custom-months'?'':'none'}">
       <label>Months (1-12, comma separated)</label>
@@ -6787,6 +6853,8 @@ function editRecurring(id, { duplicate = false } = {}) {
       tag: document.getElementById("r_tag").value || undefined,
       active: r.active !== false
     };
+    // The box showed the next occurrence; left untouched, the stored anchor stays (decision #61).
+    if (nextPending && out.startDate === nextPending) out.startDate = r.startDate;
     if (!out.name) { toast("Name required"); return; }
     if (!out.amount) { toast("Amount required"); return; }
     if (!validISODate(out.startDate)) { toast("A valid start date is required", 3000, 'error'); document.getElementById('r_start').focus(); return; }
