@@ -19,6 +19,40 @@ because those are the ones worth re-checking your own figures after.
   exactly zero. Two command-palette entries do the same from the keyboard.
 - The audit checks the solver: the low itself for the reserve, low plus overspend for
   an overspent envelope, and no answer for an envelope the selected accounts do not hold.
+- **(accounting)** Only an expense recurring counts as covering part of an envelope's
+  allowance. A recurring envelope-to-envelope transfer moves no cash, yet its destination
+  used to be treated as covered, so the forecast drained that much less from the account
+  every month while the envelope still spent its full budget; a recurring income onto an
+  envelope was optimistic twice over (it added the cash and reduced the drain). Files with
+  neither kind of template forecast exactly as before.
+- **Move funds** shows what the move does to spendable today and to the projected low
+  before you confirm, by re-forecasting with the transfer applied, and says why the
+  figure moved: an overspend covered, a source taken below zero, or money changing between
+  an envelope that spends its budget inside the horizon and one that keeps it.
+- Help gains "Why did Move funds change my spendable or projected low?", and the reserve
+  entry says that a sweep into the reserve lowers the projected low even though it leaves
+  spendable today unchanged.
+- The audit pins both: a recurring transfer or income leaves the projected cash total
+  where an unmodelled month would, and a probe transfer moves spendable today only across
+  the zero floor while never landing in the data.
+- **(accounting)** The forecast now assumes you run **Fund the month** at the start of every
+  future month: each budgeted envelope gets its budget back on the 1st, so money set aside
+  stays set aside and the spendable line steps down by the whole budget each month; a reset
+  envelope hands its leftover back at month end. Until now the projection spent every
+  envelope down and never topped it up, which counted a budgeted envelope's balance as cash
+  that frees up inside the horizon — moving money between the reserve and a budgeted
+  envelope shifted the projected low by the full amount although no cash moved. Expect your
+  projected low to drop by roughly what your budgeted envelopes hold. The old reading is one
+  click away: Forecast → "Assume Fund the month refills every budgeted envelope on the 1st",
+  saved with forecast profiles.
+- The Dashboard chip, the Forecast caption and the Fund and Move funds dialogs all state
+  which reading is in force, and the Move funds reason explains a shortfall or a reset
+  release when a move does change the low with refills on.
+- **(accounting)** Projected envelope spending is spread evenly over the first 28 days of
+  every month, with nothing spent on the 29th to 31st, so each month spends exactly one
+  month's budget at the same daily rhythm whatever its length. Previously each month used
+  its own length as the divisor. The current month spends what is left of its budget over
+  the days up to the 28th that remain.
 
 ## 2026-09-11 — v0.95, reliability, recurring copies and release-check repairs
 

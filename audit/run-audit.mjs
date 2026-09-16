@@ -155,8 +155,9 @@ function logicApi() {
     "txEnvelopePortion", "txEnvelopeDelta", "accountById", "envelopeById",
     "balanceCacheBegin", "balanceCacheEnd", "_balCacheLive", "findHandLoggedMatch",
     "accountBalance", "envelopeBalance", "envMonthlyEquiv", "recurringOccurrences",
-    "dueRecurringOccurrences", "recurringToTx", "recurringResumeDate",
-    "recurringMonthlyEquiv", "recurringMonthlyForEnvelope", "recurringCoversEnvelope",
+    "dueRecurringOccurrences", "isSkippedOccurrence", "recurringToTx", "recurringResumeDate",
+    "recurringMonthlyEquiv", "recurringMonthlyForEnvelope", "recurringCoversEnvelope", "recurringCoversAllowanceOf",
+    "withProbeTxs",
     "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
@@ -493,6 +494,141 @@ if (api) {
     // Already below zero: nothing can be set aside.
     api.getData().accounts[0].openingBalance = 400;
     assert.equal(api.fundingToZeroLow("reserve", ["cash"], 30, opts, today), 0);
+  });
+
+  check("Only expense recurrings cover an allowance; transfers and income move or add cash, never stand in for it", () => {
+    api.setToday("2026-09-16");
+    const fixture = (rec) => ({
+      accounts: [{ id: "cash", openingBalance: 5000, includeInNetWorth: true }],
+      envelopes: [
+        { id: "food", name: "Food", openingBalance: 200, budgetAmount: 300, cadence: "monthly" },
+        { id: "reserve", name: "Reserve", openingBalance: 1000, budgetAmount: 0, cadence: "monthly", isReserve: true },
+      ],
+      transactions: [], recurring: rec ? [rec] : [],
+    });
+    const stream = { id: "r1", schedule: "monthly", startDate: "2026-01-01", active: true, lastAppliedDate: "2026-09-01", amount: 100 };
+    const food = () => api.getData().envelopes[0];
+    // An expense on the envelope models 100 of its 300: the allowance drains the other 200.
+    api.setData(fixture({ ...stream, type: "expense", accountId: "cash", envelopeId: "food" }));
+    assert.equal(api.recurringMonthlyForEnvelope(food()), 100);
+    // A recurring top-up from the reserve moves no cash: Food still spends 300 from the account.
+    api.setData(fixture({ ...stream, type: "transfer-envelope", fromEnvelopeId: "reserve", toEnvelopeId: "food" }));
+    assert.equal(api.recurringMonthlyForEnvelope(food()), 0);
+    const withTransfer = api.forecastAccountBalances(["cash"], 90, { includeAllowances: true });
+    api.setData(fixture(null));
+    const bare = api.forecastAccountBalances(["cash"], 90, { includeAllowances: true });
+    assert.ok(Math.abs(withTransfer.total[90] - bare.total[90]) < 0.005,
+      `a recurring envelope transfer must not change the projected cash total (${withTransfer.total[90]} vs ${bare.total[90]})`);
+    // Income onto the envelope adds cash; it does not also reduce the projected drain.
+    api.setData(fixture({ ...stream, type: "income", accountId: "cash", envelopeId: "food" }));
+    assert.equal(api.recurringMonthlyForEnvelope(food()), 0);
+    const withIncome = api.forecastAccountBalances(["cash"], 90, { includeAllowances: true });
+    // Oct 1, Nov 1, Dec 1 fall inside the 90 days from 2026-09-16: exactly three occurrences of 100.
+    assert.ok(Math.abs((withIncome.total[90] - bare.total[90]) - 300) < 0.005,
+      `income recurring should add its occurrences and nothing else (${withIncome.total[90] - bare.total[90]})`);
+    // A one-off and an ended template still cover nothing (decision #50).
+    api.setData(fixture({ ...stream, type: "expense", accountId: "cash", envelopeId: "food", schedule: "once" }));
+    assert.equal(api.recurringMonthlyForEnvelope(food()), 0);
+  });
+
+  check("Fund the month is assumed: budgeted envelopes are refilled on the 1st, reset envelopes release at month end", () => {
+    api.setToday("2026-09-16");
+    const fixture = (extra) => ({
+      accounts: [{ id: "cash", openingBalance: 1000, includeInNetWorth: true }],
+      envelopes: [{ id: "food", name: "Food", openingBalance: 300, budgetAmount: 300, cadence: "monthly", rolloverPolicy: "rollover", ...extra }],
+      transactions: [], recurring: [],
+    });
+    // Decision #22's example, 60 days from 16 Sep: cash 1000, Food holds 300, 300 a month.
+    api.setData(fixture());
+    const spent = api.forecastAccountBalances(["cash"], 60, { includeAllowances: true, assumeRefill: false });
+    const refilled = api.forecastAccountBalances(["cash"], 60, { includeAllowances: true });
+    // Cash drains identically in both readings: 300 in September, 300 in October, 15/30 of November.
+    assert.ok(Math.abs(spent.total[60] - refilled.total[60]) < 0.005, "refills never touch cash");
+    // Each month's budget is spent over its first 28 days (decision #58): September's
+    // remainder by the 28th, all of October's by the 28th, 15/28 of November's by the 15th.
+    assert.ok(Math.abs(refilled.total[60] - (1000 - 300 - 300 - 300 * 15 / 28)) < 0.05, `cash at day 60: ${refilled.total[60]}`);
+    const oct29 = refilled.dates.indexOf("2026-10-29"), oct31 = refilled.dates.indexOf("2026-10-31");
+    assert.ok(Math.abs(refilled.total[oct31] - refilled.total[oct29 - 1]) < 0.005, "nothing is spent on the 29th–31st");
+    assert.ok(Math.abs(refilled.total[oct31] - (1000 - 300 - 300)) < 0.05, "and October has spent exactly one month's budget by then");
+    // Spent down: Food's 300 is consumed, so the low is cash at the horizon — 239.29
+    // (1000 less September's 300, October's 300 and 15/28 of November's).
+    assert.ok(Math.abs(api.spendableLow(spent).min - (1000 - 300 - 300 - 300 * 15 / 28)) < 0.05, `spent-down low ${api.spendableLow(spent).min}`);
+    // Refilled: on 1 Nov, after funding the month, cash is 400 and Food holds 300 — unallocated 100.
+    const low = api.spendableLow(refilled);
+    assert.ok(Math.abs(low.min - 100) < 0.05, `refill low ${low.min}`);
+    assert.equal(low.date, "2026-11-01");
+    const nov1 = refilled.dates.indexOf("2026-11-01");
+    // The 1st carries the refill and that day's own drain (300 over November's 30 days).
+    assert.ok(Math.abs(refilled.envelopeTotal[nov1] - (300 - 300 / 28)) < 0.05, `Food is back at its budget on the 1st (${refilled.envelopeTotal[nov1]})`);
+    assert.ok(Math.abs(refilled.envelopeTotal[nov1 - 1]) < 0.05, "and empty the day before");
+    assert.equal(refilled.allowanceInfo.assumeRefill, true);
+    assert.equal(spent.allowanceInfo.assumeRefill, false);
+    // A reset envelope hands its leftover back at month end: 500 held, 300 budget,
+    // so 200 returns to spendable on 30 Sep, then the 1st refills 300.
+    api.setData(fixture({ openingBalance: 500, rolloverPolicy: "reset" }));
+    const reset = api.forecastAccountBalances(["cash"], 60, { includeAllowances: true });
+    const sep30 = reset.dates.indexOf("2026-09-30"), oct1 = sep30 + 1;
+    assert.ok(Math.abs(reset.envelopeTotal[sep30]) < 0.05, `reset leftover released at month end (${reset.envelopeTotal[sep30]})`);
+    assert.ok(Math.abs(reset.envelopeTotal[oct1] - (300 - 300 / 28)) < 0.05, `and refilled on the 1st, net of that day's drain (${reset.envelopeTotal[oct1]})`);
+    assert.ok(Math.abs(reset.spendable[sep30] - (1000 - 300)) < 0.05, "the released 200 is spendable again");
+    // An envelope whose spending is not in this forecast is neither drained nor refilled.
+    api.setData({
+      accounts: [{ id: "mine", openingBalance: 1000, includeInNetWorth: true }, { id: "theirs", openingBalance: 1000, includeInNetWorth: true }],
+      envelopes: [{ id: "rent", name: "Rent", openingBalance: 100, budgetAmount: 300, cadence: "monthly", accountId: "theirs" }],
+      transactions: [], recurring: [],
+    });
+    const mine = api.forecastAccountBalances(["mine"], 60, { includeAllowances: true });
+    assert.deepEqual(Array.from(mine.allowanceInfo.unassigned).map(x => x.name), ["Rent"]);
+    assert.ok(Math.abs(mine.total[60] - 1000) < 0.005);
+    assert.ok(Math.abs(mine.spendable[60] - 1000) < 0.005, "an excluded backed envelope is not refilled into this forecast");
+    // Allowances off: the refill flag is inert.
+    api.setData(fixture());
+    const off = api.forecastAccountBalances(["cash"], 60, { includeAllowances: false });
+    assert.ok(Math.abs(api.spendableLow(off).min - 700) < 0.005);
+    assert.equal(off.allowanceInfo.assumeRefill, false);
+  });
+
+  check("Move funds probe: transfers leave data untouched and move spendable only across the zero floor", () => {
+    api.setToday("2026-09-16");
+    api.setData({
+      accounts: [{ id: "cash", openingBalance: 4720, includeInNetWorth: true }],
+      envelopes: [
+        { id: "food", name: "Food", openingBalance: 200, budgetAmount: 300, cadence: "monthly" },
+        { id: "fun", name: "Fun", openingBalance: -80, budgetAmount: 100, cadence: "monthly" },
+        { id: "reserve", name: "Reserve", openingBalance: 1000, budgetAmount: 0, cadence: "monthly", isReserve: true },
+      ],
+      transactions: [], recurring: [],
+    });
+    const saved = api.getData().transactions;
+    const probe = (from, to, amount) => ({ id: "__moveProbe", date: "2026-09-16", type: "transfer-envelope", amount, fromEnvelopeId: from, toEnvelopeId: to });
+    const today = () => api.spendableToday(["cash"]);
+    const low = (refill) => api.spendableLow(api.forecastAccountBalances(["cash"], 90, { includeAllowances: true, assumeRefill: refill })).min;
+    assert.equal(today(), 3520, "fun's overspend has already come out of spendable");
+    // Covering the overspend from the reserve gives that 80 back; the probe never lands in the data.
+    assert.equal(api.withProbeTxs([probe("reserve", "fun", 80)], today), 3600);
+    assert.equal(api.getData().transactions, saved);
+    assert.equal(api.getData().transactions.length, 0);
+    // Overdrawing the source lowers today by the shortfall only.
+    assert.equal(api.withProbeTxs([probe("food", "reserve", 250)], today), 3470);
+    // Both stay positive: today is unchanged either way.
+    assert.equal(api.withProbeTxs([probe("reserve", "food", 300)], today), 3520);
+    // With Fund the month assumed (the default) the projected low does not move either —
+    // a budgeted envelope's money is as kept as the reserve's (decision #57) — provided the
+    // envelope never runs out inside the horizon. Food at 200 with 300 still to spend this
+    // month would cross zero (and that shortfall rightly lands on spendable), so give it
+    // more than it spends: 600 today, never below 150 after any of these moves.
+    api.getData().envelopes[0].openingBalance = 600;
+    const refillLow = low(true);
+    assert.ok(Math.abs(api.withProbeTxs([probe("reserve", "food", 300)], () => low(true)) - refillLow) < 0.005, "refill: reserve → Food leaves the low alone");
+    assert.ok(Math.abs(api.withProbeTxs([probe("food", "reserve", 150)], () => low(true)) - refillLow) < 0.005, "refill: Food → reserve leaves the low alone");
+    // With refills off, Food spends its budget either way, so money moved into it is spent
+    // inside the horizon and the low rises by the full amount; out of it, the low falls.
+    const baseLow = low(false);
+    assert.ok(Math.abs(api.withProbeTxs([probe("reserve", "food", 300)], () => low(false)) - (baseLow + 300)) < 0.005);
+    assert.ok(Math.abs(api.withProbeTxs([probe("food", "reserve", 150)], () => low(false)) - (baseLow - 150)) < 0.005);
+    // The restore runs even when the probe throws.
+    assert.throws(() => api.withProbeTxs([probe("food", "reserve", 1)], () => { throw new Error("boom"); }), /boom/);
+    assert.equal(api.getData().transactions, saved);
   });
 
   check("Envelope-only adjustments are excluded from cashflow", () => {
