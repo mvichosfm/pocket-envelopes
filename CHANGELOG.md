@@ -7,6 +7,20 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- The Recurring tab gains a **search box** that filters the list as you type: name,
+  type, schedule and custom months, account and envelope names on either leg, tag,
+  notes, "paused", and the amount as typed or as displayed. Every word must match
+  somewhere in the row, in any order ("rent paused"). A count shows how many entries
+  match, Escape or Clear empties the box, and the search survives a save, so editing
+  one entry does not clear it.
+- Editing a recurring entry and typing a date **earlier than its next occurrence** now
+  makes the occurrences from that date due again. Before, a date the entry had already
+  recorded or skipped through was saved as the start but changed nothing: the next
+  occurrence stayed where it was, with no message, because resolved history is never
+  reopened by accident. A typed earlier date is deliberate, so the "recorded through" mark
+  now moves back to the day before it; a toast says so, Undo reverses it, and if the entry
+  already booked a transaction on or after that date a confirm warns it may be offered
+  twice. Leaving the box as shown, or moving it later, keeps history exactly as before.
 - **(accounting)** Pausing a recurring expense now **suspends its budget line**. Its
   occurrences already left the projection, but the envelope it belongs to went on spending
   its full budget, so the paused amount was simply spent as "other" allowance and neither

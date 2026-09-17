@@ -726,7 +726,7 @@
   .envelope .ev-actions { margin-top: 20px; }
   .toolbar { gap: 10px; }
   .tx-search-row { flex: 1 0 100%; display: flex; gap: 10px; margin-top: 6px; }
-  .tx-search-row #txFilter { flex: 1; min-width: 0; padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; }
+  .tx-search-row #txFilter, .tx-search-row #recFilter { flex: 1; min-width: 0; padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; }
   .tx-advanced { flex: 1 0 100%; flex-wrap: wrap; gap: 8px; padding: 12px; background: var(--bg-2); }
   .tx-advanced .filter-input { max-width: 100%; min-width: 0; flex: 1 1 150px; border: 1px solid var(--border); border-radius: 6px; }
   .tx-totals { flex-basis: 100%; padding: 4px 0; }
@@ -817,7 +817,7 @@
     .envelope .ev-bal { font-size: 22px; }
     .envelope .ev-name { font-size: 16px; }
     .tx-search-row { flex-wrap: wrap; }
-    .tx-search-row #txFilter { flex-basis: 100%; }
+    .tx-search-row #txFilter, .tx-search-row #recFilter { flex-basis: 100%; }
     .forecast-controls { flex: 1 1 100%; min-width: 0; }
     .forecast-chart-card > .forecast-canvas { height: 320px; }
     .forecast-horizon { gap: 10px; }
@@ -6474,34 +6474,51 @@ function deleteTransaction(id) {
 //=============================================================================
 // RECURRING
 //=============================================================================
-function renderRecurring() {
-  // Sort: active entries first by Next date ascending, then paused entries.
-  // Entries without a next occurrence (e.g. once-off past) sort to the bottom
-  // of their group via the '￿' sentinel (sorts after any ISO date).
-  const recs = data.recurring
+// The Recurring tab's search. Module-level like txFilter (decision #39): it
+// survives the full re-render every save triggers, so editing one entry does
+// not clear the search. Only the Clear button and an emptied box reset it.
+let recFilter = '';
+// Everything a row shows, joined for a case-insensitive substring match: name,
+// type, schedule (custom months included), account and envelope names on
+// either leg, tag, notes, "paused", and the amount both as typed ("49.9") and
+// as displayed in the user's locale ("49,90"), like the Transactions search.
+function recSearchText(r) {
+  const acc = id => accountById(id)?.name || '';
+  const env = id => envelopeById(id)?.name || '';
+  return [
+    r.name, TX_TYPE_LABEL[r.type] || r.type, r.type, r.schedule,
+    r.schedule === 'custom-months' ? (r.months || []).join(',') : '',
+    acc(r.accountId), acc(r.fromAccountId), acc(r.toAccountId),
+    env(r.envelopeId), env(r.fromEnvelopeId), env(r.toEnvelopeId),
+    r.tag, r.notes, r.active === false ? 'paused' : '',
+    String(r.amount), fmtNum(r.amount)
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+function filterRecs(recs, q) {
+  q = (q || '').trim().toLowerCase();
+  if (!q) return recs;
+  // Every word must match somewhere in the row, in any order ("rent paused").
+  const words = q.split(/\s+/);
+  return recs.filter(r => { const t = recSearchText(r); return words.every(w => t.includes(w)); });
+}
+// Sort: active entries first by Next date ascending, then paused entries.
+// Entries without a next occurrence (e.g. once-off past) sort to the bottom
+// of their group via the '￿' sentinel (sorts after any ISO date).
+function sortedRecurring() {
+  return data.recurring
     .map(r => ({ r, next: (r.active === false ? null : firstPendingOccurrence(r)) || '￿', paused: r.active === false }))
     .sort((a, b) => {
       if (a.paused !== b.paused) return a.paused ? 1 : -1;
       return a.next.localeCompare(b.next);
     })
     .map(x => x.r);
-  return `
-  ${addTxHeading('Recurring transactions')}
-  <div class="toolbar">
-    <button class="btn primary" id="addRec">+ Add recurring</button>
-    <div class="spacer"></div>
-    <span style="color:var(--text-dim);">Income, salaries, rent, utilities, subscriptions, holiday bonuses…</span>
-  </div>
-  <div class="card" style="padding:0;">
-    <table>
-      <thead><tr>
-        <th>Name</th><th>Type</th><th>Schedule</th><th>Account</th><th>Envelope</th>
-        <th class="num">Amount</th><th>Next</th><th></th>
-      </tr></thead>
-      <tbody>
-        ${recs.length === 0 ? `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-dim);">
-          No recurring entries yet. Add salaries, rent, utilities, subscriptions, holiday bonuses…</td></tr>` :
-          recs.map(r => {
+}
+// The Recurring tbody. Both the initial render and the search handler go
+// through it, so the two cannot drift (same pattern as txRowsHTML).
+function recRowsHTML(recs, q) {
+  if (recs.length === 0) return `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-dim);">
+          ${q ? `No recurring entries match “${esc(q)}”.` : 'No recurring entries yet. Add salaries, rent, utilities, subscriptions, holiday bonuses…'}</td></tr>`;
+  return recs.map(r => {
             const pending = r.active === false ? null : firstPendingOccurrence(r);
             return `<tr>
           <td><strong>${esc(r.name)}</strong>${r.active===false?' <span class="badge">Paused</span>':''}</td>
@@ -6536,28 +6553,74 @@ function renderRecurring() {
             <button class="btn sm danger" data-del-rec="${r.id}" aria-label="Delete recurring ${esc(r.name)}" title="Delete recurring">${icon('x')}</button>
           </td>
         </tr>`;
-          }).join('')}
-      </tbody>
+          }).join('');
+}
+// "3 of 12 shown" while a search is active; blank otherwise.
+function recCountHTML(shown, total, q) {
+  return q ? `${shown} of ${plural(total, 'entry', 'entries')} shown` : '';
+}
+function renderRecurring() {
+  const all = sortedRecurring();
+  const recs = filterRecs(all, recFilter);
+  return `
+  ${addTxHeading('Recurring transactions')}
+  <div class="toolbar">
+    <button class="btn primary" id="addRec">+ Add recurring</button>
+    <div class="spacer"></div>
+    <span style="color:var(--text-dim);">Income, salaries, rent, utilities, subscriptions, holiday bonuses…</span>
+    ${all.length ? `<div class="tx-search-row">
+      <input class="filter-input" id="recFilter" placeholder="Search name, account, envelope, amount…" aria-label="Search recurring entries" value="${esc(recFilter)}" autocomplete="off">
+      <button class="btn ghost" id="recClearFilter" title="Clear the search" ${recFilter ? '' : 'disabled'}>${icon('x')}Clear</button>
+      <span class="micro" id="recCount" aria-live="polite" style="align-self:center;">${recCountHTML(recs.length, all.length, recFilter)}</span>
+    </div>` : ''}
+  </div>
+  <div class="card" style="padding:0;">
+    <table>
+      <thead><tr>
+        <th>Name</th><th>Type</th><th>Schedule</th><th>Account</th><th>Envelope</th>
+        <th class="num">Amount</th><th>Next</th><th></th>
+      </tr></thead>
+      <tbody id="recBody">${recRowsHTML(recs, recFilter)}</tbody>
     </table>
   </div>
   `;
 }
 function bindRecurring() {
   document.getElementById("addRec").onclick = () => editRecurring();
-  document.querySelectorAll("[data-edit-rec]").forEach(b =>
-    b.onclick = () => editRecurring(b.dataset.editRec));
-  document.querySelectorAll("[data-dup-rec]").forEach(b =>
-    b.onclick = () => editRecurring(b.dataset.dupRec, { duplicate: true }));
-  document.querySelectorAll("[data-apply-rec]").forEach(b =>
-    b.onclick = () => applyRecurringInstanceNow(b.dataset.applyRec));
-  document.querySelectorAll("[data-skip-rec]").forEach(b =>
-    b.onclick = () => skipRecurringOccurrence(b.dataset.skipRec));
-  document.querySelectorAll("[data-occ-rec]").forEach(b =>
-    b.onclick = () => editRecurringOccurrences(b.dataset.occRec));
-  document.querySelectorAll("[data-del-rec]").forEach(b =>
-    b.onclick = () => deleteRecurring(b.dataset.delRec));
-  document.querySelectorAll("[data-toggle-rec]").forEach(b =>
-    b.onclick = () => toggleRecurring(b.dataset.toggleRec));
+  // Row buttons are re-bound after every search pass (the tbody is rebuilt),
+  // so they live in one helper.
+  const bindRows = () => {
+    document.querySelectorAll("[data-edit-rec]").forEach(b =>
+      b.onclick = () => editRecurring(b.dataset.editRec));
+    document.querySelectorAll("[data-dup-rec]").forEach(b =>
+      b.onclick = () => editRecurring(b.dataset.dupRec, { duplicate: true }));
+    document.querySelectorAll("[data-apply-rec]").forEach(b =>
+      b.onclick = () => applyRecurringInstanceNow(b.dataset.applyRec));
+    document.querySelectorAll("[data-skip-rec]").forEach(b =>
+      b.onclick = () => skipRecurringOccurrence(b.dataset.skipRec));
+    document.querySelectorAll("[data-occ-rec]").forEach(b =>
+      b.onclick = () => editRecurringOccurrences(b.dataset.occRec));
+    document.querySelectorAll("[data-del-rec]").forEach(b =>
+      b.onclick = () => deleteRecurring(b.dataset.delRec));
+    document.querySelectorAll("[data-toggle-rec]").forEach(b =>
+      b.onclick = () => toggleRecurring(b.dataset.toggleRec));
+  };
+  bindRows();
+  const box = document.getElementById("recFilter");
+  if (!box) return;   // no entries yet: no search row
+  // The search rebuilds only the tbody, so the box keeps focus and its caret.
+  const filt = () => {
+    recFilter = box.value;
+    const all = sortedRecurring();
+    const recs = filterRecs(all, recFilter);
+    document.getElementById("recBody").innerHTML = recRowsHTML(recs, recFilter);
+    document.getElementById("recCount").textContent = recCountHTML(recs.length, all.length, recFilter);
+    document.getElementById("recClearFilter").disabled = !recFilter;
+    bindRows();
+  };
+  box.oninput = filt;
+  box.onkeydown = (e) => { if (e.key === 'Escape' && box.value) { e.stopPropagation(); box.value = ''; filt(); } };
+  document.getElementById("recClearFilter").onclick = () => { box.value = ''; filt(); box.focus(); };
 }
 
 // Pull the next pending occurrence of a recurring forward to today, with a
@@ -6778,7 +6841,7 @@ function editRecurring(id, { duplicate = false } = {}) {
       </div>
       <div class="field"><label>${nextPending ? 'Next occurrence' : 'Start / on'}</label>
         <input type="date" id="r_start" value="${shownStart}">
-        ${nextPending && nextPending !== r.startDate ? `<p class="micro">Series started ${fmtDate(r.startDate)}. Leave the date as it is to keep that schedule; change it to move this and every later occurrence.</p>` : ''}</div>
+        ${nextPending ? `<p class="micro">${nextPending !== r.startDate ? `Series started ${fmtDate(r.startDate)}. ` : ''}Leave the date as it is to keep that schedule; change it to move this and every later occurrence. An earlier date makes the occurrences from that date due again.</p>` : ''}</div>
     </div>
     <div class="field" id="r_months_wrap" style="display:${r.schedule==='custom-months'?'':'none'}">
       <label>Months (1-12, comma separated)</label>
@@ -6854,7 +6917,16 @@ function editRecurring(id, { duplicate = false } = {}) {
       active: r.active !== false
     };
     // The box showed the next occurrence; left untouched, the stored anchor stays (decision #61).
-    if (nextPending && out.startDate === nextPending) out.startDate = r.startDate;
+    const typed = out.startDate;
+    if (nextPending && typed === nextPending) out.startDate = r.startDate;
+    // A date TYPED on or before the watermark is the user reopening the series from that date
+    // (decision #64): the watermark moves back to the day before it, so the occurrences from there on
+    // are pending again. The box must have been changed — the stored start it shows when there is no
+    // pending occurrence, or an untouched box, is never a reopen (decision #54: an unrelated edit must
+    // not reopen history). The typed date may equal the stored start: a start whose watermark has
+    // already passed it is exactly the case this exists for.
+    const reopenFrom = editing && !needsHistoryRepair && typed !== shownStart && validISODate(typed)
+      && validISODate(r.lastAppliedDate) && typed <= r.lastAppliedDate ? typed : null;
     if (!out.name) { toast("Name required"); return; }
     if (!out.amount) { toast("Amount required"); return; }
     if (!validISODate(out.startDate)) { toast("A valid start date is required", 3000, 'error'); document.getElementById('r_start').focus(); return; }
@@ -6891,6 +6963,14 @@ function editRecurring(id, { duplicate = false } = {}) {
       out.fromEnvelopeId = null; out.toEnvelopeId = null;
     }
     if (editing && modalFormState() === initialFields) { closeModal(); return; }
+    if (reopenFrom) {
+      // Skips and custom amounts sit after the old watermark, so they stay valid behind the new one;
+      // a transaction this entry already booked on or after the date would be offered a second time,
+      // which is worth a word before it happens.
+      const booked = data.transactions.filter(t => t.fromRecurringId === id && t.date >= reopenFrom).length;
+      if (booked && !confirm(`Occurrences from ${fmtDate(reopenFrom)} will be due again. ${plural(booked, 'transaction', 'transactions')} this entry already recorded on or after that date will stay and may be offered twice. Continue?`)) return;
+      out.lastAppliedDate = isoDate(addDays(parseDate(reopenFrom), -1));
+    }
     pushUndo(duplicate ? 'Duplicate recurring' : editing ? 'Edit recurring' : 'Add recurring');
     if (!editing) {
       // Anchor lastAppliedDate to the day before startDate so the first
@@ -6908,6 +6988,7 @@ function editRecurring(id, { duplicate = false } = {}) {
       const i = data.recurring.findIndex(x => x.id === id); data.recurring[i] = out;
     }
     saveDirty(); closeModal(); render();
+    if (reopenFrom) toast(`Occurrences from ${fmtDate(reopenFrom)} are due again`, 4000);
   };
 }
 function deleteRecurring(id) {
