@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-17 — v0.96, forecast refills, per-occurrence amounts, fund envelope, recurring search
 
 - The Recurring tab gains a **search box** that filters the list as you type: name,
   type, schedule and custom months, account and envelope names on either leg, tag,
