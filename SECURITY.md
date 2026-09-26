@@ -23,10 +23,15 @@ finances through the `/data` API. Access control is therefore entirely about
 
 - **Do not set `BIND=0.0.0.0` on a network you do not fully trust.** It
   exposes the unauthenticated API to every device on that network.
-- **Do not put the port behind a public reverse proxy, and never run
-  `tailscale funnel` on it.** The supported multi-device setup is
-  `tailscale serve`, which keeps the origin private to your own tailnet while
-  the server stays on loopback. See the README.
+- **Do not put the port behind a public reverse proxy that does not require a
+  login, and never run `tailscale funnel` on it.** The supported multi-device
+  setups are `tailscale serve`, which keeps the origin private to your own
+  tailnet while the server stays on loopback, and a reverse proxy that
+  authenticates every request before it reaches the server (an identity-aware
+  proxy or access-controlled tunnel). With the latter, the proxy's login is the
+  only thing between the internet and your budget: restrict it to your own
+  accounts, and prefer one that also lets the origin verify each request.
+  See the README.
 - Do not commit `finance-data.json` or its `.bak` siblings. The `.gitignore`
   already excludes them.
 

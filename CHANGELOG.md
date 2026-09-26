@@ -5,6 +5,26 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **Quick entry from the phone's home screen.** The installed app's icon now has
+  long-press shortcuts — **Add expense**, **Add income**, **Transfer** — that open
+  straight into the transaction form with the amount focused. An expense or income
+  starts on the account the last hand-entered one of that type used, so a quick entry
+  does not land as envelope-only bookkeeping by accident. Each save made this way offers
+  **Add another**. Any URL can do the same with `?add=expense|income|transfer-account|transfer-envelope`;
+  the parameter is removed once used, so a reload does not reopen the form, and nothing
+  opens unless the budget actually loaded.
+- **Works behind a sign-in proxy.** The manifest is requested with credentials
+  (`crossorigin="use-credentials"`), without which a proxy that requires a login refused
+  it and the app could not be installed. The service worker now hands a redirect on a
+  page load to the browser instead of replacing it with the cached app — before, an
+  expired session opened a cached copy that could not load its data and offered no way
+  to sign in. The app reads a redirect, 401 or 403 from `/data` as **"Sign in again"**
+  (with a Sign in button) rather than "server unreachable", and a save refused that way
+  keeps your change unsaved and says so. The 502 behaviour for a stopped server behind a
+  proxy is unchanged.
+
 ## 2026-09-17 — v0.96, forecast refills, per-occurrence amounts, fund envelope, recurring search
 
 - The Recurring tab gains a **search box** that filters the list as you type: name,

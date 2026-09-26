@@ -6,8 +6,11 @@
 <title>Pocket Envelopes</title>
 <!-- Installable-app metadata. Only takes effect over a secure origin, which on
      the tailnet means the https://<host>.ts.net URL that `tailscale serve`
-     publishes; plain http://host:8765 still works, just not installable. -->
-<link rel="manifest" href="manifest.webmanifest">
+     publishes; plain http://host:8765 still works, just not installable.
+     crossorigin="use-credentials": browsers fetch the manifest WITHOUT cookies
+     by default, so behind a sign-in proxy it is refused and the app cannot be
+     installed. With the attribute the session cookie goes along. -->
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- Tints the browser/OS chrome around the app. Two entries so the bar follows
@@ -947,6 +950,17 @@ let serverEtag = null;        // last known server version, null = unknown/force
 let conflictPending = false;  // a 409 is unresolved; auto-save is paused
 let demoMode = false;         // ?demo=1 — purely in-memory, never touches the server
 
+// A sign-in proxy in front of the server (any reverse proxy that asks for a
+// login) answers an expired session with a redirect to its sign-in page, or
+// with 401/403. /data is fetched with redirect: "manual" so that redirect
+// arrives as an opaqueredirect instead of a cross-origin follow that fails
+// as a network error — which would read as "server unreachable" and send the
+// user looking for a stopped server. The cure is a top-level reload, which
+// the browser follows to the sign-in page.
+function needsSignIn(res) {
+  return !!res && (res.type === "opaqueredirect" || res.status === 401 || res.status === 403);
+}
+
 let data = null;            // loaded budget data
 let dirty = false;
 let activeView = "dashboard";
@@ -991,18 +1005,25 @@ function emptyData() {
 // Why the welcome screen is shown: 'new' = the server says there is no file
 // yet (the only state in which "Create new budget" is offered); 'failed' =
 // the load did not succeed (unreachable, non-ok, unparsable) and the file may
-// well exist — creating a new budget there would overwrite it (decision #50).
+// well exist — creating a new budget there would overwrite it (decision #50);
+// 'signin' = a sign-in proxy in front of the server wants a fresh login
+// (needsSignIn) — the file is fine, the browser just has to reload through it.
 let loadState = 'new';
 async function loadFromServer() {
   let res, text;
   loadState = 'failed';
   try {
-    res = await fetch(DATA_URL, { cache: "no-store" });
+    res = await fetch(DATA_URL, { cache: "no-store", redirect: "manual" });
     text = await res.text();
   } catch (e) {
     updateFileStatus("server unreachable", "no-file");
     toast("Could not reach the server — is serve.py still running? Your data is safe on disk; reload once it's back.", 8000, "error");
     console.error("loadFromServer: fetch failed", e);
+    return false;
+  }
+  if (needsSignIn(res)) {
+    loadState = 'signin';
+    updateFileStatus("sign-in needed", "no-file");
     return false;
   }
   if (!res.ok) {
@@ -1264,7 +1285,12 @@ async function persistData(force) {
       // it quickly — fall back to a normal fetch above that and accept that a
       // tab closed inside the same millisecond may lose the very last edit.
       const useKeepalive = saveKeepaliveRequested && new TextEncoder().encode(body).byteLength < 60000;
-      res = await fetch(DATA_URL, { method: "PUT", headers, body, keepalive: useKeepalive });
+      // redirect: "manual" (see needsSignIn) only on an ordinary save: a
+      // keepalive flush runs as the page goes away, when nobody could act
+      // on a sign-in message anyway.
+      const init = { method: "PUT", headers, body, keepalive: useKeepalive };
+      if (!useKeepalive) init.redirect = "manual";
+      res = await fetch(DATA_URL, init);
     } catch (e) {
       setStatus("unsaved");
       toast("Save failed — server unreachable. Your changes are still here in this tab; they'll save once serve.py is back.", 8000, "error");
@@ -1273,6 +1299,11 @@ async function persistData(force) {
     }
     if (res.status === 409) {
       handleConflict(res.headers.get("ETag"));
+      return false;
+    }
+    if (needsSignIn(res)) {
+      updateFileStatus("sign-in needed — not saved", "unsaved");
+      toast("Sign-in expired — your change is NOT saved yet. Reload the app to sign in again, then re-enter it.", 10000, "error", { label: "Reload", onClick: () => location.reload() });
       return false;
     }
     if (!res.ok) {
@@ -3272,6 +3303,16 @@ function snapshotIfNeeded() {
 // WELCOME
 //=============================================================================
 function renderWelcome() {
+  if (loadState === 'signin') {
+    return `<div class="empty-state">
+      <h2>Sign in again</h2>
+      <p>The server is running, but the sign-in page in front of it wants you to log in again — your session has expired.
+         Nothing has been changed.</p>
+      <div class="btns">
+        <button class="btn primary" id="welRetry">Sign in</button>
+      </div>
+    </div>`;
+  }
   if (loadState === 'failed') {
     return `<div class="empty-state">
       <h2>Could not load your budget</h2>
@@ -3304,7 +3345,7 @@ function renderWelcome() {
 function bindWelcome() {
   const n = document.getElementById("welNew"); if (n) n.onclick = newFile;
   const r = document.getElementById("welRetry"); if (r) r.onclick = () => location.reload();
-  document.getElementById("welOpen").onclick = importViaInput;
+  const o = document.getElementById("welOpen"); if (o) o.onclick = importViaInput;
 }
 
 //=============================================================================
@@ -6174,9 +6215,26 @@ function csvShowReview(profile, filename) {
   };
 }
 
-function quickTx(type, prefill) {
+function quickTx(type, prefill, opts) {
   const tx = { id: uid(), date: todayISO(), type, amount: 0, ...prefill };
-  txFormModal(tx, true);
+  txFormModal(tx, true, opts);
+}
+
+// ?add=<type> — the phone's home-screen shortcuts ("Add expense" …, see
+// manifest.webmanifest) land straight in the transaction form. Opened this
+// way, each save offers "Add another" so a pocketful of receipts is one run.
+// An expense or income starts on the account the last hand-entered one of
+// that type used: left at "(none)" it would book envelope-only bookkeeping
+// (decision #26) rather than spending, an easy slip on a phone.
+const QUICK_ADD_TYPES = ['expense', 'income', 'transfer-account', 'transfer-envelope'];
+function quickAdd(type) {
+  const prefill = {};
+  if (type === 'expense' || type === 'income') {
+    const last = sortTxsDesc(data.transactions.filter(t => t.type === type && t.accountId && !t.fromRecurringId && t.date <= todayISO()))
+      .find(t => { const a = accountById(t.accountId); return a && !a.archived; });
+    if (last) prefill.accountId = last.accountId;
+  }
+  quickTx(type, prefill, { addAnother: true });
 }
 
 function txFormModal(tx, isNew, opts) {
@@ -6456,6 +6514,9 @@ function txFormModal(tx, isNew, opts) {
     }
     if (opts && typeof opts.afterSave === 'function') opts.afterSave(out);
     saveDirty(); closeModal(); render();
+    if (opts && opts.addAnother) {
+      toast(`Added ${fmt(out.amount)}${out.payee ? ' — ' + out.payee : ''}`, 6000, 'success', { label: 'Add another', onClick: () => quickAdd(out.type) });
+    }
   };
 }
 function deleteTransaction(id) {
@@ -8749,7 +8810,10 @@ function applyUrlParams() {
   for (const k of ['acc', 'env', 'q', 'from', 'to', 'type']) if (params.get(k)) pf[k] = params.get(k);
   if (params.get('tag')) pf.tag = params.get('tag') === 'untagged' ? 'u' : 't:' + params.get('tag');
   if (Object.keys(pf).length) txFilter = { ...txFilter, ...pf };
-  return { demoApplied, view: params.get("view") };
+  // ?add=expense|income|transfer-account|transfer-envelope opens the
+  // transaction form once the budget has loaded (the home-screen shortcuts).
+  const add = QUICK_ADD_TYPES.includes(params.get("add")) ? params.get("add") : null;
+  return { demoApplied, view: params.get("view"), add };
 }
 
 //=============================================================================
@@ -8783,6 +8847,16 @@ function applyUrlParams() {
   if (urlOpts.view) {
     const btn = document.querySelector(`nav.tabs button[data-view="${urlOpts.view}"]`);
     if (btn) btn.click();
+  }
+  if (new URLSearchParams(location.search).has("add")) {
+    // Drop ?add= so a reload, or the installed app coming back from the
+    // background, does not open the form a second time. Other params stay.
+    const u = new URL(location.href);
+    u.searchParams.delete("add");
+    history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+    // Only on a budget that can be saved: a failed or sign-in load shows its
+    // own screen, and a form there would take input it could not keep.
+    if (urlOpts.add && loaded && data) quickAdd(urlOpts.add);
   }
   registerServiceWorker();
 })();

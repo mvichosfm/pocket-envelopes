@@ -227,6 +227,39 @@ class ReleaseRegressions(unittest.TestCase):
         p.evaluate("""() => {const get=Storage.prototype.getItem;Storage.prototype.getItem=()=>{throw new DOMException('Blocked','SecurityError')};try{activeView='forecast';render()}finally{Storage.prototype.getItem=get}}""")
         self.assertTrue(p.evaluate('!!currentChart'))
 
+    def test_quick_add_param_opens_form_once_and_offers_another(self):
+        p=self.page
+        for kind in ('income','transfer-account','expense'):
+            p.goto(BASE+'/?demo=1&view=transactions&add='+kind)
+            p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+            self.assertEqual(p.locator('#t_type').input_value(),kind)
+            self.assertEqual(p.evaluate('document.activeElement.id'),'t_amt')
+            self.assertNotIn('add=',p.url);self.assertIn('view=transactions',p.url)
+        # The expense starts on the last hand-entered expense's account, not "(none)".
+        want=p.evaluate("sortTxsDesc(data.transactions.filter(t=>t.type==='expense'&&t.accountId&&!t.fromRecurringId&&t.date<=todayISO()))[0].accountId")
+        self.assertEqual(p.locator('#t_acc').input_value(),want)
+        n=p.evaluate('data.transactions.length')
+        p.locator('#t_amt').fill('12.5');p.locator('#t_save').click()
+        self.assertEqual(p.evaluate('data.transactions.length'),n+1)
+        p.locator('.toast-action',has_text='Add another').click()
+        p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+        self.assertEqual(p.locator('#t_type').input_value(),'expense')
+        # An ordinary add carries no "Add another".
+        p.evaluate('closeModal();quickTx("expense")');p.locator('#t_amt').fill('3');p.locator('#t_save').click()
+        self.assertFalse(p.evaluate("(t=>t.classList.contains('show')&&t.textContent.includes('Add another'))(document.getElementById('toast'))"))
+        p.goto(BASE+'/?demo=1&add=bogus');p.wait_for_function('data !== null')
+        self.assertFalse(p.evaluate('document.getElementById("modalBg").classList.contains("open")'))
+
+    def test_sign_in_proxy_shows_sign_in_not_unreachable(self):
+        p=self.page
+        for fulfil in ({'status':401,'body':'{}'},
+                       {'status':302,'headers':{'Location':'https://sign-in.invalid/login'}}):
+            p.unroute('**/data')
+            p.route('**/data',(lambda f:lambda route:route.fulfill(**f))(fulfil))
+            p.goto(BASE+'/?add=expense');p.wait_for_function('loadState === "signin"')
+            self.assertIn('Sign in again',p.locator('#main').inner_text())
+            self.assertFalse(p.evaluate('document.getElementById("modalBg").classList.contains("open")'))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

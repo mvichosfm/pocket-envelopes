@@ -133,7 +133,7 @@ There is **no authentication**. Whoever can reach the server's port can read and
 
 - The server binds to `127.0.0.1` by default and the launchers keep it there. Setting `BIND=0.0.0.0` exposes the unauthenticated API to every device on your network; only do it on a network you trust completely.
 - The data file, its backups, logs and dot-directories are never served as static files, and directory listings are off.
-- Never put the port behind a public reverse proxy, and never run `tailscale funnel` on it.
+- Never put the port behind a public reverse proxy that does not itself require a login, and never run `tailscale funnel` on it. A proxy that authenticates every request before it reaches the server is the one supported way to make it public (see *Behind a sign-in proxy* below).
 
 `SECURITY.md` has the full threat model and how to report a problem privately.
 
@@ -168,10 +168,15 @@ Over the HTTPS origin above (or on `localhost`), the app is installable as a PWA
 
 A service worker caches the app shell, so it opens even when the server is asleep and tells you it cannot reach it, instead of showing a browser error. Your data is deliberately **never** cached: opens offline, edits online.
 
+**Quick entry from the home screen.** On Android, long-press the installed icon for **Add expense**, **Add income** and **Transfer**; each opens the app straight into the transaction form with the amount field focused (drag one onto the home screen for a one-tap button). An expense or income starts on the account your last one used. After saving, the confirmation offers **Add another**. The same works from any bookmark: `/?add=expense`, `?add=income`, `?add=transfer-account` or `?add=transfer-envelope`.
+
+**Behind a sign-in proxy.** Instead of Tailscale you can put the server behind a reverse proxy that requires a login (an identity-aware proxy or tunnel with access control — never an open one, see Security). The app is built for it: the manifest is fetched with credentials so the app still installs, an expired session sends you to the sign-in page rather than into a cached copy of the app, and the app says "Sign in again" rather than "server unreachable". A save refused because the session expired is **not** saved; the message says so. Keep the proxy's session long (weeks, not hours) if you mostly budget from a phone.
+
 ## Troubleshooting
 
 - **"Could not bind to 127.0.0.1:8765"**: another copy is running. Close it, or start with `PORT=8790`.
 - **The app says the server is unreachable**: the server shut down after 30 idle minutes, or (behind `tailscale serve`) the proxy is up and the backend is not. Start the server again and reload.
+- **"Sign in again" instead of your budget**: a sign-in proxy in front of the server says your session expired. Tap **Sign in** and log in; nothing was changed.
 - **A conflict dialog after budgeting on another device**: expected. Reload to take the other device's version, or overwrite with this one.
 - **An old version keeps showing after an update**: the shell cache is network-first, so a plain reload should fix it; if not, reload once with the server running.
 - **Numbers formatted for the wrong country**: Settings → Locale (for example `en-US`, `de-DE`, `en-GB`).

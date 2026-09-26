@@ -21,7 +21,7 @@
  *
  * Bump CACHE_NAME to force every client to drop its old shell.
  */
-const CACHE_NAME = "pocket-envelopes-shell-v6";
+const CACHE_NAME = "pocket-envelopes-shell-v7";
 
 // Kept deliberately small: the app is one file, plus Chart.js and the icons.
 const SHELL = [
@@ -84,6 +84,13 @@ self.addEventListener("fetch", (event) => {
         cache.put(req, fresh.clone());
         return fresh;
       }
+      // A redirect on a navigation is an auth proxy sending the browser to
+      // its sign-in page (a session expired). It is not a failure: hand it to
+      // the browser to follow. Falling back to the cached shell here would
+      // boot the app against a /data it can no longer read, with no way to
+      // reach the sign-in page. Navigations use redirect mode "manual", so
+      // the redirect arrives as an opaqueredirect with ok === false.
+      if (fresh.type === "opaqueredirect") return fresh;
       // A reachable-but-broken server. This is the COMMON failure here, not an
       // exotic one: `tailscale serve` stays up and answers 502 when serve.py is
       // stopped or the host is asleep, so fetch() resolves rather than throws.

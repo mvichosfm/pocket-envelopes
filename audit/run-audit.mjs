@@ -46,7 +46,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import vm from "node:vm";
@@ -855,7 +855,7 @@ function persistenceApi() {
     fetch(url, options) { return new Promise(resolve => requests.push({ options, resolve })); },
     recordStatus: value => statuses.push(value),
   });
-  const names = ["writeFile", "persistData", "saveDirty", "flushNow", "loadFromServer"];
+  const names = ["needsSignIn", "writeFile", "persistData", "saveDirty", "flushNow", "loadFromServer"];
   vm.runInContext(`
     let data = { value: 'A' }, dirty = true, demoMode = false, conflictPending = false;
     let serverEtag = 'initial', saveInFlight = null, saveKeepaliveRequested = false, saveTimer = null, loadState = 'loaded';
@@ -874,8 +874,8 @@ function persistenceApi() {
   `, context);
   return { ...context.api, requests, statuses };
 }
-function respond(request, status = 204, tag = 'saved', text = async () => '{}') {
-  request.resolve({ status, ok: status >= 200 && status < 300, headers: { get: k => k === 'ETag' ? tag : null }, text });
+function respond(request, status = 204, tag = 'saved', text = async () => '{}', type = 'basic') {
+  request.resolve({ status, type, ok: status >= 200 && status < 300, headers: { get: k => k === 'ETag' ? tag : null }, text });
 }
 async function until(predicate) {
   for (let i = 0; i < 30; i++) { if (predicate()) return; await Promise.resolve(); }
@@ -941,6 +941,28 @@ await asyncCheck("A failed response-body read leaves the existing budget and fai
   assert.equal(p.state().loadState, 'failed');
   assert.equal(p.state().data.value, 'A');
 });
+await asyncCheck("A sign-in proxy's redirect or 401/403 reads as 'sign in again', never as saved or unreachable", async () => {
+  // Load: a redirect (opaqueredirect under redirect: 'manual') and a 401 both
+  // land in the 'signin' state and leave the in-memory budget alone.
+  for (const [status, type] of [[0, 'opaqueredirect'], [401, 'basic'], [403, 'basic']]) {
+    const p = persistenceApi();
+    const loading = p.loadFromServer();
+    assert.equal(p.requests[0].options.redirect, 'manual', "GET /data must not follow a redirect cross-origin");
+    respond(p.requests[0], status, null, async () => '', type);
+    assert.equal(await loading, false);
+    assert.equal(p.state().loadState, 'signin');
+    assert.equal(p.state().data.value, 'A');
+  }
+  // Save: refused, dirty kept, no drain loop.
+  const p = persistenceApi();
+  const saving = p.writeFile();
+  assert.equal(p.requests[0].options.redirect, 'manual');
+  respond(p.requests[0], 0, null, async () => '', 'opaqueredirect');
+  assert.equal(await saving, false);
+  assert.equal(p.state().dirty, true);
+  assert.equal(p.requests.length, 1);
+  assert.ok(!p.statuses.includes('finance-data.json'), "a refused save must not be labelled saved");
+});
 
 // ------------------------------------------------------- 3b. serve.py guards
 {
@@ -985,7 +1007,24 @@ check("Service worker compiles, skips /data, and is network-first", () => {
   const handler = sw.slice(at);
   assert.match(handler, /await fetch\(/, "fetch handler never calls fetch()");
   assert.match(handler, /!fresh\.ok/, "a non-ok response must fall back to the cached shell");
+  // …except a redirect: behind a sign-in proxy an expired session answers the
+  // navigation with a redirect to its login page, which must reach the browser.
+  const redirectAt = handler.search(/fresh\.type === "opaqueredirect"\) return fresh/);
+  assert.ok(redirectAt >= 0, "an opaqueredirect must be returned, not replaced by the cached shell");
+  assert.ok(redirectAt < handler.indexOf("!fresh.ok"), "the redirect pass-through must come before the non-ok fallback");
   assert.match(sw, /const CACHE_NAME\s*=\s*["'][^"']+["']/, "CACHE_NAME must be a literal (bump it to roll the shell)");
+});
+
+check("Manifest is fetched with credentials and offers the quick-add shortcuts", () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, "manifest.webmanifest"), "utf8"));
+  const urls = (manifest.shortcuts || []).map(s => s.url);
+  assert.deepEqual(urls, ["./?add=expense", "./?add=income", "./?add=transfer-account"]);
+  for (const s of manifest.shortcuts) assert.ok(existsSync(path.join(root, s.icons[0].src)), `missing shortcut icon ${s.icons[0].src}`);
+  assert.match(app, /<link rel="manifest" href="manifest\.webmanifest" crossorigin="use-credentials">/,
+    "without use-credentials a sign-in proxy refuses the manifest and the app cannot be installed");
+  const types = mainInlineScript(app).match(/const QUICK_ADD_TYPES = \[([^\]]+)\]/);
+  assert.ok(types, "QUICK_ADD_TYPES not found");
+  for (const u of urls) assert.ok(types[1].includes(`'${new URLSearchParams(u.slice(2)).get('add')}'`), `${u} names a type ?add= does not accept`);
 });
 
 // ---------------------------------------------------------- 5. serve.py
