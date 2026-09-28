@@ -7,6 +7,10 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **The dashboard says when spendable first goes below zero.** When the projected
+  low is negative, the note under it now reads "below zero from <date>" — the first
+  day the line dips under zero, which is often weeks before the low itself — instead
+  of a bare "goes below zero". `spendableLow()` returns it as `belowZeroDate`.
 - **Quick entry from the phone's home screen.** The installed app's icon now has
   long-press shortcuts — **Add expense**, **Add income**, **Transfer** — that open
   straight into the transaction form with the amount focused. An expense or income

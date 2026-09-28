@@ -3096,19 +3096,24 @@ function lowTone(value) {
   if (typeof floor === 'number' && isFinite(floor) && value < floor) return 'warn';
   return '';
 }
-function lowToneNote(value) {
+// `belowZeroDate` (from spendableLow) names the day the line first dips under
+// zero, which is usually well before the low itself.
+function lowToneNote(value, belowZeroDate) {
   const t = lowTone(value);
-  if (t === 'bad') return '⚠ goes below zero';
+  if (t === 'bad') return belowZeroDate ? `⚠ below zero from ${fmtDate(belowZeroDate)}` : '⚠ goes below zero';
   if (t === 'warn') return `⚠ under your ${fmt(data.settings.forecastWarnBelow)} floor`;
   return '';
 }
 
+// The low, the date it falls on, and the first date the line is below zero
+// (null when it never is).
 function spendableLow(fc) {
-  let min = Infinity, idx = 0;
+  let min = Infinity, idx = 0, firstNeg = -1;
   for (let i = 0; i < fc.spendable.length; i++) {
     if (fc.spendable[i] < min) { min = fc.spendable[i]; idx = i; }
+    if (firstNeg < 0 && fc.spendable[i] < 0) firstNeg = i;
   }
-  return { min, date: fc.dates[idx] };
+  return { min, date: fc.dates[idx], belowZeroDate: firstNeg >= 0 ? fc.dates[firstNeg] : null };
 }
 
 // Exact projected spendable low AFTER applying a proposed set of envelope
@@ -3499,7 +3504,7 @@ function renderDashboard() {
         <p class="muted">After money set aside in envelopes</p></div>
       <div class="cash-low ${lowTone(low.min) ? 'tone-' + lowTone(low.min) : ''}">
         <div class="stat-label">Lowest projected spendable</div><div class="hero-low" id="dashSpendableLow">${fmt(low.min)}</div>
-        <p class="muted">${fmtDate(low.date)} · next ${fcDays} days${lowToneNote(low.min) ? ' · ' + lowToneNote(low.min) : ''}</p></div>
+        <p class="muted">${fmtDate(low.date)} · next ${fcDays} days${lowToneNote(low.min, low.belowZeroDate) ? ' · ' + lowToneNote(low.min, low.belowZeroDate) : ''}</p></div>
     </div>
     <div class="hero-context"><span>${plural(fcAccountIds.length, 'account')}${activeProfile ? ' · ' + esc(activeProfile.name) : ''}</span>
       <span class="assumption-chip ${forecastState.includeAllowances ? '' : 'allowances-off'}">Envelope ${forecastAssumptionLabel()}</span>

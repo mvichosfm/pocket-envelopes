@@ -511,6 +511,15 @@ if (api) {
     assert.equal(suggestion.suggested, 1000);
   });
 
+  check("spendableLow names the first date the line goes below zero, separately from the low", () => {
+    const fc = { dates: ["d0", "d1", "d2", "d3", "d4"], spendable: [100, -5, 20, -40, -10] };
+    const low = api.spendableLow(fc);
+    assert.equal(low.min, -40);
+    assert.equal(low.date, "d3");
+    assert.equal(low.belowZeroDate, "d1");
+    assert.equal(api.spendableLow({ dates: ["a", "b"], spendable: [10, 0] }).belowZeroDate, null);
+  });
+
   check("Fund envelope: the projected-low solver lands the low at zero, fills a hole for free, and knows when it cannot help", () => {
     const today = api.todayISO();
     api.setData({
