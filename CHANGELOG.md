@@ -5,7 +5,7 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
-## Unreleased
+## 2026-09-30 — v0.97, scenarios, phone quick entry, sign-in proxy support, below-zero date
 
 - **Scenarios page (accounting).** A new **Scenarios** view under Explore tests
   "what if" changes without touching the budget. A scenario is a saved, named set of

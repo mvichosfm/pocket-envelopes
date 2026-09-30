@@ -13,10 +13,10 @@ Everything needed to build `PocketEnvelopes-Setup-<version>.exe`.
 
 ```powershell
 winget install JRSoftware.InnoSetup
-powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 0.96
+powershell -ExecutionPolicy Bypass -File installer\build.ps1 -Version 0.97
 ```
 
-Output: `dist\PocketEnvelopes-Setup-0.96.exe` (about 11 MB, most of it the
+Output: `dist\PocketEnvelopes-Setup-0.97.exe` (about 11 MB, most of it the
 Python runtime).
 
 ## Built on GitHub Actions for releases
