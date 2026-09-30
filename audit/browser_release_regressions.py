@@ -250,6 +250,40 @@ class ReleaseRegressions(unittest.TestCase):
         p.goto(BASE+'/?demo=1&add=bogus');p.wait_for_function('data !== null')
         self.assertFalse(p.evaluate('document.getElementById("modalBg").classList.contains("open")'))
 
+    def test_scenarios_compare_apply_and_undo(self):
+        p=self.page
+        nxt="monthKeyAdd(monthKeyOf(todayISO()),1)"
+        p.evaluate("forecastState.accountIds=['a'];activeView='scenarios';render()")
+        p.locator('[data-sc-act="new"]').first.click()
+        p.locator('[data-sc-act="add-env"]').click()
+        p.locator('[data-sc-act="add-rec"]').click()
+        p.evaluate(f"data.scenarios[0].recSkips[0].from={nxt};render()")
+        table=p.locator('#main table').first.inner_text()
+        self.assertIn('Scenario 1',table);self.assertIn('low vs plan',table.lower())
+        self.assertEqual(p.locator('#scChart').count(),1)
+        # A pause of the envelope's month plus a skipped bill can only raise the low.
+        p.locator('[data-sc-f="pause"]').check()
+        self.assertGreater(p.evaluate("(()=>{const s=scenarioResults();return s.each.get(data.scenarios[0].id).lo.min-s.baseline.lo.min})()"),0)
+        # Apply lists the change, writes it, and one Undo takes it back.
+        undo=p.evaluate('undoStack.length')
+        p.locator('[data-sc-act="apply"]').click()
+        p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+        self.assertIn('pause its spending',p.locator('.sc-plan').inner_text())
+        p.locator('#sc_confirm').click()
+        self.assertEqual(p.evaluate(f"data.envelopes[0].skipMonths[{nxt}]"),'all')
+        self.assertTrue(p.evaluate("data.recurring[0].skippedDates.length>0"))
+        self.assertEqual(p.evaluate('undoStack.length'),undo+1)
+        self.assertIn('funding and spending paused',p.locator('#main').inner_text())
+        # Fund the month leaves the skipped envelope out for that month.
+        p.evaluate(f"closeModal();refillEnvelopes()");
+        p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+        p.locator('#rf_date').fill(p.evaluate(f"{nxt}+'-02'"))
+        self.assertEqual(p.locator('[data-rf-amt="e"]').input_value(),'0.00')
+        self.assertIn('funding skipped',p.locator('#rf_body').inner_text())
+        p.evaluate('closeModal();performUndo()')
+        self.assertIsNone(p.evaluate("data.envelopes[0].skipMonths??null"))
+        self.assertIsNone(p.evaluate("data.recurring[0].skippedDates??null"))
+
     def test_sign_in_proxy_shows_sign_in_not_unreachable(self):
         p=self.page
         for fulfil in ({'status':401,'body':'{}'},

@@ -164,6 +164,7 @@ function logicApi() {
     "validISODate", "recurringToTx", "recurringResumeDate",
     "recurringMonthlyEquiv", "recurringMonthlyForEnvelope", "recurringCoversEnvelope", "recurringCoversAllowanceOf",
     "withProbeTxs", "isReturnTx",
+    "monthKeyOf", "monthKeyAdd", "monthKeyRange", "sanitizeScenarios", "scenarioOverlay", "envSkipMode",
     "envelopeBackingAccount", "envelopeCountsFor", "activeAccounts", "activeEnvelopes", "pickerList",
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
@@ -175,6 +176,8 @@ function logicApi() {
     "let _balCache = null;",
     "const HAND_LOG_WINDOW_DAYS = 3;",
     "const RETURN_PAYEE = 'Return to spendable';",
+    "const MONTH_KEY_RE = /^\\d{4}-(0[1-9]|1[0-2])$/;",
+    "const SCENARIO_ID_RE = /^[A-Za-z0-9_\\-]{1,80}$/;",
     "const uid = () => 'audit-id';",
     "const tagColor = () => 'grey', themeColor = () => 'grey';",
     "const allTags = () => data.settings?.tags || [];",
@@ -313,6 +316,90 @@ if (api) {
     assert.equal(api.envelopeFundSuggestion(fun, "month").suggested, 250, "month mode proposes the suspended budget");
     assert.deepEqual([api.envelopeFundSuggestion(fun, "full").target, api.envelopeFundSuggestion(fun, "full").suggested], [250, 0],
       "full mode tops up to the suspended budget (the envelope already holds 300)");
+  });
+
+  check("Scenarios: skipped funding, paused spending and skipped recurring months move the projection by exactly what they remove", () => {
+    const DAYS = 120;
+    const cur = api.monthKeyOf(api.todayISO());
+    const nm = api.monthKeyAdd(cur, 1);
+    const mk = (extra = {}) => ({
+      accounts: [{ id: "cash", openingBalance: 5000, includeInNetWorth: true }],
+      envelopes: [
+        { id: "full", name: "Full", openingBalance: 300, budgetAmount: 300, cadence: "monthly", rolloverPolicy: "rollover", ...(extra.full || {}) },
+        { id: "empty", name: "Empty", openingBalance: 0, budgetAmount: 300, cadence: "monthly", rolloverPolicy: "rollover", ...(extra.empty || {}) },
+      ],
+      transactions: [],
+      recurring: [
+        { id: "sub", name: "Sub", type: "expense", amount: 100, schedule: "monthly", startDate: "2020-01-15",
+          accountId: "cash", active: true, lastAppliedDate: api.todayISO() },
+        { id: "due", name: "Due", type: "expense", amount: 70, schedule: "once", startDate: api.todayISO(),
+          accountId: "cash", active: true },
+      ],
+    });
+    const opts = { includeAllowances: true, assumeRefill: true };
+    const run = (list, extra) => { api.setData(mk(extra)); return api.forecastAccountBalances(["cash"], DAYS, { ...opts, ...(list ? { overlay: api.scenarioOverlay(list) } : {}) }); };
+    const S = (o) => ({ id: "s", name: "S", active: true, envSkips: [], recSkips: [], ...o });
+    const skipEnv = (envelopeId, pause) => S({ envSkips: [{ id: "e", envelopeId, from: nm, months: 1, pause }] });
+    const skipRec = (recId, from = nm) => S({ recSkips: [{ id: "r", recId, from, months: 1 }] });
+    const base = run(null);
+    // no overlay / an empty overlay is today's forecast, to the cent
+    assert.deepEqual(run([]).spendable, base.spendable);
+    const end = (fc, k) => fc[k][fc[k].length - 1];
+    // pause: that month's refill and drain both go, so cash keeps the 300 and spendable gains it
+    const paused = run([skipEnv("full", true)]);
+    assert.ok(Math.abs(end(paused, "total") - end(base, "total") - 300) < 0.05, "paused month keeps its 300 of cash");
+    assert.ok(Math.abs(end(paused, "spendable") - end(base, "spendable") - 300) < 0.05, "…and spendable gains the same 300");
+    // funding only, envelope already empty: spending still eats spendable, so the end figure does not move
+    const emptyOnly = run([skipEnv("empty", false)]);
+    assert.ok(Math.abs(end(emptyOnly, "total") - end(base, "total")) < 0.05, "funding-only skip leaves the cash line alone");
+    assert.ok(Math.abs(end(emptyOnly, "spendable") - end(base, "spendable")) < 0.05, "an empty envelope has no cushion to consume");
+    // funding only, envelope holding money: it consumes at most its balance
+    const fundOnly = run([skipEnv("full", false)]);
+    const gain = end(fundOnly, "spendable") - end(base, "spendable");
+    assert.ok(gain >= -0.05 && gain <= 300.05, `funding-only skip gains between 0 and the envelope's 300, got ${gain}`);
+    assert.ok(Math.abs(end(fundOnly, "total") - end(base, "total")) < 0.05);
+    // recurring: the month's occurrence leaves; a due occurrence in a skipped current month leaves too
+    const subInNm = Array.from(api.recurringOccurrences(mk().recurring[0], api.addDays(api.parseDate(api.todayISO()), 1), api.addDays(api.parseDate(api.todayISO()), DAYS)))
+      .filter(d => api.monthKeyOf(d) === nm).length;
+    assert.equal(subInNm, 1);
+    const recSkipped = run([skipRec("sub")]);
+    assert.ok(Math.abs(end(recSkipped, "total") - end(base, "total") - 100) < 0.05, "one skipped 100 occurrence");
+    const dueSkipped = run([skipRec("due", cur)]);
+    assert.ok(Math.abs(dueSkipped.total[0] - base.total[0] - 70) < 0.05, "a due occurrence in a skipped month leaves idx 0");
+    // separate effects add up when the scenarios are combined
+    const together = run([skipEnv("full", true), skipRec("sub")]);
+    assert.ok(Math.abs((end(together, "spendable") - end(base, "spendable")) - (300 + 100)) < 0.05, "combined = sum of the parts");
+    // a real, applied skip behaves exactly like the overlay
+    const real = run(null, { full: { skipMonths: { [nm]: "all" } } });
+    assert.deepEqual(real.spendable, paused.spendable);
+    // 'all' beats 'fund' when scenarios overlap
+    const ov = api.scenarioOverlay([skipEnv("full", false), S({ envSkips: [{ id: "x", envelopeId: "full", from: nm, months: 1, pause: true }] })]);
+    assert.equal(ov.funding.full[nm], "all");
+    assert.equal(api.envSkipMode({ id: "full" }, ov, nm), "all");
+    assert.equal(api.envSkipMode({ id: "full", skipMonths: { [nm]: "fund" } }, null, nm), "fund");
+    assert.equal(api.envSkipMode({ id: "full" }, null, nm), "");
+  });
+
+  check("Scenarios: loading drops dangling references and past months, and clamps counts", () => {
+    const cur = api.monthKeyOf(api.todayISO());
+    const raw = {
+      envelopes: [{ id: "a", skipMonths: { "2001-01": "all", [cur]: "fund", bad: "all", [api.monthKeyAdd(cur, 2)]: "nope" } }, { id: "b", skipMonths: {} }],
+      recurring: [{ id: "r1" }],
+      scenarios: [
+        { id: "ok", name: "N", active: true, envSkips: [{ id: "x", envelopeId: "a", from: cur, months: 999, pause: 1 }, { id: "y", envelopeId: "gone", from: cur, months: 1 }],
+          recSkips: [{ id: "z", recId: "r1", from: "2026-13", months: 2 }, { id: "w", recId: "r1", from: cur, months: 0 }] },
+        { id: "bad id!", name: "x" }, null, "junk",
+      ],
+    };
+    api.sanitizeScenarios(raw);
+    const j = (v) => JSON.stringify(v);   // the vm's arrays and objects are a different realm from assert's
+    assert.equal(j(raw.envelopes[0].skipMonths), j({ [cur]: "fund" }), "past, malformed and unknown-mode months are pruned");
+    assert.equal(raw.envelopes[1].skipMonths, undefined, "an empty map is deleted");
+    assert.equal(raw.scenarios.length, 1);
+    const s = raw.scenarios[0];
+    assert.equal(j(s.envSkips.map(x => [x.envelopeId, x.months, x.pause])), j([["a", 36, true]]));
+    assert.equal(j(s.recSkips.map(x => [x.recId, x.months])), j([["r1", 1]]), "a bad month is dropped, a zero count becomes one");
+    assert.equal(j(api.validateData({ scenarios: {} })), j(['"scenarios" is not a list']));
   });
 
   check("Forecast floors overspent envelopes instead of inflating spendable cash", () => {

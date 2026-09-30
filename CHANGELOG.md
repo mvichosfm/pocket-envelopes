@@ -7,6 +7,19 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Scenarios page (accounting).** A new **Scenarios** view under Explore tests
+  "what if" changes without touching the budget. A scenario is a saved, named set of
+  skips: skip an envelope's funding for a number of months (optionally also pausing
+  its spending, which makes that month's budget zero) and skip recurring entries for a
+  number of months. Any mix can be included at once: the chart and table compare
+  each scenario on its own and all included together against today's plan (low, date,
+  first day below zero, end-of-horizon spendable). **Apply to budget** lists what will
+  change, then records the skipped months on the envelopes (`skipMonths`; Fund the month
+  leaves them out and every forecast honours them) and skips the recurring occurrences
+  in those months (`skippedDates`); one Undo reverts it. Applied envelope skips are
+  listed on the page and removable there, and past months are pruned on load. The
+  page always projects with allowances on.
+
 - **The dashboard says when spendable first goes below zero.** When the projected
   low is negative, the note under it now reads "below zero from <date>" — the first
   day the line dips under zero, which is often weeks before the low itself — instead

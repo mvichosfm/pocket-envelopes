@@ -736,6 +736,21 @@
   .bulk-bar { margin: 14px 0; }
   .forecast-horizon { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
   .forecast-horizon > div { display: flex; gap: 6px; flex-wrap: wrap; }
+  /* Scenarios page (decision #66) */
+  .sc-card { margin-top: 14px; }
+  .sc-card[data-included="false"] { opacity: .78; }
+  .sc-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .sc-head input[type="text"] { flex: 1 1 200px; min-width: 0; padding: 6px 8px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-weight: 600; }
+  .sc-block { margin-top: 12px; }
+  .sc-block h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
+  .sc-row { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--border); }
+  .sc-row select, .sc-row input[type="number"] { padding: 5px 7px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; max-width: 100%; }
+  .sc-row input[type="number"] { width: 64px; }
+  .sc-row label { display: inline-flex; gap: 6px; align-items: center; }
+  .sc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .sc-result { margin-top: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .sc-plan { max-height: 46vh; overflow: auto; }
+  .sc-plan li { margin: 2px 0; }
   .forecast-row { flex-wrap: nowrap; align-items: flex-start; }
   .forecast-controls { flex: 0 0 var(--forecast-controls-w, 310px); min-width: 0; flex-direction: column; gap: 0; padding: 18px; }
   .fc-section { min-width: 0; margin: 0; padding: 14px 0; }
@@ -888,6 +903,7 @@
     <div class="nav-group" role="group" aria-label="Analysis">
       <span class="nav-group-label">Explore</span>
       <button data-view="forecast">Forecast</button>
+      <button data-view="scenarios">Scenarios</button>
       <button data-view="networth">Net Worth</button>
       <button data-view="reports">Reports</button>
     </div>
@@ -987,6 +1003,7 @@ function emptyData() {
     netWorthSnapshots: [], // [{date, value}]
     forecastProfiles: [],  // [{id, name, accountIds, days, chartLines, includeAllowances, assumeRefill?, showSpendable}]
     importProfiles: [],    // [{id, name, delimiter, hasHeader, dateOrder, amountMode, map:{date,desc,amount,debit,credit}, accountId}] — CSV import
+    scenarios: [],         // [{id, name, active, appliedOn?, envSkips:[{id, envelopeId, from, months, pause}], recSkips:[{id, recId, from, months}]}] — Scenarios page (decision #66)
     defaultForecastProfileId: null,  // id of the profile auto-applied on session start; null = no default
     lastClosedMonth: null  // "YYYY-MM" of the most recent month the user has closed-out via the review flow; null = never closed
   };
@@ -1062,7 +1079,7 @@ async function loadFromServer() {
 function validateData(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ['not a Pocket Envelopes data object'];
   const problems = [];
-  const arrayKeys = ['accounts', 'envelopes', 'transactions', 'recurring', 'netWorthSnapshots', 'forecastProfiles', 'importProfiles'];
+  const arrayKeys = ['accounts', 'envelopes', 'transactions', 'recurring', 'netWorthSnapshots', 'forecastProfiles', 'importProfiles', 'scenarios'];
   for (const k of arrayKeys) if (raw[k] !== undefined && !Array.isArray(raw[k])) problems.push(`"${k}" is not a list`);
   if (raw.settings !== undefined && (typeof raw.settings !== 'object' || raw.settings === null || Array.isArray(raw.settings))) problems.push('"settings" is not an object');
   if (raw.settings && raw.settings.tags !== undefined && !Array.isArray(raw.settings.tags)) problems.push('"settings.tags" is not a list');
@@ -1224,7 +1241,90 @@ function migrate(raw) {
     delete p.showTotal;
     delete p.onlyTotal;
   }
+  sanitizeScenarios(raw);
   return raw;
+}
+
+// ---- SCENARIOS (decision #66) ---------------------------------------------
+// A scenario is a saved what-if: skip funding some envelopes for n months, skip
+// some recurring entries for n months. `scenarioOverlay` compiles the active
+// ones into the lookup the forecast reads; applying one writes the skips into
+// the real budget (env.skipMonths, rec.skippedDates).
+const MONTH_KEY_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const SCENARIO_ID_RE = /^[A-Za-z0-9_\-]{1,80}$/;
+function monthKeyOf(iso) { return String(iso).slice(0, 7); }
+function monthKeyAdd(key, n) {
+  const y = +key.slice(0, 4), m = +key.slice(5, 7) - 1 + n;
+  const d = new Date(y, m, 1);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+// The `months` consecutive month keys starting at `from`.
+function monthKeyRange(from, months) {
+  const out = [];
+  for (let i = 0; i < months; i++) out.push(monthKeyAdd(from, i));
+  return out;
+}
+function monthKeyLabel(key) {
+  return new Intl.DateTimeFormat(displayLocale(), { month: 'short', year: 'numeric' }).format(new Date(+key.slice(0, 4), +key.slice(5, 7) - 1, 1));
+}
+// Drop what could never be read (bad ids, months, dangling references) and
+// prune real skip months that are already in the past.
+function sanitizeScenarios(raw) {
+  const thisMonth = monthKeyOf(todayISO());
+  const envIds = new Set((raw.envelopes || []).map(e => e.id));
+  const recIds = new Set((raw.recurring || []).map(r => r.id));
+  for (const e of raw.envelopes || []) {
+    if (e.skipMonths === undefined) continue;
+    const kept = {};
+    if (e.skipMonths && typeof e.skipMonths === 'object' && !Array.isArray(e.skipMonths)) {
+      for (const [k, v] of Object.entries(e.skipMonths)) {
+        if (MONTH_KEY_RE.test(k) && k >= thisMonth && (v === 'fund' || v === 'all')) kept[k] = v;
+      }
+    }
+    if (Object.keys(kept).length) e.skipMonths = kept; else delete e.skipMonths;
+  }
+  const monthsOf = n => Math.min(36, Math.max(1, Math.round(Number(n)) || 1));
+  const list = Array.isArray(raw.scenarios) ? raw.scenarios : [];
+  raw.scenarios = list.filter(s => s && typeof s === 'object' && !Array.isArray(s) && SCENARIO_ID_RE.test(String(s.id))).map(s => ({
+    id: String(s.id),
+    name: typeof s.name === 'string' ? s.name.slice(0, 80) : 'Scenario',
+    active: s.active !== false,
+    ...(typeof s.appliedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.appliedOn) ? { appliedOn: s.appliedOn } : {}),
+    envSkips: (Array.isArray(s.envSkips) ? s.envSkips : []).filter(x => x && envIds.has(x.envelopeId) && MONTH_KEY_RE.test(String(x.from))).map(x => ({
+      id: SCENARIO_ID_RE.test(String(x.id)) ? String(x.id) : uid(), envelopeId: x.envelopeId, from: x.from, months: monthsOf(x.months), pause: !!x.pause
+    })),
+    recSkips: (Array.isArray(s.recSkips) ? s.recSkips : []).filter(x => x && recIds.has(x.recId) && MONTH_KEY_RE.test(String(x.from))).map(x => ({
+      id: SCENARIO_ID_RE.test(String(x.id)) ? String(x.id) : uid(), recId: x.recId, from: x.from, months: monthsOf(x.months)
+    }))
+  }));
+}
+// Compile scenarios into { funding: {envId: {monthKey: 'fund'|'all'}}, rec: {recId: Set(monthKey)} }.
+// Scenarios merge by union and 'all' (pause spending too) beats 'fund'.
+function scenarioOverlay(list) {
+  const ov = { funding: {}, rec: {} };
+  for (const s of list || []) {
+    for (const x of s.envSkips || []) {
+      const m = (ov.funding[x.envelopeId] = ov.funding[x.envelopeId] || {});
+      for (const k of monthKeyRange(x.from, x.months)) if (x.pause || m[k] !== 'all') m[k] = x.pause ? 'all' : 'fund';
+    }
+    for (const x of s.recSkips || []) {
+      const set = (ov.rec[x.recId] = ov.rec[x.recId] || new Set());
+      for (const k of monthKeyRange(x.from, x.months)) set.add(k);
+    }
+  }
+  return ov;
+}
+// The skip in force for an envelope in a month: the real env.skipMonths (always)
+// merged with an optional overlay. Returns 'all', 'fund' or ''.
+function envSkipMode(env, overlay, monthKey) {
+  const a = env.skipMonths && env.skipMonths[monthKey];
+  const b = overlay && overlay.funding[env.id] && overlay.funding[env.id][monthKey];
+  return a === 'all' || b === 'all' ? 'all' : (a || b || '');
+}
+// "Nov 2026, Dec 2026" summary of an envelope's real skips, for badges.
+function envSkipSummary(e) {
+  const keys = Object.keys(e.skipMonths || {}).sort();
+  return keys.length ? keys.map(monthKeyLabel).join(', ') : '';
 }
 
 // Start a brand-new budget on a server that has no finance-data.json yet.
@@ -2692,9 +2792,14 @@ function forecastAccountBalances(accountIds, days, opts) {
   // monthly budget on the 1st of each future month — Fund the month, assumed
   // — and a `reset` envelope releases its leftover at month end. Off = the
   // pre-#57 reading, where envelopes are spent down and never topped up.
+  // opts.overlay (decision #66): a compiled scenario (`scenarioOverlay`) — skipped
+  // funding / paused spending per envelope-month and skipped recurring months.
+  // Only the Scenarios page passes one; the real env.skipMonths apply always.
   opts = opts || {};
   const includeAllowances = !!opts.includeAllowances;
   const assumeRefill = opts.assumeRefill !== false;
+  const overlay = opts.overlay || null;
+  const recSkippedIn = (rec, iso) => !!(overlay && overlay.rec[rec.id] && overlay.rec[rec.id].has(monthKeyOf(iso)));
   // Defensive: drop ids whose account no longer exists. series[] below is only
   // seeded for live accounts (missing ones are `continue`d past), so an orphan
   // id — e.g. a deleted account still referenced by a saved forecast profile or
@@ -2732,7 +2837,8 @@ function forecastAccountBalances(accountIds, days, opts) {
   // shows up in the projection. A user who wants to exclude a due (e.g. a
   // cancelled subscription) still dismisses it via the dashboard banner,
   // which advances rec.lastAppliedDate and drops it from this list.
-  for (const { rec, amount } of dueRecurringOccurrences()) {
+  for (const { rec, amount, date: dueDate } of dueRecurringOccurrences()) {
+    if (recSkippedIn(rec, dueDate)) continue;
     const fakeTx = {
       type: rec.type,
       amount,   // the occurrence's own amount (decision #60)
@@ -2768,6 +2874,7 @@ function forecastAccountBalances(accountIds, days, opts) {
     const recFromDate = recFromD > tomorrow ? recFromD : tomorrow;
     for (const d of recurringOccurrences(rec, recFromDate, horizon)) {
       if (isSkippedOccurrence(rec, d)) continue;   // a skipped future date leaves the projection (decision #60)
+      if (recSkippedIn(rec, d)) continue;          // a scenario's skipped month (decision #66)
       const idx = daysBetween(today, parseDate(d));
       if (idx < 0 || idx > days) continue;
       const fakeTx = {
@@ -2898,6 +3005,7 @@ function forecastAccountBalances(accountIds, days, opts) {
     // of this month's budget is left differs per envelope; curDrainDay marks
     // which of those days spend (up to the 28th, or every remaining day once
     // the 28th has passed).
+    const monthKeys = dates.map(monthKeyOf);
     const dayFactor = new Array(days + 1).fill(0);
     const inCurrentMonth = new Array(days + 1).fill(false);
     const curDrainDay = new Array(days + 1).fill(false);
@@ -2991,6 +3099,8 @@ function forecastAccountBalances(accountIds, days, opts) {
       const curLeft = Math.max(0, monthly - (spentThisMonth[env.id] || 0) - (returnedThisMonth[env.id] || 0));
       const curRate = curSpendDays > 0 ? curLeft / curSpendDays : 0;
       for (let i = 1; i <= days; i++) {
+        // A month whose budget is paused ('all', decision #66) neither spends nor is funded.
+        if (envSkipMode(env, overlay, monthKeys[i]) === 'all') continue;
         const drain = inCurrentMonth[i] ? (curDrainDay[i] ? curRate : 0) : monthly * dayFactor[i];
         accSeries[i] -= drain;
         // Mirror the drain onto the envelope. Projected envelope spending is
@@ -3022,7 +3132,10 @@ function forecastAccountBalances(accountIds, days, opts) {
       for (const env of data.envelopes) {
         if (!refilled.has(env.id)) continue;
         const b = envMonthlyEquiv(env);
-        for (const i of refillIdx) envSeries[env.id][i] += b;
+        for (const i of refillIdx) {
+          if (envSkipMode(env, overlay, monthKeys[i])) continue;   // funding skipped this month (decision #66)
+          envSeries[env.id][i] += b;
+        }
       }
     }
   }
@@ -3270,6 +3383,7 @@ function render() {
       case "transactions": main.innerHTML = renderTransactions(); bindTransactions(); break;
       case "recurring": main.innerHTML = renderRecurring(); bindRecurring(); break;
       case "forecast": main.innerHTML = renderForecast(); bindForecast(); break;
+      case "scenarios": main.innerHTML = renderScenarios(); bindScenarios(); break;
       case "networth": main.innerHTML = renderNetWorth(); bindNetWorth(); break;
       case "reports": main.innerHTML = renderReports(); bindReports(); break;
       case "settings": main.innerHTML = renderSettings(); bindSettings(); break;
@@ -4391,7 +4505,7 @@ function envelopeCard(e, bal, spent) {
   }
   return `<div class="card envelope" data-state="${state}">
     <div class="ev-head">
-      <div class="ev-name">${isPinned ? `<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">${icon('pin', 'Pinned')}</span>` : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — Fund the month never proposes it; fund it from this card or by sweeping leftovers at close-out">reserve</span>' : ''}</div>
+      <div class="ev-name">${isPinned ? `<span title="Pinned to top of group" style="color:var(--accent);margin-right:4px;">${icon('pin', 'Pinned')}</span>` : ''}<a href="#" class="drill" data-tx-env="${e.id}" title="Show this envelope's transactions">${esc(e.name)}</a>${isAnnual ? ' <span class="badge" style="margin-left:4px;">annual</span>' : ''}${isReset ? ' <span class="badge" style="margin-left:4px;" title="Leftover returns to spendable each month">resets</span>' : ''}${isSweep ? ' <span class="badge" style="margin-left:4px;" title="Leftover sweeps into the reserve envelope at close-out">sweeps</span>' : ''}${e.skipMonths ? ` <span class="badge" style="margin-left:4px;" title="Skipped from the Scenarios page: ${esc(envSkipSummary(e))}. Fund the month leaves it out and the forecast honours it.">funding skipped</span>` : ''}${isReserve ? ' <span class="badge" style="margin-left:4px;" title="Reserve envelope — Fund the month never proposes it; fund it from this card or by sweeping leftovers at close-out">reserve</span>' : ''}</div>
       <div class="ev-balance"><span class="stat-label">Available</span><div class="ev-bal ${bal<0?'neg':''}">${fmt(bal)}</div></div>
     </div>
     <div class="ev-meta">
@@ -5077,12 +5191,16 @@ function refillEnvelopes() {
   // Each invocation re-renders the modal body so the user can flip between
   // "month" and "full" modes; we keep one closure-scoped state object and a
   // helper that paints rows from it.
-  const state = { mode: "month" };
+  const state = { mode: "month", date: todayISO() };
 
   const draw = () => {
+    // An envelope whose funding is skipped for the chosen date's month (decision #66,
+    // applied from the Scenarios page) proposes nothing; the row says why.
+    const drawMonth = monthKeyOf(state.date);
     const rows = fundable.map(env => {
       const s = envelopeFundSuggestion(env, state.mode);
-      return { env, ...s };
+      const skip = envSkipMode(env, null, drawMonth);
+      return { env, ...s, skip, suggested: skip ? 0 : s.suggested };
     });
     const total = rows.reduce((sum, r) => sum + r.suggested, 0);
     const isAnnualNote = state.mode === "month"
@@ -5118,7 +5236,7 @@ function refillEnvelopes() {
           </select>
         </div>
         <div class="field"><label>Date</label>
-          <input type="date" id="rf_date" value="${todayISO()}"></div>
+          <input type="date" id="rf_date" value="${state.date}"></div>
       </div>
       <div class="checkbox-list" style="max-height:48vh;overflow:auto;">
         ${rows.map(r => {
@@ -5133,6 +5251,7 @@ function refillEnvelopes() {
                 ${isAnnual ? '<span class="badge" style="margin-left:4px;">annual</span>' : ''}
                 ${isReset ? '<span class="badge" style="margin-left:4px;">resets</span>' : ''}
                 ${isSweep ? '<span class="badge" style="margin-left:4px;">sweeps</span>' : ''}
+                ${r.skip ? '<span class="badge" style="margin-left:4px;" title="Skipped for this month on the Scenarios page">funding skipped</span>' : ''}
               </span>
               <span style="color:var(--text-dim);font-size:13px;width:140px;text-align:right;">
                 ${fmt(r.bal)} / ${fmt(r.target)}${isAnnual ? '/yr' : ''}
@@ -5149,6 +5268,9 @@ function refillEnvelopes() {
     document.getElementById("rf_mode").onchange = (ev) => {
       state.mode = ev.target.value;
       draw();
+    };
+    document.getElementById("rf_date").onchange = (ev) => {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ev.target.value)) { state.date = ev.target.value; draw(); }
     };
     // Keep the running total honest as the user tweaks individual amounts,
     // and surface the post-funding projection so they can see immediately
@@ -7136,6 +7258,326 @@ const forecastPanelOpen = {};
 function forecastPanelAttr(key) {
   return (forecastPanelOpen[key] ?? !matchMedia('(max-width: 720px)').matches) ? 'open' : '';
 }
+// ---- SCENARIOS VIEW (decision #66) ----------------------------------------
+// Envelope skips only change a projection that projects envelopes, so this page
+// always forecasts with allowances on (refills follow the Forecast tab's toggle).
+function scenarioRunOpts() {
+  return { includeAllowances: true, assumeRefill: forecastState.assumeRefill !== false };
+}
+function scenarioEnvChoices(selected) {
+  return data.envelopes.filter(e => !e.isReserve && ((!e.archived && envMonthlyEquiv(e) > 0) || e.id === selected));
+}
+function scenarioRecChoices(selected) {
+  return data.recurring.filter(r => r.active !== false || r.id === selected);
+}
+function scenarioMonthOptions(selected) {
+  const keys = monthKeyRange(monthKeyOf(todayISO()), 25);
+  if (selected && !keys.includes(selected)) keys.unshift(selected);
+  return keys.map(k => `<option value="${k}" ${k === selected ? 'selected' : ''}>${esc(monthKeyLabel(k))}</option>`).join('');
+}
+// Baseline, every scenario on its own, and all included ones together.
+function scenarioResults() {
+  const ids = forecastSelectedAccountIds();
+  if (!ids.length) return null;
+  const days = forecastState.days;
+  const base = scenarioRunOpts();
+  const run = list => {
+    const fc = forecastAccountBalances(ids, days, list ? { ...base, overlay: scenarioOverlay(list) } : base);
+    return { fc, lo: spendableLow(fc), end: fc.spendable[fc.spendable.length - 1] };
+  };
+  const included = data.scenarios.filter(s => s.active);
+  return {
+    ids, days, included,
+    baseline: run(null),
+    each: new Map(data.scenarios.map(s => [s.id, run([s])])),
+    combined: included.length > 1 ? run(included) : null
+  };
+}
+const signedFmt = d => (d >= 0 ? '+' : '−') + fmt(Math.abs(d));
+
+function scenarioCardHTML(s, res) {
+  const r = res ? res.each.get(s.id) : null;
+  const delta = r ? r.lo.min - res.baseline.lo.min : 0;
+  const envRows = s.envSkips.map(x => `<div class="sc-row">
+      <select data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="env" data-sc-f="envelopeId" aria-label="Envelope whose funding is skipped">
+        ${scenarioEnvChoices(x.envelopeId).map(e => `<option value="${e.id}" ${e.id === x.envelopeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select>
+      <label>from <select data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="env" data-sc-f="from" aria-label="First month skipped">${scenarioMonthOptions(x.from)}</select></label>
+      <label>for <input type="number" min="1" max="36" step="1" value="${x.months}" data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="env" data-sc-f="months" aria-label="Number of months"> ${x.months === 1 ? 'month' : 'months'}</label>
+      <label title="On: that month's budget is 0 — no refill and no projected spending. Off: no refill, but spending continues from the envelope's balance, then from spendable cash."><input type="checkbox" data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="env" data-sc-f="pause" ${x.pause ? 'checked' : ''}> also pause its spending</label>
+      <button class="btn sm danger" data-sc-act="rm" data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="env" aria-label="Remove this envelope skip">${icon('x')}</button>
+    </div>`).join('');
+  const recRows = s.recSkips.map(x => `<div class="sc-row">
+      <select data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="rec" data-sc-f="recId" aria-label="Recurring entry to skip">
+        ${scenarioRecChoices(x.recId).map(rc => `<option value="${rc.id}" ${rc.id === x.recId ? 'selected' : ''}>${esc(rc.name)}${rc.active === false ? ' (paused)' : ''}</option>`).join('')}</select>
+      <label>from <select data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="rec" data-sc-f="from" aria-label="First month skipped">${scenarioMonthOptions(x.from)}</select></label>
+      <label>for <input type="number" min="1" max="36" step="1" value="${x.months}" data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="rec" data-sc-f="months" aria-label="Number of months"> ${x.months === 1 ? 'month' : 'months'}</label>
+      <button class="btn sm danger" data-sc-act="rm" data-sc="${s.id}" data-sc-row="${x.id}" data-sc-kind="rec" aria-label="Remove this recurring skip">${icon('x')}</button>
+    </div>`).join('');
+  const empty = !s.envSkips.length && !s.recSkips.length;
+  return `<div class="card sc-card" data-included="${s.active}">
+    <div class="sc-head">
+      <input type="text" value="${esc(s.name)}" data-sc="${s.id}" data-sc-f="name" aria-label="Scenario name" maxlength="80">
+      <label title="Include this scenario in the chart and comparison table"><input type="checkbox" data-sc="${s.id}" data-sc-f="active" ${s.active ? 'checked' : ''}> Include</label>
+      ${s.appliedOn ? `<span class="badge" title="Applied to your budget on ${esc(fmtDate(s.appliedOn))}">applied ${esc(fmtDate(s.appliedOn))}</span>` : ''}
+    </div>
+    <div class="sc-block"><h4>Skip envelope funding</h4>${envRows || '<div class="muted">None.</div>'}
+      <div class="sc-actions"><button class="btn sm" data-sc-act="add-env" data-sc="${s.id}">${icon('plus')}Skip an envelope</button></div></div>
+    <div class="sc-block"><h4>Skip recurring entries</h4>${recRows || '<div class="muted">None.</div>'}
+      <div class="sc-actions"><button class="btn sm" data-sc-act="add-rec" data-sc="${s.id}">${icon('plus')}Skip a recurring entry</button></div></div>
+    ${r ? `<div class="sc-result">On its own: spendable low <strong>${fmt(r.lo.min)}</strong> on ${esc(fmtDate(r.lo.date))}
+      (<span class="${delta >= 0 ? 'pos' : 'neg'}">${signedFmt(delta)}</span> vs today's plan)${r.lo.belowZeroDate ? ` · <span class="neg">below zero from ${esc(fmtDate(r.lo.belowZeroDate))}</span>` : ''}</div>` : ''}
+    <div class="sc-actions">
+      <button class="btn primary sm" data-sc-act="apply" data-sc="${s.id}" ${empty ? 'disabled' : ''} title="Write these skips into your real budget">Apply to budget…</button>
+      <button class="btn sm" data-sc-act="dup" data-sc="${s.id}">Duplicate</button>
+      <button class="btn sm danger" data-sc-act="del" data-sc="${s.id}">Delete</button>
+    </div>
+  </div>`;
+}
+
+function renderScenarios() {
+  if (!Array.isArray(data.scenarios)) data.scenarios = [];   // demo data and hand-built fixtures skip migrate()
+  const res = scenarioResults();
+  const thisMonth = monthKeyOf(todayISO());
+  const appliedEnv = data.envelopes.filter(e => e.skipMonths).flatMap(e => Object.entries(e.skipMonths).sort()
+    .map(([k, mode]) => ({ e, k, mode })));
+  const today = todayISO();
+  const recSkipped = data.recurring.map(r => ({ r, n: (r.skippedDates || []).filter(d => d > today).length })).filter(x => x.n);
+  const rows = res ? [
+    ['Today’s plan (baseline)', res.baseline],
+    ...res.included.map(s => [s.name, res.each.get(s.id)]),
+    ...(res.combined ? [['All included together', res.combined]] : [])
+  ] : [];
+  return `
+  <div class="page-heading"><div><h2>Scenarios</h2><p>Test “what if” changes to the plan — skip funding an envelope, skip a recurring entry — side by side, then apply the ones you choose.</p></div>
+    <div class="sc-actions" style="margin:0;">
+      <button class="btn primary" data-sc-act="new">${icon('plus')}New scenario</button>
+      <button class="btn" data-sc-act="apply-all" ${data.scenarios.some(s => s.active && (s.envSkips.length || s.recSkips.length)) ? '' : 'disabled'} title="Apply every included scenario to your budget">Apply all included…</button>
+    </div></div>
+  <div class="forecast-horizon" role="group" aria-label="Time horizon"><span class="stat-label">Look ahead</span>
+    <div>${HORIZONS.map(h => `<button class="btn ${h.days === forecastState.days ? 'selected' : ''}" aria-pressed="${h.days === forecastState.days}" data-sc-h="${h.days}">${h.label}</button>`).join('')}</div>
+  </div>
+  ${res ? `
+  <div class="card forecast-chart-card">
+    <div class="section-heading"><h3>Spendable cash under each scenario</h3><span class="muted">${plural(res.ids.length, 'account')} · allowances included, ${forecastState.assumeRefill !== false ? 'refilled monthly' : 'spent down'} · accounts and refill setting come from the Forecast tab</span></div>
+    <div class="forecast-canvas"><canvas id="scChart" role="img" aria-label="Projected spendable cash for the plan and each included scenario"></canvas></div>
+  </div>
+  <div class="card" style="margin-top:14px;overflow-x:auto;">
+    <h3>Comparison</h3>
+    <table><thead><tr><th>Scenario</th><th class="num">Spendable low</th><th>On</th><th>Below zero from</th><th class="num">${esc(fmtDate(res.baseline.fc.dates[res.baseline.fc.dates.length - 1]))}</th><th class="num">Low vs plan</th></tr></thead>
+    <tbody>${rows.map(([name, r], i) => `<tr>
+      <td>${i === 0 ? esc(name) : `<strong>${esc(name)}</strong>`}</td>
+      <td class="num">${fmt(r.lo.min)}</td><td>${esc(fmtDate(r.lo.date))}</td>
+      <td>${r.lo.belowZeroDate ? `<span class="neg">${esc(fmtDate(r.lo.belowZeroDate))}</span>` : '—'}</td>
+      <td class="num">${fmt(r.end)}</td>
+      <td class="num ${i === 0 ? '' : (r.lo.min - res.baseline.lo.min >= 0 ? 'pos' : 'neg')}">${i === 0 ? '—' : signedFmt(r.lo.min - res.baseline.lo.min)}</td></tr>`).join('')}</tbody></table>
+    ${res.included.length ? '' : '<p class="muted" style="margin-bottom:0;">Tick <strong>Include</strong> on a scenario to see it here.</p>'}
+  </div>` : `<div class="card"><p>Select at least one account on the Forecast tab first — scenarios are projected over those accounts.</p></div>`}
+  ${data.scenarios.length ? data.scenarios.map(s => scenarioCardHTML(s, res)).join('') : `
+  <div class="card sc-card"><p style="margin-top:0;">No scenarios yet. A scenario is a saved set of “skips”: pick envelopes whose funding you would skip for a few months, and recurring entries you would skip. Several can be included at once.</p>
+    <button class="btn primary" data-sc-act="new">${icon('plus')}New scenario</button></div>`}
+  <div class="card sc-card">
+    <h3>Applied to your budget</h3>
+    ${appliedEnv.length || recSkipped.length ? `
+      ${appliedEnv.length ? `<ul style="margin:6px 0;padding-left:20px;">${appliedEnv.map(({ e, k, mode }) => `<li>${esc(e.name)} — ${esc(monthKeyLabel(k))}: ${mode === 'all' ? 'funding and spending paused' : 'funding skipped'}${k === thisMonth ? ' (this month)' : ''}
+        <button class="btn sm ghost" data-sc-act="unskip" data-env="${e.id}" data-month="${k}" aria-label="Remove this applied skip">${icon('x')}</button></li>`).join('')}</ul>` : ''}
+      ${recSkipped.length ? `<p class="muted" style="margin:6px 0;">Skipped recurring dates: ${recSkipped.map(x => `${esc(x.r.name)} (${x.n})`).join(', ')}. Manage them per entry in Recurring → Occurrences.</p>` : ''}`
+      : '<p class="muted" style="margin:6px 0;">Nothing yet. Applying a scenario records its skips here; Fund the month and the forecast then honour them.</p>'}
+  </div>`;
+}
+
+// What applying `list` would change in the real budget.
+function scenarioApplyPlan(list) {
+  const thisMonth = monthKeyOf(todayISO());
+  const want = {};
+  for (const s of list) for (const x of s.envSkips) {
+    const w = (want[x.envelopeId] = want[x.envelopeId] || {});
+    for (const k of monthKeyRange(x.from, x.months)) {
+      if (k < thisMonth) continue;
+      if (x.pause || w[k] !== 'all') w[k] = x.pause ? 'all' : 'fund';
+    }
+  }
+  const envChanges = [];
+  for (const [id, w] of Object.entries(want)) {
+    const env = data.envelopes.find(e => e.id === id);
+    if (!env) continue;
+    for (const [k, mode] of Object.entries(w).sort()) {
+      const cur = env.skipMonths && env.skipMonths[k];
+      const final = cur === 'all' ? 'all' : mode;
+      if (final !== cur) envChanges.push({ env, month: k, mode: final });
+    }
+  }
+  const months = {};
+  for (const s of list) for (const x of s.recSkips) {
+    const set = (months[x.recId] = months[x.recId] || new Set());
+    for (const k of monthKeyRange(x.from, x.months)) set.add(k);
+  }
+  const recChanges = [];
+  for (const [id, set] of Object.entries(months)) {
+    const rec = data.recurring.find(r => r.id === id);
+    if (!rec) continue;
+    const keys = [...set].sort();
+    const winStart = parseDate(keys[0] + '-01');
+    const hi = keys[keys.length - 1];
+    const winEnd = new Date(+hi.slice(0, 4), +hi.slice(5, 7), 0);
+    const fromD = recurringResumeDate(rec, winStart);
+    const dates = [];
+    for (const d of recurringOccurrences(rec, fromD > winStart ? fromD : winStart, winEnd)) {
+      if (set.has(monthKeyOf(d)) && !isSkippedOccurrence(rec, d)) dates.push(d);
+    }
+    if (dates.length) recChanges.push({ rec, dates });
+  }
+  return { envChanges, recChanges };
+}
+function applyScenarios(list) {
+  if (!list.length) return;
+  const plan = scenarioApplyPlan(list);
+  if (!plan.envChanges.length && !plan.recChanges.length) {
+    toast('Nothing to apply — those months are already skipped, or hold no scheduled occurrences');
+    return;
+  }
+  const label = list.length === 1 ? `Apply scenario “${list[0].name}”` : `Apply ${list.length} scenarios`;
+  openModal(`<h2>${esc(label)}</h2>
+    <p>This changes your real budget. Undo (Ctrl+Z) reverts it in one step.</p>
+    <div class="sc-plan"><ul>
+      ${plan.envChanges.map(c => `<li><strong>${esc(c.env.name)}</strong> — ${esc(monthKeyLabel(c.month))}: ${c.mode === 'all' ? 'skip funding and pause its spending' : 'skip funding'}</li>`).join('')}
+      ${plan.recChanges.map(c => `<li><strong>${esc(c.rec.name)}</strong> — skip ${plural(c.dates.length, 'occurrence')}: ${c.dates.map(d => esc(fmtDate(d))).join(', ')}</li>`).join('')}
+    </ul>
+    ${(() => {
+      const hit = new Set(plan.recChanges.map(c => c.rec.id));
+      const none = [...new Set(list.flatMap(s => s.recSkips.map(x => x.recId)))].filter(id => !hit.has(id))
+        .map(id => data.recurring.find(r => r.id === id)).filter(Boolean);
+      return none.length ? `<p class="muted">No occurrence left to skip in the chosen months (or already skipped): ${none.map(r => esc(r.name)).join(', ')}.</p>` : '';
+    })()}</div>
+    <div class="modal-actions"><button class="btn" id="sc_cancel">Cancel</button><button class="btn primary" id="sc_confirm">Apply</button></div>`);
+  document.getElementById('sc_cancel').onclick = closeModal;
+  document.getElementById('sc_confirm').onclick = () => {
+    pushUndo(label);
+    for (const c of plan.envChanges) { c.env.skipMonths = c.env.skipMonths || {}; c.env.skipMonths[c.month] = c.mode; }
+    for (const c of plan.recChanges) for (const d of c.dates) setOccurrenceSkipped(c.rec, d, true);
+    for (const s of list) { s.appliedOn = todayISO(); s.active = false; }
+    saveDirty();
+    closeModal();
+    render();
+    toast(`Applied — ${plural(plan.envChanges.length, 'envelope month')}, ${plural(plan.recChanges.reduce((n, c) => n + c.dates.length, 0), 'recurring occurrence')} skipped`, 6000, 'success', { label: 'Undo', onClick: performUndo });
+  };
+}
+
+function bindScenarios() {
+  document.querySelectorAll('[data-sc-h]').forEach(b => b.onclick = () => { forecastState.days = +b.dataset.scH; render(); });
+  document.querySelectorAll('[data-sc-f]').forEach(el => el.onchange = () => {
+    const s = data.scenarios.find(x => x.id === el.dataset.sc);
+    if (!s) return;
+    const f = el.dataset.scF;
+    if (f === 'name') s.name = el.value.trim().slice(0, 80) || 'Scenario';
+    else if (f === 'active') s.active = el.checked;
+    else {
+      const row = (el.dataset.scKind === 'env' ? s.envSkips : s.recSkips).find(x => x.id === el.dataset.scRow);
+      if (!row) return;
+      if (f === 'months') row.months = Math.min(36, Math.max(1, Math.round(Number(el.value)) || 1));
+      else if (f === 'pause') row.pause = el.checked;
+      else if (f === 'from') { if (MONTH_KEY_RE.test(el.value)) row.from = el.value; }
+      else if (f === 'envelopeId' || f === 'recId') row[f] = el.value;
+    }
+    saveDirty();
+    render();
+  });
+  document.querySelectorAll('[data-sc-act]').forEach(b => b.onclick = () => {
+    const act = b.dataset.scAct;
+    const s = data.scenarios.find(x => x.id === b.dataset.sc);
+    const next = monthKeyAdd(monthKeyOf(todayISO()), 1);
+    if (act === 'new') {
+      data.scenarios.push({ id: uid(), name: `Scenario ${data.scenarios.length + 1}`, active: true, envSkips: [], recSkips: [] });
+    } else if (act === 'add-env' && s) {
+      const choices = scenarioEnvChoices(null);
+      if (!choices.length) { toast('No budgeted envelopes to skip'); return; }
+      const used = new Set(s.envSkips.map(x => x.envelopeId));
+      s.envSkips.push({ id: uid(), envelopeId: (choices.find(e => !used.has(e.id)) || choices[0]).id, from: next, months: 1, pause: false });
+      s.active = true;
+    } else if (act === 'add-rec' && s) {
+      const choices = scenarioRecChoices(null);
+      if (!choices.length) { toast('No recurring entries to skip'); return; }
+      const used = new Set(s.recSkips.map(x => x.recId));
+      s.recSkips.push({ id: uid(), recId: (choices.find(r => !used.has(r.id)) || choices[0]).id, from: monthKeyOf(todayISO()), months: 1 });
+      s.active = true;
+    } else if (act === 'rm' && s) {
+      if (b.dataset.scKind === 'env') s.envSkips = s.envSkips.filter(x => x.id !== b.dataset.scRow);
+      else s.recSkips = s.recSkips.filter(x => x.id !== b.dataset.scRow);
+    } else if (act === 'del' && s) {
+      pushUndo('Delete scenario');
+      data.scenarios = data.scenarios.filter(x => x.id !== s.id);
+      saveDirty(); render();
+      toast(`Deleted “${s.name}”`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+      return;
+    } else if (act === 'dup' && s) {
+      const c = JSON.parse(JSON.stringify(s));
+      c.id = uid(); c.name = (s.name + ' copy').slice(0, 80); c.active = false; delete c.appliedOn;
+      for (const x of c.envSkips.concat(c.recSkips)) x.id = uid();
+      data.scenarios.splice(data.scenarios.indexOf(s) + 1, 0, c);
+    } else if (act === 'apply' && s) {
+      applyScenarios([s]);
+      return;
+    } else if (act === 'apply-all') {
+      applyScenarios(data.scenarios.filter(x => x.active && (x.envSkips.length || x.recSkips.length)));
+      return;
+    } else if (act === 'unskip') {
+      const env = data.envelopes.find(e => e.id === b.dataset.env);
+      if (!env || !env.skipMonths || !env.skipMonths[b.dataset.month]) return;
+      pushUndo('Remove applied skip');
+      delete env.skipMonths[b.dataset.month];
+      if (!Object.keys(env.skipMonths).length) delete env.skipMonths;
+      saveDirty(); render();
+      toast('Removed the applied skip', 5000, 'success', { label: 'Undo', onClick: performUndo });
+      return;
+    } else return;
+    saveDirty();
+    render();
+  });
+  drawScenarios();
+}
+
+function drawScenarios() {
+  const canvas = document.getElementById('scChart');
+  if (!canvas) return;
+  applyChartTheme();
+  const res = scenarioResults();
+  if (!res) return;
+  const colors = chartPalette();
+  const dates = res.baseline.fc.dates;
+  const datasets = [{
+    label: 'Today’s plan', data: res.baseline.fc.spendable, borderColor: themeColor('--text-dim', '#8b98a9'),
+    borderWidth: 2.5, tension: 0.15, fill: false, pointRadius: 0
+  }];
+  res.included.forEach((s, i) => datasets.push({
+    label: s.name, data: res.each.get(s.id).fc.spendable, borderColor: colors[i % colors.length],
+    borderWidth: 2, tension: 0.15, fill: false, pointRadius: 0
+  }));
+  if (res.combined) datasets.push({
+    label: 'All included together', data: res.combined.fc.spendable, borderColor: themeColor('--accent', '#4fc3a1'),
+    borderWidth: 2.5, borderDash: [5, 4], tension: 0.15, fill: false, pointRadius: 0
+  });
+  const spansYears = dates[0].slice(0, 4) !== dates[dates.length - 1].slice(0, 4);
+  const axisFmt = new Intl.DateTimeFormat(displayLocale(), spansYears ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' });
+  if (currentChart) currentChart.destroy();
+  currentChart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels: dates, datasets },
+    options: {
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: { ticks: { callback: v => fmt(v).replace(/[^\d\-.,€$]/g, '') }, grid: { color: themeColor('--chart-grid', 'rgba(255,255,255,.05)') } },
+        x: { ticks: { maxTicksLimit: 12, maxRotation: 0, autoSkipPadding: 12,
+                      callback: function (v) { const iso = this.getLabelForValue(v); return iso ? axisFmt.format(parseDate(iso)) : ''; } },
+             grid: { color: themeColor('--chart-grid', 'rgba(255,255,255,.05)') } }
+      },
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: { callbacks: { title: items => items.length ? fmtDate(items[0].label) : '', label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } }
+      }
+    }
+  });
+}
+
 function renderForecast() {
   if (forecastState.accountIds === null) {
     forecastState.accountIds = activeAccounts().filter(a => !a.isInvestment && a.includeInNetWorth !== false).map(a => a.id);
@@ -8477,6 +8919,9 @@ function renderHelp() {
     <details class="faq"><summary>Fund the month vs. Fund vs. Move funds vs. Return — which do I use?</summary>
     <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button sets money aside in just that envelope, mid-month, out of spendable cash — the reserve included. Its dialog asks which account the money sits in (that account's forecast supplies the figures and is noted on the entry; a household envelope can opt to be <em>backed</em> by it from then on), shows spendable today and the projected low, and <strong>Use projected low</strong> fills the most you can set aside before that low reaches zero. For the reserve that is the projected low itself, which is how you park a month's surplus: the Dashboard's <strong>Fund reserve</strong> button opens the same dialog with that amount filled in. <strong>Move funds</strong> shifts money from one envelope to another; no account changes, and its dialog shows what the move does to spendable today and the projected low before you confirm. <strong>Return</strong> un-earmarks money from an envelope back to spendable cash, and the forecast stops projecting that amount as the envelope's spending this month. All of these only move virtual allocations — your account totals stay the same.</div>
     </details>
+    <details class="faq"><summary>What is the Scenarios page?</summary>
+    <div>A place to test “what if” changes without touching your budget. A scenario is a saved set of skips: <strong>skip an envelope's funding</strong> for a number of months (optionally <em>also pausing its spending</em>, so that month's budget is zero) and <strong>skip a recurring entry</strong> for a number of months. Tick <strong>Include</strong> on any mix of scenarios and the chart and table compare each one on its own, and all of them together, against today's plan; the low, the day spendable first goes below zero and the end-of-horizon figure all update. The page always projects with envelope allowances on, because a skipped funding only matters to a projection that projects envelopes. Skipping funding <em>without</em> pausing spending means the envelope keeps spending from what it holds, then from your spendable cash, so an empty envelope changes little. <strong>Apply to budget…</strong> lists exactly what will change, then records the skipped months on the envelopes (Fund the month leaves them out and the forecast honours them) and skips the recurring occurrences in those months; one Undo reverts it. Applied skips are listed at the bottom of the page and can be removed there; recurring ones are managed per entry under Recurring → Occurrences. Funding for the current month is already booked, so it only affects the Fund the month dialog.</div>
+    </details>
     <details class="faq"><summary>Why did Move funds change my spendable or projected low? No cash moved.</summary>
     <div>Spendable is cash minus the money set aside in envelopes. <strong>Spendable today</strong> only moves when an envelope crosses zero: moving more out of an envelope than it holds lowers spendable by the shortfall (only its positive balance was earmarked), and covering an overspent envelope from another raises spendable by the overspend covered (that overspend had already come out of spendable, and the other envelope now pays for it). The <strong>projected low</strong>, with the default setting that Forecast assumes <strong>Fund the month</strong> on the 1st, does not move for a transfer between two positive envelopes: every budgeted envelope is topped up each month, so its money is as kept as the reserve's, and the only exception is a <em>reset</em> envelope, which hands its leftover back to spendable at month end. If you switch refills off in Forecast, the projection treats a budgeted envelope's balance as pre-paid spending that frees up inside the horizon while an envelope with no budget (the reserve, an archived envelope) keeps its balance — then reserve → Food raises the low by the amount moved and Food → reserve or a close-out sweep lowers it. The Move funds dialog shows both figures before and after, with the reason.</div>
     </details>
@@ -8498,7 +8943,7 @@ function navigateToView(view) {
 document.getElementById('mobileMore').onclick = () => {
   const groups = [
     ['Everyday', [['accounts', 'Accounts'], ['recurring', 'Recurring']]],
-    ['Explore', [['networth', 'Net Worth'], ['reports', 'Reports']]],
+    ['Explore', [['scenarios', 'Scenarios'], ['networth', 'Net Worth'], ['reports', 'Reports']]],
     ['Manage', [['settings', 'Settings'], ['help', 'Help']]]
   ];
   openModal(`<h2>More</h2><div class="more-sections">${groups.map(([label, items]) =>
@@ -8611,7 +9056,7 @@ function _cmdMatch(c, query) {
 }
 function _buildCommands() {
   const go = v => () => { activeView = v; render(); };
-  const nav = [['Dashboard', 'dashboard'], ['Accounts', 'accounts'], ['Envelopes', 'envelopes'], ['Transactions', 'transactions'], ['Recurring', 'recurring'], ['Forecast', 'forecast'], ['Net Worth', 'networth'], ['Reports', 'reports'], ['Settings', 'settings'], ['Help', 'help']]
+  const nav = [['Dashboard', 'dashboard'], ['Accounts', 'accounts'], ['Envelopes', 'envelopes'], ['Transactions', 'transactions'], ['Recurring', 'recurring'], ['Forecast', 'forecast'], ['Scenarios', 'scenarios'], ['Net Worth', 'networth'], ['Reports', 'reports'], ['Settings', 'settings'], ['Help', 'help']]
     .map(([label, v]) => ({ label: 'Go to ' + label, hint: 'tab', keywords: 'navigate view ' + label, run: go(v) }));
   const actions = [
     { label: 'Add transaction', hint: 'n', keywords: 'new expense income', run: () => editTransaction() },

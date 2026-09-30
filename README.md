@@ -93,6 +93,7 @@ The in-app **Help** tab explains the concepts (accounts vs envelopes vs spendabl
 
 - **Accounts and envelopes**, with pinned accounts and drag-to-reorder on the dashboard.
 - **Forecast** from one week to two years, per account or combined, with a spendable-cash line that respects money already set aside in envelopes. Save configurations as profiles.
+- **Scenarios** to test "what if" changes side by side: skip funding some envelopes, or skip some recurring entries, for a number of months. Compare each scenario and all of them together against today's plan, then apply the ones you choose to the real budget.
 - **Recurring entries**: weekly, bi-weekly, monthly, yearly, specific months; due-review before anything is recorded.
 - **Month-end close-out** with rollover, reset and sweep policies, and a **reserve envelope** that collects sweeps and covers overspends.
 - **Tags**: a short list you define (up to eight) for a second, cross-cutting axis such as fixed costs vs lifestyle, or work vs household. They also cover what envelopes cannot see, like loan repayments and taxes, and they apply to transfers.
