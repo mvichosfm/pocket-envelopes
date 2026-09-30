@@ -283,6 +283,20 @@ class ReleaseRegressions(unittest.TestCase):
         p.evaluate('closeModal();performUndo()')
         self.assertIsNone(p.evaluate("data.envelopes[0].skipMonths??null"))
         self.assertIsNone(p.evaluate("data.recurring[0].skippedDates??null"))
+        # Unapply after a reload-proof apply: apply again, then take back only what it wrote.
+        p.evaluate(f"data.envelopes[0].skipMonths={{[{nxt}]:'fund'}};render()")   # a value the scenario will upgrade
+        p.locator('[data-sc-act="apply"]').click()
+        p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+        p.locator('#sc_confirm').click()
+        self.assertEqual(p.evaluate(f"data.envelopes[0].skipMonths[{nxt}]"),'all')
+        p.locator('[data-sc-act="unapply"]').click()
+        p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+        self.assertIn('back to funding skipped',p.locator('.sc-plan').inner_text())
+        p.locator('#sc_confirm').click()
+        self.assertEqual(p.evaluate(f"data.envelopes[0].skipMonths[{nxt}]"),'fund')   # restored, not deleted
+        self.assertIsNone(p.evaluate("data.recurring[0].skippedDates??null"))
+        self.assertTrue(p.evaluate("data.scenarios[0].active&&!data.scenarios[0].appliedOn&&!data.scenarios[0].applied"))
+        self.assertEqual(p.locator('[data-sc-act="apply"]').count(),1)
 
     def test_sign_in_proxy_shows_sign_in_not_unreachable(self):
         p=self.page

@@ -18,7 +18,9 @@ because those are the ones worth re-checking your own figures after.
   leaves them out and every forecast honours them) and skips the recurring occurrences
   in those months (`skippedDates`); one Undo reverts it. Applied envelope skips are
   listed on the page and removable there, and past months are pruned on load. The
-  page always projects with allowances on.
+  page always projects with allowances on. An applied scenario offers **Unapply**, which
+  reverts exactly what it wrote (it keeps a record, including the value it replaced) and
+  leaves later changes alone.
 
 - **The dashboard says when spendable first goes below zero.** When the projected
   low is negative, the note under it now reads "below zero from <date>" — the first

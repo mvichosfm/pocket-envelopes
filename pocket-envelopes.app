@@ -1291,6 +1291,14 @@ function sanitizeScenarios(raw) {
     name: typeof s.name === 'string' ? s.name.slice(0, 80) : 'Scenario',
     active: s.active !== false,
     ...(typeof s.appliedOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s.appliedOn) ? { appliedOn: s.appliedOn } : {}),
+    ...(s.applied && typeof s.applied === 'object' ? { applied: {
+      env: (Array.isArray(s.applied.env) ? s.applied.env : [])
+        .filter(a => a && envIds.has(a.envelopeId) && MONTH_KEY_RE.test(String(a.month)) && (a.mode === 'fund' || a.mode === 'all'))
+        .map(a => ({ envelopeId: a.envelopeId, month: a.month, mode: a.mode, prev: a.prev === 'fund' || a.prev === 'all' ? a.prev : '' })),
+      rec: (Array.isArray(s.applied.rec) ? s.applied.rec : [])
+        .filter(a => a && recIds.has(a.recId) && Array.isArray(a.dates))
+        .map(a => ({ recId: a.recId, dates: a.dates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(String(d))).map(String) }))
+    } } : {}),
     envSkips: (Array.isArray(s.envSkips) ? s.envSkips : []).filter(x => x && envIds.has(x.envelopeId) && MONTH_KEY_RE.test(String(x.from))).map(x => ({
       id: SCENARIO_ID_RE.test(String(x.id)) ? String(x.id) : uid(), envelopeId: x.envelopeId, from: x.from, months: monthsOf(x.months), pause: !!x.pause
     })),
@@ -7342,7 +7350,9 @@ function scenarioCardHTML(s, res) {
     ${r ? `<div class="sc-result">On its own: spendable low <strong>${fmt(r.lo.min)}</strong> on ${esc(fmtDate(r.lo.date))}
       (<span class="${delta >= 0 ? 'pos' : 'neg'}">${signedFmt(delta)}</span> vs today's plan)${r.lo.belowZeroDate ? ` · <span class="neg">below zero from ${esc(fmtDate(r.lo.belowZeroDate))}</span>` : ''}</div>` : ''}
     <div class="sc-actions">
-      <button class="btn primary sm" data-sc-act="apply" data-sc="${s.id}" ${empty ? 'disabled' : ''} title="Write these skips into your real budget">Apply to budget…</button>
+      ${s.appliedOn
+        ? `<button class="btn primary sm" data-sc-act="unapply" data-sc="${s.id}" title="Take the skips this scenario wrote back out of your real budget">Unapply…</button>`
+        : `<button class="btn primary sm" data-sc-act="apply" data-sc="${s.id}" ${empty ? 'disabled' : ''} title="Write these skips into your real budget">Apply to budget…</button>`}
       <button class="btn sm" data-sc-act="dup" data-sc="${s.id}">Duplicate</button>
       <button class="btn sm danger" data-sc-act="del" data-sc="${s.id}">Delete</button>
     </div>
@@ -7472,13 +7482,75 @@ function applyScenarios(list) {
   document.getElementById('sc_cancel').onclick = closeModal;
   document.getElementById('sc_confirm').onclick = () => {
     pushUndo(label);
-    for (const c of plan.envChanges) { c.env.skipMonths = c.env.skipMonths || {}; c.env.skipMonths[c.month] = c.mode; }
-    for (const c of plan.recChanges) for (const d of c.dates) setOccurrenceSkipped(c.rec, d, true);
-    for (const s of list) { s.appliedOn = todayISO(); s.active = false; }
+    // One scenario at a time, so each records exactly what IT wrote (what it changed and the value it
+    // replaced) — that record is what Unapply reverts. An overlap goes to the first scenario applied.
+    for (const s of list) {
+      const p = scenarioApplyPlan([s]);
+      s.applied = {
+        env: p.envChanges.map(c => ({ envelopeId: c.env.id, month: c.month, mode: c.mode, prev: (c.env.skipMonths && c.env.skipMonths[c.month]) || '' })),
+        rec: p.recChanges.map(c => ({ recId: c.rec.id, dates: c.dates.slice() }))
+      };
+      for (const c of p.envChanges) { c.env.skipMonths = c.env.skipMonths || {}; c.env.skipMonths[c.month] = c.mode; }
+      for (const c of p.recChanges) for (const d of c.dates) setOccurrenceSkipped(c.rec, d, true);
+      s.appliedOn = todayISO(); s.active = false;
+    }
     saveDirty();
     closeModal();
     render();
     toast(`Applied — ${plural(plan.envChanges.length, 'envelope month')}, ${plural(plan.recChanges.reduce((n, c) => n + c.dates.length, 0), 'recurring occurrence')} skipped`, 6000, 'success', { label: 'Undo', onClick: performUndo });
+  };
+}
+
+// What an applied scenario wrote: the record kept at apply time, or — for one applied before records
+// existed — rebuilt from its windows (every skip in them is assumed to be its own).
+function scenarioAppliedRecord(s) {
+  if (s.applied) return s.applied;
+  const thisMonth = monthKeyOf(todayISO());
+  const env = [], rec = [];
+  for (const x of s.envSkips) {
+    const e = data.envelopes.find(v => v.id === x.envelopeId);
+    for (const k of monthKeyRange(x.from, x.months)) {
+      const cur = e && e.skipMonths && e.skipMonths[k];
+      if (cur && k >= thisMonth) env.push({ envelopeId: x.envelopeId, month: k, mode: cur, prev: '' });
+    }
+  }
+  for (const x of s.recSkips) {
+    const r = data.recurring.find(v => v.id === x.recId);
+    const set = new Set(monthKeyRange(x.from, x.months));
+    const dates = r ? (r.skippedDates || []).filter(d => set.has(monthKeyOf(d))) : [];
+    if (dates.length) rec.push({ recId: x.recId, dates });
+  }
+  return { env, rec };
+}
+// Take back exactly what applying `s` wrote, leaving anything changed since (a month already
+// removed, a date already un-skipped, an envelope month since raised to 'all') alone.
+function unapplyScenario(s) {
+  const a = scenarioAppliedRecord(s);
+  const envRev = a.env.map(x => ({ x, env: data.envelopes.find(e => e.id === x.envelopeId) }))
+    .filter(({ x, env }) => env && env.skipMonths && env.skipMonths[x.month] === x.mode);
+  const recRev = a.rec.map(x => { const rec = data.recurring.find(r => r.id === x.recId); return { rec, dates: rec ? x.dates.filter(d => isSkippedOccurrence(rec, d)) : [] }; })
+    .filter(x => x.rec && x.dates.length);
+  const label = `Unapply scenario “${s.name}”`;
+  openModal(`<h2>${esc(label)}</h2>
+    <p>${envRev.length || recRev.length ? 'This takes these skips back out of your real budget. Undo (Ctrl+Z) reverts it in one step.' : 'Nothing is left to take back — its skips were already removed. Unapplying just clears the “applied” mark.'}</p>
+    <div class="sc-plan"><ul>
+      ${envRev.map(({ x, env }) => `<li><strong>${esc(env.name)}</strong> — ${esc(monthKeyLabel(x.month))}: ${x.prev ? `back to ${x.prev === 'all' ? 'funding and spending paused' : 'funding skipped'}` : 'funded again'}</li>`).join('')}
+      ${recRev.map(c => `<li><strong>${esc(c.rec.name)}</strong> — un-skip ${plural(c.dates.length, 'occurrence')}: ${c.dates.map(d => esc(fmtDate(d))).join(', ')}</li>`).join('')}
+    </ul></div>
+    <div class="modal-actions"><button class="btn" id="sc_cancel">Cancel</button><button class="btn primary" id="sc_confirm">Unapply</button></div>`);
+  document.getElementById('sc_cancel').onclick = closeModal;
+  document.getElementById('sc_confirm').onclick = () => {
+    pushUndo(label);
+    for (const { x, env } of envRev) {
+      if (x.prev) env.skipMonths[x.month] = x.prev; else delete env.skipMonths[x.month];
+      if (!Object.keys(env.skipMonths).length) delete env.skipMonths;
+    }
+    for (const c of recRev) for (const d of c.dates) setOccurrenceSkipped(c.rec, d, false);
+    delete s.applied; delete s.appliedOn; s.active = true;
+    saveDirty();
+    closeModal();
+    render();
+    toast(`Unapplied — ${plural(envRev.length, 'envelope month')}, ${plural(recRev.reduce((n, c) => n + c.dates.length, 0), 'recurring occurrence')} restored`, 6000, 'success', { label: 'Undo', onClick: performUndo });
   };
 }
 
@@ -7531,9 +7603,12 @@ function bindScenarios() {
       return;
     } else if (act === 'dup' && s) {
       const c = JSON.parse(JSON.stringify(s));
-      c.id = uid(); c.name = (s.name + ' copy').slice(0, 80); c.active = false; delete c.appliedOn;
+      c.id = uid(); c.name = (s.name + ' copy').slice(0, 80); c.active = false; delete c.appliedOn; delete c.applied;
       for (const x of c.envSkips.concat(c.recSkips)) x.id = uid();
       data.scenarios.splice(data.scenarios.indexOf(s) + 1, 0, c);
+    } else if (act === 'unapply' && s) {
+      unapplyScenario(s);
+      return;
     } else if (act === 'apply' && s) {
       applyScenarios([s]);
       return;
@@ -8948,7 +9023,7 @@ function renderHelp() {
     <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button sets money aside in just that envelope, mid-month, out of spendable cash — the reserve included. Its dialog asks which account the money sits in (that account's forecast supplies the figures and is noted on the entry; a household envelope can opt to be <em>backed</em> by it from then on), shows spendable today and the projected low, and <strong>Use projected low</strong> fills the most you can set aside before that low reaches zero. For the reserve that is the projected low itself, which is how you park a month's surplus: the Dashboard's <strong>Fund reserve</strong> button opens the same dialog with that amount filled in. <strong>Move funds</strong> shifts money from one envelope to another; no account changes, and its dialog shows what the move does to spendable today and the projected low before you confirm. <strong>Return</strong> un-earmarks money from an envelope back to spendable cash, and the forecast stops projecting that amount as the envelope's spending this month. All of these only move virtual allocations — your account totals stay the same.</div>
     </details>
     <details class="faq"><summary>What is the Scenarios page?</summary>
-    <div>A place to test “what if” changes without touching your budget. A scenario is a saved set of skips: <strong>skip an envelope's funding</strong> for a number of months (optionally <em>also pausing its spending</em>, so that month's budget is zero) and <strong>skip a recurring entry</strong> for a number of months. Tick <strong>Include</strong> on any mix of scenarios and the chart and table compare each one on its own, and all of them together, against today's plan; the low, the day spendable first goes below zero and the end-of-horizon figure all update. The page always projects with envelope allowances on, because a skipped funding only matters to a projection that projects envelopes. Skipping funding <em>without</em> pausing spending means the envelope keeps spending from what it holds, then from your spendable cash, so an empty envelope changes little. <strong>Apply to budget…</strong> lists exactly what will change, then records the skipped months on the envelopes (Fund the month leaves them out and the forecast honours them) and skips the recurring occurrences in those months; one Undo reverts it. Applied skips are listed at the bottom of the page and can be removed there; recurring ones are managed per entry under Recurring → Occurrences. Funding for the current month is already booked, so it only affects the Fund the month dialog.</div>
+    <div>A place to test “what if” changes without touching your budget. A scenario is a saved set of skips: <strong>skip an envelope's funding</strong> for a number of months (optionally <em>also pausing its spending</em>, so that month's budget is zero) and <strong>skip a recurring entry</strong> for a number of months. Tick <strong>Include</strong> on any mix of scenarios and the chart and table compare each one on its own, and all of them together, against today's plan; the low, the day spendable first goes below zero and the end-of-horizon figure all update. The page always projects with envelope allowances on, because a skipped funding only matters to a projection that projects envelopes. Skipping funding <em>without</em> pausing spending means the envelope keeps spending from what it holds, then from your spendable cash, so an empty envelope changes little. <strong>Apply to budget…</strong> lists exactly what will change, then records the skipped months on the envelopes (Fund the month leaves them out and the forecast honours them) and skips the recurring occurrences in those months; one Undo reverts it. An applied scenario's button becomes <strong>Unapply…</strong>, which takes back exactly what that scenario wrote (restoring the value it replaced) and leaves anything you changed since alone. Applied skips are also listed at the bottom of the page and can be removed there; recurring ones are managed per entry under Recurring → Occurrences. Funding for the current month is already booked, so it only affects the Fund the month dialog.</div>
     </details>
     <details class="faq"><summary>Why did Move funds change my spendable or projected low? No cash moved.</summary>
     <div>Spendable is cash minus the money set aside in envelopes. <strong>Spendable today</strong> only moves when an envelope crosses zero: moving more out of an envelope than it holds lowers spendable by the shortfall (only its positive balance was earmarked), and covering an overspent envelope from another raises spendable by the overspend covered (that overspend had already come out of spendable, and the other envelope now pays for it). The <strong>projected low</strong>, with the default setting that Forecast assumes <strong>Fund the month</strong> on the 1st, does not move for a transfer between two positive envelopes: every budgeted envelope is topped up each month, so its money is as kept as the reserve's, and the only exception is a <em>reset</em> envelope, which hands its leftover back to spendable at month end. If you switch refills off in Forecast, the projection treats a budgeted envelope's balance as pre-paid spending that frees up inside the horizon while an envelope with no budget (the reserve, an archived envelope) keeps its balance — then reserve → Food raises the low by the amount moved and Food → reserve or a close-out sweep lowers it. The Move funds dialog shows both figures before and after, with the reason.</div>
