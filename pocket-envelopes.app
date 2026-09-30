@@ -741,6 +741,7 @@
   .sc-card[data-included="false"] { opacity: .78; }
   .sc-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .sc-head input[type="text"] { flex: 1 1 200px; min-width: 0; padding: 6px 8px; background: var(--bg-3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-weight: 600; }
+  .sc-swatch { display: inline-block; width: 28px; height: 0; border-top: var(--w, 3px) var(--ls, solid) var(--c); margin-right: 8px; vertical-align: middle; flex: none; }
   .sc-block { margin-top: 12px; }
   .sc-block h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
   .sc-row { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--border); }
@@ -7293,6 +7294,19 @@ function scenarioResults() {
     combined: included.length > 1 ? run(included) : null
   };
 }
+// How each line looks, so the plan and every scenario read apart at a glance:
+// the plan is thick and solid in the ink colour, the combined line thick and
+// solid in the accent, and each scenario gets its own hue (the palette minus
+// the accent) and dash pattern. Chart, table and card share this one source.
+let scMode = 'level';   // chart view: 'level' = spendable lines, 'delta' = each minus today's plan
+const SC_DASHES =[[9, 4], [2, 4], [12, 4, 2, 4]];
+const SC_LINES = ['dashed', 'dotted', 'dashed'];
+function scenarioStyle(s) {
+  const i = Math.max(0, data.scenarios.indexOf(s));
+  return { color: chartPalette()[1 + (i % 7)], dash: SC_DASHES[i % 3], line: SC_LINES[i % 3] };
+}
+const scSwatch = (color, line, thick) =>
+  `<span class="sc-swatch" style="--c:${color};--ls:${line};--w:${thick ? 5 : 3}px" aria-hidden="true"></span>`;
 const signedFmt = d => (d >= 0 ? '+' : '−') + fmt(Math.abs(d));
 
 function scenarioCardHTML(s, res) {
@@ -7316,6 +7330,7 @@ function scenarioCardHTML(s, res) {
   const empty = !s.envSkips.length && !s.recSkips.length;
   return `<div class="card sc-card" data-included="${s.active}">
     <div class="sc-head">
+      ${(() => { const st = scenarioStyle(s); return scSwatch(st.color, st.line); })()}
       <input type="text" value="${esc(s.name)}" data-sc="${s.id}" data-sc-f="name" aria-label="Scenario name" maxlength="80">
       <label title="Include this scenario in the chart and comparison table"><input type="checkbox" data-sc="${s.id}" data-sc-f="active" ${s.active ? 'checked' : ''}> Include</label>
       ${s.appliedOn ? `<span class="badge" title="Applied to your budget on ${esc(fmtDate(s.appliedOn))}">applied ${esc(fmtDate(s.appliedOn))}</span>` : ''}
@@ -7343,9 +7358,9 @@ function renderScenarios() {
   const today = todayISO();
   const recSkipped = data.recurring.map(r => ({ r, n: (r.skippedDates || []).filter(d => d > today).length })).filter(x => x.n);
   const rows = res ? [
-    ['Today’s plan (baseline)', res.baseline],
-    ...res.included.map(s => [s.name, res.each.get(s.id)]),
-    ...(res.combined ? [['All included together', res.combined]] : [])
+    ['Today’s plan (baseline)', res.baseline, scSwatch(themeColor('--text', '#e6edf3'), 'solid', true)],
+    ...res.included.map(s => { const st = scenarioStyle(s); return [s.name, res.each.get(s.id), scSwatch(st.color, st.line)]; }),
+    ...(res.combined ? [['All included together', res.combined, scSwatch(themeColor('--accent', '#4fc3a1'), 'solid', true)]] : [])
   ] : [];
   return `
   <div class="page-heading"><div><h2>Scenarios</h2><p>Test “what if” changes to the plan — skip funding an envelope, skip a recurring entry — side by side, then apply the ones you choose.</p></div>
@@ -7358,14 +7373,19 @@ function renderScenarios() {
   </div>
   ${res ? `
   <div class="card forecast-chart-card">
-    <div class="section-heading"><h3>Spendable cash under each scenario</h3><span class="muted">${plural(res.ids.length, 'account')} · allowances included, ${forecastState.assumeRefill !== false ? 'refilled monthly' : 'spent down'} · accounts and refill setting come from the Forecast tab</span></div>
+    <div class="section-heading"><h3>${scMode === 'delta' ? 'Difference from today’s plan' : 'Spendable cash under each scenario'}</h3>
+      <div role="group" aria-label="Chart view" style="display:flex;gap:6px;">
+        <button class="btn sm ${scMode === 'level' ? 'selected' : ''}" aria-pressed="${scMode === 'level'}" data-sc-mode="level">Spendable</button>
+        <button class="btn sm ${scMode === 'delta' ? 'selected' : ''}" aria-pressed="${scMode === 'delta'}" data-sc-mode="delta" title="Plot each scenario minus today's plan, so the plan is the zero line and the gaps are easy to see">Difference</button>
+      </div></div>
+    <div class="muted" style="margin-bottom:6px;">${plural(res.ids.length, 'account')} · allowances included, ${forecastState.assumeRefill !== false ? 'refilled monthly' : 'spent down'} · accounts and refill setting come from the Forecast tab</div>
     <div class="forecast-canvas"><canvas id="scChart" role="img" aria-label="Projected spendable cash for the plan and each included scenario"></canvas></div>
   </div>
   <div class="card" style="margin-top:14px;overflow-x:auto;">
     <h3>Comparison</h3>
     <table><thead><tr><th>Scenario</th><th class="num">Spendable low</th><th>On</th><th>Below zero from</th><th class="num">${esc(fmtDate(res.baseline.fc.dates[res.baseline.fc.dates.length - 1]))}</th><th class="num">Low vs plan</th></tr></thead>
-    <tbody>${rows.map(([name, r], i) => `<tr>
-      <td>${i === 0 ? esc(name) : `<strong>${esc(name)}</strong>`}</td>
+    <tbody>${rows.map(([name, r, sw], i) => `<tr>
+      <td>${sw}${i === 0 ? esc(name) : `<strong>${esc(name)}</strong>`}</td>
       <td class="num">${fmt(r.lo.min)}</td><td>${esc(fmtDate(r.lo.date))}</td>
       <td>${r.lo.belowZeroDate ? `<span class="neg">${esc(fmtDate(r.lo.belowZeroDate))}</span>` : '—'}</td>
       <td class="num">${fmt(r.end)}</td>
@@ -7463,6 +7483,7 @@ function applyScenarios(list) {
 }
 
 function bindScenarios() {
+  document.querySelectorAll('[data-sc-mode]').forEach(b => b.onclick = () => { scMode = b.dataset.scMode; render(); });
   document.querySelectorAll('[data-sc-h]').forEach(b => b.onclick = () => { forecastState.days = +b.dataset.scH; render(); });
   document.querySelectorAll('[data-sc-f]').forEach(el => el.onchange = () => {
     const s = data.scenarios.find(x => x.id === el.dataset.sc);
@@ -7543,17 +7564,24 @@ function drawScenarios() {
   if (!res) return;
   const colors = chartPalette();
   const dates = res.baseline.fc.dates;
+  // 'delta' plots each line minus today's plan: the plan becomes the zero line and
+  // a €600 gap on a €12,000 balance is no longer a hairline.
+  const basePts = res.baseline.fc.spendable;
+  const pts = arr => scMode === 'delta' ? arr.map((v, i) => v - basePts[i]) : arr;
   const datasets = [{
-    label: 'Today’s plan', data: res.baseline.fc.spendable, borderColor: themeColor('--text-dim', '#8b98a9'),
-    borderWidth: 2.5, tension: 0.15, fill: false, pointRadius: 0
+    label: 'Today’s plan', data: pts(basePts), borderColor: themeColor('--text', '#e6edf3'),
+    borderWidth: 4, tension: 0.15, fill: false, pointRadius: 0, order: 0
   }];
-  res.included.forEach((s, i) => datasets.push({
-    label: s.name, data: res.each.get(s.id).fc.spendable, borderColor: colors[i % colors.length],
-    borderWidth: 2, tension: 0.15, fill: false, pointRadius: 0
-  }));
+  res.included.forEach(s => {
+    const st = scenarioStyle(s);
+    datasets.push({
+      label: s.name, data: pts(res.each.get(s.id).fc.spendable), borderColor: st.color, borderDash: st.dash,
+      borderWidth: 2.5, tension: 0.15, fill: false, pointRadius: 0, order: 1
+    });
+  });
   if (res.combined) datasets.push({
-    label: 'All included together', data: res.combined.fc.spendable, borderColor: themeColor('--accent', '#4fc3a1'),
-    borderWidth: 2.5, borderDash: [5, 4], tension: 0.15, fill: false, pointRadius: 0
+    label: 'All included together', data: pts(res.combined.fc.spendable), borderColor: themeColor('--accent', '#4fc3a1'),
+    borderWidth: 4, tension: 0.15, fill: false, pointRadius: 0, order: 2
   });
   const spansYears = dates[0].slice(0, 4) !== dates[dates.length - 1].slice(0, 4);
   const axisFmt = new Intl.DateTimeFormat(displayLocale(), spansYears ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' });
@@ -7571,7 +7599,7 @@ function drawScenarios() {
              grid: { color: themeColor('--chart-grid', 'rgba(255,255,255,.05)') } }
       },
       plugins: {
-        legend: { position: 'bottom' },
+        legend: { position: 'bottom', labels: { boxWidth: 44, boxHeight: 4, padding: 16 } },
         tooltip: { callbacks: { title: items => items.length ? fmtDate(items[0].label) : '', label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } }
       }
     }
