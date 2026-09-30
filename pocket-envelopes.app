@@ -7378,7 +7378,7 @@ function renderScenarios() {
         <button class="btn sm ${scMode === 'level' ? 'selected' : ''}" aria-pressed="${scMode === 'level'}" data-sc-mode="level">Spendable</button>
         <button class="btn sm ${scMode === 'delta' ? 'selected' : ''}" aria-pressed="${scMode === 'delta'}" data-sc-mode="delta" title="Plot each scenario minus today's plan, so the plan is the zero line and the gaps are easy to see">Difference</button>
       </div></div>
-    <div class="muted" style="margin-bottom:6px;">${plural(res.ids.length, 'account')} · allowances included, ${forecastState.assumeRefill !== false ? 'refilled monthly' : 'spent down'} · accounts and refill setting come from the Forecast tab</div>
+    <p class="muted" style="margin:0 0 6px;">${plural(res.ids.length, 'account')} · allowances included, ${forecastState.assumeRefill !== false ? 'refilled monthly' : 'spent down'} · accounts and refill setting come from the Forecast tab</p>
     <div class="forecast-canvas"><canvas id="scChart" role="img" aria-label="Projected spendable cash for the plan and each included scenario"></canvas></div>
   </div>
   <div class="card" style="margin-top:14px;overflow-x:auto;">
