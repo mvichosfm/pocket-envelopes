@@ -1949,7 +1949,7 @@ function showShortcuts() {
         <tr><td style="padding:6px 8px;"><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Command palette (jump anywhere / run any action)</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>n</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">New transaction</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>c</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Duplicate the focused/hovered transaction to today</td></tr>
-        <tr><td style="padding:6px 8px;"><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Undo last destructive change (delete or apply recurring)</td></tr>
+        <tr><td style="padding:6px 8px;"><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Undo the last change</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>Ctrl</kbd>+<kbd>Y</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Redo what you just undid</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>?</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Show this list</td></tr>
         <tr><td style="padding:6px 8px;"><kbd>Esc</kbd></td><td style="padding:6px 8px; color:var(--text-dim);">Close any open modal</td></tr>
@@ -8905,7 +8905,11 @@ function renderHelp() {
       <dt>Allowances</dt>
       <dd>A forecasting smoothing option: subtract each envelope's monthly equivalent from accounts daily over the first 28 days of each month, simulating the intent to spend the budget evenly over time. Toggled on the Forecast tab.</dd>
       <dt>Headroom / "lowest in period"</dt>
-      <dd>The lowest projected spendable balance over your selected horizon, including due entries still to be recorded. It assumes no new funding. Fund the month recalculates the projection for the specific envelopes and amounts you propose; the low is not a single maximum safe funding amount.</dd>
+      <dd>The lowest projected spendable balance over your selected horizon, including due entries still to be recorded. It assumes nothing more is funded this month; by default it assumes <strong>Fund the month</strong> refills every budgeted envelope on the 1st of each future month (a toggle on the Forecast tab). Fund the month recalculates the projection for the specific envelopes and amounts you propose; the low is not a single maximum safe funding amount.</dd>
+      <dt>Scheduled transaction</dt>
+      <dd>A transaction dated after today. It carries a <em>scheduled</em> badge and is left out of every balance until its date arrives; the Accounts tab shows each account's net scheduled amount under its balance. The forecast projects it on its date.</dd>
+      <dt>Amounts are a calculator</dt>
+      <dd>Every amount field accepts arithmetic: <code>45.20+12.80</code>, <code>1200/3</code>, <code>500-23</code>. The result shows under the field as you type. A comma works as the decimal separator too. An expression that doesn't work out is refused, not saved as zero.</dd>
     </dl>
 
     <h3>Workflows</h3>
@@ -8920,27 +8924,33 @@ function renderHelp() {
 
     <p><strong>Applying recurring entries.</strong> When recurring entries are due, <strong>Needs attention</strong> shows their count and net total. Choose <strong>Review recurring</strong> to record, link, skip or defer each occurrence before applying your choices. To give one future date its own amount, or skip one date only, use the <strong>Occurrences</strong> button on the entry's row in the Recurring tab.</p>
 
-    <h3>Finding your way</h3><p>Desktop navigation groups everyday budgeting, analysis and administration. On phones, the bottom bar opens Dashboard, Envelopes, Transactions and Forecast. <strong>More</strong> opens Accounts, Recurring, Net Worth, Reports, Settings and Help. On Transactions, search is always visible; <strong>Filters</strong> opens type, account, envelope, tag and date controls. Its count shows how many of those filters are active, even when collapsed.</p>
+    <p><strong>Fixing many transactions at once.</strong> On the Transactions tab, tick the rows you want (filter first to narrow them down). A bar appears with <strong>Tag</strong> and <strong>Envelope</strong> pickers, <strong>Apply to selected</strong> and <strong>Delete selected</strong>. Each bulk change is one Undo. An envelope change skips transfers and split transactions and tells you how many it left alone.</p>
+
+    <p><strong>Quick entry on a phone.</strong> Open the app in your phone's browser and choose <em>Install app</em> / <em>Add to Home screen</em> (an HTTPS address is needed for that; see "Optional: install it as an app" in the README). On Android, long-press the app icon for <strong>Add expense</strong>, <strong>Add income</strong> and <strong>Transfer between accounts</strong>. Each one opens the form straight away, with the account from your last entry of that type already picked. After you save, the toast offers <strong>Add another</strong>, so a pocketful of receipts takes one run. The app needs a connection to the server; it does not queue entries offline.</p>
+
+    <h3>Finding your way</h3><p>Desktop navigation groups everyday budgeting, analysis and administration. On phones, the bottom bar opens Dashboard, Envelopes, Transactions and Forecast. <strong>More</strong> opens Accounts, Recurring, Scenarios, Net Worth, Reports, Settings and Help. On Transactions, search is always visible; <strong>Filters</strong> opens type, account, envelope, tag and date controls. Its count shows how many of those filters are active, even when collapsed, and the filter stays put while you edit rows. Click an account or envelope name on the Dashboard, the Accounts tab or an envelope card to open Transactions filtered to it. The Recurring tab has its own search box (name, account, envelope, tag, amount, or "paused").</p>
     <h3>Tabs at a glance</h3>
     <dl>
       <dt>Dashboard</dt>
       <dd>Spendable today and the lowest projected spendable balance, followed by items needing attention, wealth totals, upcoming entries, lowest envelopes, pinned accounts and recent transactions.</dd>
       <dt>Accounts</dt>
-      <dd>Manage real-money accounts. Pin to dashboard with the pin icon, drag rows by their grip to reorder.</dd>
+      <dd>Manage real-money accounts. Pin to dashboard with the pin icon, drag rows by their grip to reorder. Investment accounts have an <strong>Update value</strong> button: enter today's market value and the app books the difference. Accounts you no longer use can be archived.</dd>
       <dt>Envelopes</dt>
-      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only, mid-month — say which account the money sits in, or take the forecast's projected low in one click) and <strong>Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope.</dd>
+      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only, mid-month — say which account the money sits in, or take the forecast's projected low in one click) and <strong>Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope. Edit, Archive and Delete sit in each card's <strong>More actions</strong> menu. The bar on a card is this month's <strong>pace</strong>: the fill is how much of the month's budget is spent, the tick is how far through the month you are. It keeps its normal colour while spending stays behind the tick, turns amber when it runs ahead, and red once the budget is used up. The coloured edge on the left turns red when the balance is negative, and amber when it is under a quarter of the budget.</dd>
       <dt>Transactions</dt>
-      <dd>Every recorded movement: expenses, income, account-to-account transfers, envelope-to-envelope transfers. Searchable and filterable by type, account, envelope and tag. An expense can be <strong>split</strong> across several envelopes, and <strong>Import CSV</strong> brings in a bank statement through a column-mapping wizard (mappings save as named profiles), with duplicate detection and a review step before anything is recorded.</dd>
+      <dd>Every recorded movement: expenses, income, account-to-account transfers, envelope-to-envelope transfers, grouped by day, newest first. Searchable and filterable by type, account, envelope, tag and date. The total line counts real cash in and out only (transfers and envelope bookkeeping are left out). Tick rows to re-tag, re-file or delete them in bulk. An expense can be <strong>split</strong> across several envelopes, and <strong>Import CSV</strong> brings in a bank statement through a column-mapping wizard (mappings save as named profiles), with duplicate detection and a review step before anything is recorded.</dd>
       <dt>Recurring</dt>
-      <dd>Templates for repeating entries (salary, rent, subscriptions). The app reminds you when occurrences are due rather than auto-applying them. One occurrence can carry its own amount, or be skipped, without changing the template.</dd>
+      <dd>Templates for repeating entries (salary, rent, subscriptions). The app reminds you when occurrences are due rather than auto-applying them. One occurrence can carry its own amount, or be skipped, without changing the template. The <strong>Next</strong> column shows the oldest occurrence not yet recorded, flagged <em>Overdue</em> or <em>Today</em> when it is due. Each row can be paused, duplicated as a new series, or applied today with the lightning button. Pausing a recurring expense also takes its amount out of its envelope's budget while it stays paused (see the FAQ).</dd>
+      <dt>Scenarios</dt>
+      <dd>What-if testing. Skip some envelopes' funding or some recurring entries for a number of months, alone or combined, and compare the projection against today's plan. Then apply a scenario to the budget, or unapply it later. Your real budget is untouched until you apply. See the FAQ below.</dd>
       <dt>Forecast</dt>
       <dd>Projects account and spendable balances 1 week to 2 years forward. Set the horizon above the chart; expand Saved profiles, Accounts or Chart &amp; assumptions to adjust the projection. Open sections stay open as you change the horizon. Save configurations as profiles for quick switching.</dd>
       <dt>Net Worth</dt>
       <dd>Historical net-worth chart. One snapshot is captured automatically per day (today's value updates as balances change); use Manual snapshot to backfill past dates.</dd>
       <dt>Reports</dt>
-      <dd>Monthly cashflow (last 12 months), spending by envelope and by tag (last 30 days), and a month-by-tag table for the last 12 months.</dd>
+      <dd>Monthly cashflow (last 12 months), spending by envelope and by tag (last 30 days), a month-by-tag table for the last 12 months, and <strong>Budget vs actual</strong> for any month you pick: each envelope's budget, spending with a pace bar, and the difference in words ("50.00 over", "on budget"). It uses the same figures as close-out.</dd>
       <dt>Settings</dt>
-      <dd>Currency, locale, theme, the tag list, import/export of the whole budget as JSON, rolling daily backups (restore/download), manual envelope close-out, and a danger-zone full reset.</dd>
+      <dd>Currency, locale, theme, a <strong>forecast warning floor</strong> (the Dashboard's projected low turns amber below it), the tag list and how many tags it may hold, import/export of the whole budget as JSON, rolling daily backups (restore/download), manual envelope close-out, and a danger-zone full reset.</dd>
     </dl>
 
     <h3>Keyboard shortcuts</h3>
@@ -8948,9 +8958,11 @@ function renderHelp() {
       <dt><kbd>N</kbd></dt>
       <dd>New transaction. Works anywhere when no input is focused and no modal is open.</dd>
       <dt><kbd>C</kbd></dt>
-      <dd>Copy the transaction in the hovered row — handy on the Transactions tab and the Dashboard's recent-transactions table. Opens the editor pre-filled with the copied values so you can quickly log a similar one.</dd>
+      <dd>Copy the transaction in the hovered row — handy on the Transactions tab and the Dashboard's recent-transactions table. Opens the editor pre-filled with the copied values, dated today, so you can quickly log a similar one.</dd>
       <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd></dt>
-      <dd>Undo the last destructive change — delete, add/edit transaction, apply-recurring, close-out, or backup restore. Snapshot-based and in-memory, so it clears on reload. An Undo button also appears in the toast after a delete.</dd>
+      <dd>Undo the last change — adding, editing or deleting a record, funding, moving or returning money, applying recurring entries, close-out, bulk edits, applying a scenario, or a backup restore. Snapshot-based and in-memory, so it clears on reload. An Undo button also appears in the toast after a delete.</dd>
+      <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Y</kbd> or <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></dt>
+      <dd>Redo what you just undid. Making a new change clears the redo history.</dd>
       <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd></dt>
       <dd>Command palette — jump to any tab or run any action (add, fund, transfer, import, close out, undo…) by typing a few letters.</dd>
       <dt><kbd>?</kbd></dt>
@@ -8993,6 +9005,10 @@ function renderHelp() {
     <div>The app saves to <code>finance-data.json</code> on the machine running <code>serve.py</code>, over HTTP — so every device that opens this address shares one file, and no browser permission is involved. Saves are debounced ~1s after you stop editing and flushed immediately when you switch tabs or close the page. The server rotates the previous five versions into <code>finance-data.bak.0</code> … <code>.bak.4</code> on disk, and the app additionally keeps <strong>rolling daily backups</strong> (last 7 days) in this browser's <code>localStorage</code> — see Settings → Backups to restore or download one. Use Export from Settings for an off-machine JSON copy any time. If two devices edit at once, the second save is refused with a conflict dialog rather than silently overwriting the first.</div>
     </details>
 
+    <details class="faq"><summary>Can I try something out without touching my budget?</summary>
+    <div>Three ways. For a what-if about skipping funding or bills, use the <strong>Scenarios</strong> page: nothing changes until you apply. To explore the app itself, add <code>?demo=1</code> to the address. That loads a sample household and never reads or saves your file. Otherwise, make the change and press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> to go back; undo covers everything up to the last reload.</div>
+    </details>
+
     <details class="faq"><summary>What if I miss a month's close-out?</summary>
     <div>The Dashboard attention panel only ever surfaces the most recent unreviewed month, so you won't see a multi-month catch-up. If you want to close out a specific older month manually, go to Settings → Envelope close-out and pick the month.</div>
     </details>
@@ -9002,7 +9018,10 @@ function renderHelp() {
     </details>
 
     <details class="faq"><summary>Can I edit a recurring template after I've already applied some occurrences?</summary>
-    <div>Yes. Editing a recurring template changes every unrecorded occurrence — already-applied transactions stay exactly as they were recorded. If you need to edit a past occurrence, find it on the Transactions tab and edit the individual record. To change just one future occurrence, use Occurrences instead (next question).</div>
+    <div>Yes. Editing a recurring template changes every unrecorded occurrence — already-applied transactions stay exactly as they were recorded. If you need to edit a past occurrence, find it on the Transactions tab and edit the individual record. To change just one future occurrence, use Occurrences instead (next question). The date box in the editor shows the entry's <strong>next occurrence</strong>, not when the series began. Leave it alone and the series keeps its original anchor day. Type a later date and the series moves to start there. Type an earlier date, one the entry has already gone past, and the occurrences from that date become due again; you are warned if one of them was already recorded, so nothing gets booked twice by accident.</div>
+    </details>
+    <details class="faq"><summary>What happens when I pause a recurring entry?</summary>
+    <div>A paused entry stops producing occurrences: none fall due, none show in Upcoming, and the forecast drops them. If it is an <strong>expense on an envelope</strong> (say a 35-a-month subscription on a 1000-a-month entertainment envelope), pausing also takes it out of that envelope's budget while it stays paused. The envelope then reads 965, marked "(35.00 paused)". Fund the month proposes 965, close-out and Budget vs actual measure against 965, and the forecast's spendable and projected low rise by 35 for every future month. <strong>Enable</strong> on the row puts it all back. Paused one-off entries, income and transfers have no budget effect. If an entry is gone for good, delete it or give it an end date rather than leaving it paused.</div>
     </details>
     <details class="faq"><summary>Can one occurrence of a recurring entry have a different amount, or be skipped?</summary>
     <div>Yes. The <strong>Occurrences</strong> button on the entry's row (Recurring tab) lists its next dates. Type a different amount on a row and that date alone uses it — the template and every other date keep the template amount; set it back to the template amount to remove it. The skip button on a row skips that one date without touching the dates around it (unlike the row's skip button on the Recurring tab, which skips the <em>next</em> occurrence). The forecast, the Dashboard's Upcoming panel and the due review all use the date's own amount and leave a skipped date out, the Recurring tab marks a changed next occurrence with <em>this time</em>, and a hand-typed transaction is matched against the date's own amount. Once an occurrence is recorded or skipped and the entry's history moves past it, its custom amount is dropped — the recorded transaction carries it.</div>

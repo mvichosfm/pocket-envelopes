@@ -5,6 +5,20 @@ author's working copy; the public repository starts from the 2026-09-06
 state. Changes that touch how money is counted are marked **(accounting)**,
 because those are the ones worth re-checking your own figures after.
 
+## Unreleased
+
+- **Help page catches up with the app.** Added the Scenarios tab, redo
+  (Ctrl+Y / Ctrl+Shift+Z), bulk edit on Transactions, phone quick entry and its
+  long-press shortcuts, the amount-field calculator, scheduled (future-dated)
+  transactions, the envelope pace bar, drill-through links, Recurring search,
+  investment Update value, Budget vs actual, the forecast warning floor and tag
+  limit. Two new FAQ entries cover what pausing a recurring expense does to its
+  envelope's budget, and ways to try things without touching the budget. The
+  recurring-edit answer now explains the next-occurrence date box. Two outdated
+  lines are corrected: the undo description in Help and in the `?` cheatsheet,
+  and "assumes no new funding" under Headroom, which predates the default
+  monthly refill.
+
 ## 2026-09-30 — v0.97, scenarios, phone quick entry, sign-in proxy support, below-zero date
 
 - **Scenarios page (accounting).** A new **Scenarios** view under Explore tests
