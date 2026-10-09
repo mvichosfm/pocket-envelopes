@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @contextmanager
-def scratch_server(directory=None, timeout=30):
+def scratch_server(directory=None, timeout=30, feedback=False, log=None):
     with tempfile.TemporaryDirectory(prefix="pocket-audit-") as temporary:
         folder = Path(directory or temporary).resolve()
         folder.mkdir(parents=True, exist_ok=True)
@@ -31,10 +31,15 @@ def scratch_server(directory=None, timeout=30):
         module.DATA_FILE = str(folder / "finance-data.json")
         module.TMP_FILE = module.DATA_FILE + ".tmp"
         module.BAK_PREFIX = str(folder / "finance-data.bak.")
+        # The optional feedback card: off unless a check asks for it, and its files always live in the scratch folder.
+        module.FEEDBACK_ENABLED = bool(feedback)
+        module.FEEDBACK_FILE = str(folder / "feedback.jsonl")
+        module.FEEDBACK_STARTED = str(folder / "feedback-started.txt")
 
         class QuietHandler(module.Handler):
             def log_message(self, *args):
-                pass
+                if log is not None:               # a check can capture the request log (the feedback card's privacy test)
+                    log.append(args[0] % args[1:])
 
         QuietHandler.timeout = timeout
         with socketserver.ThreadingTCPServer(

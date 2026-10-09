@@ -135,6 +135,16 @@
   .btn.ghost:hover { color: var(--text); background: var(--bg-3); }
   [data-theme="light"] .btn.ghost:hover,
   [data-theme="light"] .btn.ghost:focus-visible { border-color: var(--border); }
+  /* Optional feedback card (serve.py started with FEEDBACK=1): its header button stays hidden until the server answers. */
+  #btnFeedback[hidden] { display: none; }
+  .fb-grades, .fb-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+  .fb-grades .btn { min-width: 36px; padding-left: 0; padding-right: 0; }
+  .fb-grades .btn[aria-pressed="true"], .fb-kinds .btn[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: var(--on-fill); font-weight: 600; }
+  .fb-recent { margin-top: 12px; font-size: 13px; color: var(--text-dim); }
+  .fb-recent ul { margin: 6px 0 0; padding-left: 18px; }
+  .fb-recent li { margin: 6px 0; line-height: 1.4; overflow-wrap: anywhere; }
+  #fb_msg { min-height: 1.2em; margin-top: 8px; font-size: 13px; color: var(--bad); }
   [data-theme="light"] .btn:not(.primary):not(.ghost) { background: var(--bg-2); }
   [data-theme="light"] .btn:not(.primary):not(.ghost):hover { background: var(--bg-3); }
   .btn.sm { padding: 4px 8px; font-size: 13px; min-height: 24px; }
@@ -889,6 +899,7 @@
   <symbol id="i-list" viewBox="0 0 16 16"><path d="M6 4h8M6 8h8M6 12h8M2 4h.1M2 8h.1M2 12h.1"/></symbol>
   <symbol id="i-trend" viewBox="0 0 16 16"><path d="M2 2v12h12M4 10l3-3 3 1 4-5M11 3h3v3"/></symbol>
   <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 16 16"><path d="M2.5 3h11v8h-6l-3 2.5V11h-2z"/><path d="M5.5 6h5M5.5 8.5h3"/></symbol>
 </svg>
 <header class="top">
   <h1><svg class="ic brand-icon" aria-hidden="true"><use href="#i-envelope"/></svg>Pocket Envelopes</h1>
@@ -918,6 +929,7 @@
   </div>
   <button class="btn" id="btnReload" title="Reload the latest version from the server">Reload</button>
   <button class="btn" id="btnSave">Save</button>
+  <button class="btn ghost" id="btnFeedback" title="Send feedback about this page" aria-label="Send feedback about this page" hidden><svg class="ic" aria-hidden="true"><use href="#i-chat"/></svg></button>
   <button class="btn ghost" id="btnTheme" title="Toggle theme" aria-label="Toggle theme"><svg class="ic" aria-hidden="true"><use href="#i-theme"/></svg></button>
 </header>
 
@@ -9358,6 +9370,166 @@ function demoData() {
   return d;
 }
 
+//=============================================================================
+// FEEDBACK CARD — optional; exists only when serve.py was started with FEEDBACK=1
+//=============================================================================
+// A grade and a comment left where you are looking, appended (never edited, never
+// deleted) to feedback.jsonl next to the budget by serve.py. Nothing leaves the
+// machine. The header button stays hidden unless GET feedback answers, so a normal
+// install shows nothing and has no such route; demo mode never shows it. The pure
+// parts come first because audit/run-audit.mjs extracts and tests them by name.
+const FB_KINDS = ['look', 'logic', 'section', 'idea'];
+const FB_DRAFT_KEY = 'envBudget_fb_draft';   // a UI preference, like the theme: the unsent text survives a reload
+let fbInfo = null;                           // the last GET feedback answer; null while the card is unavailable
+
+// items: [{ title, top, bottom }] in viewport pixels. The section holding the middle of the viewport, else the nearest one.
+function fbPickSection(items, viewportH) {
+  if (!items || !items.length) return null;
+  const mid = viewportH / 2;
+  let best = null, bestDist = Infinity;
+  for (const it of items) {
+    const dist = mid >= it.top && mid <= it.bottom ? 0 : Math.min(Math.abs(it.top - mid), Math.abs(it.bottom - mid));
+    if (dist < bestDist) { best = it; bestDist = dist; }
+  }
+  return best;
+}
+// The server accepts only a short reference (a commit, a note id); anything else is dropped rather than refused.
+function fbCleanAbout(s) {
+  const t = String(s == null ? '' : s).trim();
+  return /^[A-Za-z0-9._#\/-]{1,40}$/.test(t) ? t : '';
+}
+function fbCanSend(form) {
+  const c = String((form && form.comment) || '').trim();
+  return c.length >= 1 && c.length <= 2000;
+}
+// A client id makes a retry safe: the server stores a record once per cid.
+function fbNewCid() { return 'c' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
+function fbBuildBody(form, ctx) {
+  return {
+    page: ctx.page,
+    section: form.section ? String(form.section).slice(0, 80) : null,
+    grade: form.grade ? Number(form.grade) : null,
+    kind: FB_KINDS.includes(form.kind) ? form.kind : null,
+    comment: String(form.comment).trim(),
+    width: ctx.width || null,
+    theme: ctx.theme === 'light' || ctx.theme === 'dark' ? ctx.theme : null,
+    about: fbCleanAbout(form.about) || null,
+    cid: form.cid,
+  };
+}
+// The headings of the current tab with the vertical span each one covers (down to the next heading).
+function fbSections() {
+  const main = document.getElementById('main');
+  const heads = [...main.querySelectorAll('h2, h3')].filter(h => h.textContent.trim());
+  const mainBottom = main.getBoundingClientRect().bottom;
+  const seen = new Set(), out = [];
+  heads.forEach((h, i) => {
+    // the heading's own words, not a hint span inside it ("Pinned accounts drag to reorder")
+    const own = [...h.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join(' ').trim();
+    const title = (own || h.textContent).trim().replace(/\s+/g, ' ').slice(0, 80);
+    if (seen.has(title)) return;
+    seen.add(title);
+    out.push({ title, top: h.getBoundingClientRect().top, bottom: heads[i + 1] ? heads[i + 1].getBoundingClientRect().top : mainBottom });
+  });
+  return out;
+}
+function fbLoadDraft() {
+  try { const d = JSON.parse(localStorage.getItem(FB_DRAFT_KEY) || '{}'); return d && typeof d === 'object' ? d : {}; } catch (_) { return {}; }
+}
+function fbSaveDraft(d) { try { localStorage.setItem(FB_DRAFT_KEY, JSON.stringify(d)); } catch (_) { /* storage blocked: the form still works */ } }
+function fbClearDraft() { try { localStorage.removeItem(FB_DRAFT_KEY); } catch (_) {} }
+
+// GET feedback: the card's status, or null when there is no such route (the server was not started with FEEDBACK=1),
+// a sign-in proxy answered instead (redirect: 'manual', as for /data), or the card has switched itself off.
+async function fbStatus() {
+  try {
+    const res = await fetch('feedback', { redirect: 'manual', headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const info = await res.json();
+    return info && info.enabled === true ? info : null;
+  } catch (_) { return null; }
+}
+async function initFeedback() {
+  const btn = document.getElementById('btnFeedback');
+  if (!btn || demoMode) return;
+  fbInfo = await fbStatus();
+  if (!fbInfo) return;
+  btn.hidden = false;
+  btn.onclick = openFeedback;
+}
+async function openFeedback() {
+  const btn = document.getElementById('btnFeedback');
+  const info = await fbStatus();         // fresh on every open: the recent notes, and the 30-day switch-off
+  if (!info) {
+    fbInfo = null; if (btn) btn.hidden = true;
+    toast('Feedback is switched off (no note for 30 days, or the server stopped offering it).', 4000);
+    return;
+  }
+  fbInfo = info;
+  const sections = fbSections();
+  const pick = fbPickSection(sections, window.innerHeight);
+  const draft = fbLoadDraft();
+  const form = { cid: draft.cid || fbNewCid(), section: draft.section !== undefined ? draft.section : (pick ? pick.title : ''),
+                 grade: draft.grade || null, kind: draft.kind || null, comment: draft.comment || '', about: draft.about || '' };
+  const tabBtn = document.querySelector(`nav.tabs button[data-view="${activeView}"]`);
+  const where = tabBtn ? tabBtn.textContent.trim() : activeView;
+  const recent = (info.recent || []).map(r =>
+    `<li>${r.grade ? esc(String(r.grade)) + '/10 · ' : ''}${r.kind ? esc(r.kind) + ' · ' : ''}${esc(String(r.comment || ''))}</li>`).join('');
+  openModal(`
+    <h2>Send feedback</h2>
+    <p style="color:var(--text-dim);line-height:1.5;margin:0 0 10px;">About <strong>${esc(where)}</strong>. Saved on this machine only, one line per note; nothing is edited or deleted.</p>
+    <div class="field"><label>Section</label>
+      <select id="fb_section"><option value="">Whole page</option>${sections.map(s =>
+        `<option value="${esc(s.title)}" ${s.title === form.section ? 'selected' : ''}>${esc(s.title)}</option>`).join('')}</select></div>
+    <div class="field"><label id="fb_grade_label">Grade (optional)</label>
+      <div class="fb-grades" role="group" aria-labelledby="fb_grade_label">${Array.from({ length: 10 }, (_, i) =>
+        `<button type="button" class="btn fb-g" data-g="${i + 1}" aria-pressed="${form.grade === i + 1}">${i + 1}</button>`).join('')}</div></div>
+    <div class="field"><label id="fb_kind_label">What kind (optional)</label>
+      <div class="fb-kinds" role="group" aria-labelledby="fb_kind_label">${FB_KINDS.map(k =>
+        `<button type="button" class="btn fb-k" data-k="${k}" aria-pressed="${form.kind === k}">${k}</button>`).join('')}</div></div>
+    <div class="field"><label>Comment</label><textarea id="fb_comment" rows="5" maxlength="2000" placeholder="What works, what does not, what you would change"></textarea></div>
+    <div class="field"><label>About (optional): a commit or note this reacts to</label><input id="fb_about" maxlength="40" autocomplete="off"></div>
+    <div class="btns" style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn primary" id="fb_send">Send</button>
+      <button class="btn ghost" id="fb_cancel">Cancel</button>
+    </div>
+    <div id="fb_msg" role="status" aria-live="polite"></div>
+    ${recent ? `<div class="fb-recent"><details><summary>Recent notes (${info.count})</summary><ul>${recent}</ul></details></div>` : ''}
+  `, { focusId: 'fb_comment' });
+  const $ = id => document.getElementById(id);
+  $('fb_comment').value = form.comment;     // set as a property, never spliced into the markup
+  $('fb_about').value = form.about;
+  const save = () => fbSaveDraft({ cid: form.cid, section: form.section, grade: form.grade, kind: form.kind, comment: form.comment, about: form.about });
+  $('fb_section').onchange = e => { form.section = e.target.value; save(); };
+  $('fb_comment').oninput = e => { form.comment = e.target.value; $('fb_msg').textContent = ''; save(); };
+  $('fb_about').oninput = e => { form.about = e.target.value; save(); };
+  const toggle = (sel, key, attr) => document.querySelectorAll(sel).forEach(b => b.onclick = () => {
+    const v = attr === 'g' ? Number(b.dataset.g) : b.dataset.k;
+    form[key] = form[key] === v ? null : v;                 // pressing the chosen one again clears it
+    document.querySelectorAll(sel).forEach(x => x.setAttribute('aria-pressed', String((attr === 'g' ? Number(x.dataset.g) : x.dataset.k) === form[key])));
+    save();
+  });
+  toggle('.fb-g', 'grade', 'g');
+  toggle('.fb-k', 'kind', 'k');
+  $('fb_cancel').onclick = closeModal;                      // the draft stays for next time
+  $('fb_send').onclick = async () => {
+    if (!fbCanSend(form)) { $('fb_msg').textContent = 'Write a comment first.'; return; }
+    const send = $('fb_send'); send.disabled = true;
+    const body = fbBuildBody(form, { page: activeView, width: window.innerWidth, theme: document.documentElement.dataset.theme });
+    try {
+      const res = await fetch('feedback', { method: 'POST', redirect: 'manual',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'pocket-envelopes' }, body: JSON.stringify(body) });
+      if (res.ok) { fbClearDraft(); closeModal(); toast('Feedback saved'); return; }
+      let why = 'the server answered ' + res.status;
+      try { const j = await res.json(); if (j && j.error) why = j.error; } catch (_) {}
+      $('fb_msg').textContent = 'Not saved: ' + why + '. Your text is kept here; try again.';
+    } catch (_) {
+      $('fb_msg').textContent = 'Not saved: the server is not reachable. Your text is kept here; try again.';
+    }
+    send.disabled = false;                                  // the same cid is reused, so a retry never stores two
+  };
+}
+
 // Tiny URL-param boot helper. Supports:
 //   ?demo=1   load embedded demo dataset (in-memory only)
 //   ?view=X   activate the named tab (dashboard | envelopes | forecast | ...)
@@ -9431,6 +9603,7 @@ function applyUrlParams() {
     if (urlOpts.add && loaded && data) quickAdd(urlOpts.add);
   }
   registerServiceWorker();
+  initFeedback();         // shows the header button only if the server offers the optional feedback card
 })();
 
 // Register the shell-caching service worker (see sw.js for what it does and,

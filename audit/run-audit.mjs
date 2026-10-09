@@ -1089,6 +1089,50 @@ await asyncCheck("A sign-in proxy's redirect or 401/403 reads as 'sign in again'
   if (!ran) warn("serve.py guard checks skipped", "no Python found");
 }
 
+// ------------------------------------------------- 3b. the optional feedback card
+
+check("Feedback card: hidden by default, local-only, and its helpers pick, clean and build correctly", () => {
+  const source = mainInlineScript(app);
+  assert.match(app, /<button[^>]*id="btnFeedback"[^>]*\shidden[\s>]/, "the header button must start hidden");
+  assert.ok(/function initFeedback\(\)[^]*?demoMode/.test(source), "demo mode must never show the card");
+  assert.ok((source.match(/fetch\('feedback'/g) || []).length >= 2, "the card fetches the relative 'feedback' route");
+  assert.doesNotMatch(source, /fetch\(\s*['"`]https?:/, "no outbound fetch anywhere in the app");
+
+  const kinds = /const FB_KINDS = \[[^\]]*\];/.exec(source)?.[0];
+  assert.ok(kinds, "FB_KINDS not found");
+  const names = ["fbPickSection", "fbCleanAbout", "fbCanSend", "fbNewCid", "fbBuildBody"];
+  const context = vm.createContext({ Date, Math, String, Number });
+  vm.runInContext(`${kinds}\n${names.map((n) => extractFunction(source, n)).join("\n")}\nglobalThis.api = { ${names.join(",")} };`, context);
+  const api = context.api;
+
+  const items = [{ title: "A", top: -300, bottom: 100 }, { title: "B", top: 100, bottom: 700 }, { title: "C", top: 700, bottom: 900 }];
+  assert.equal(api.fbPickSection(items, 800).title, "B", "the middle of the viewport is y=400");
+  const away = [{ title: "A", top: -900, bottom: -100 }, { title: "Z", top: 1200, bottom: 1500 }];
+  assert.equal(api.fbPickSection(away, 800).title, "A", "nothing holds the middle: the nearest one wins");
+  assert.equal(api.fbPickSection([], 800), null);
+
+  assert.equal(api.fbCleanAbout(" 9d4c8db "), "9d4c8db");
+  assert.equal(api.fbCleanAbout("two words"), "", "a reference with spaces is dropped, not sent");
+  assert.equal(api.fbCleanAbout(null), "");
+  assert.equal(api.fbCanSend({ comment: "  " }), false);
+  assert.equal(api.fbCanSend({ comment: "ok" }), true);
+  assert.equal(api.fbCanSend({ comment: "x".repeat(2001) }), false);
+
+  const cid = api.fbNewCid();
+  assert.match(cid, /^[A-Za-z0-9-]{8,40}$/, "the client id must satisfy the server's pattern");
+  const body = api.fbBuildBody(
+    { section: "Spendable today", grade: 7, kind: "look", comment: "  hard to read ", about: "", cid },
+    { page: "dashboard", width: 1440, theme: "dark" });
+  assert.deepEqual(JSON.parse(JSON.stringify(body)), { page: "dashboard", section: "Spendable today", grade: 7, kind: "look",
+    comment: "hard to read", width: 1440, theme: "dark", about: null, cid });
+  const bare = api.fbBuildBody({ section: "", grade: null, kind: "bogus", comment: "x", cid }, { page: "forecast", width: 0, theme: "auto" });
+  assert.equal(bare.section, null);
+  assert.equal(bare.grade, null);
+  assert.equal(bare.kind, null, "an unknown kind is never sent");
+  assert.equal(bare.theme, null);
+  assert.equal(bare.width, null);
+});
+
 // ------------------------------------------------------- 4. service worker
 
 check("Service worker compiles, skips /data, and is network-first", () => {

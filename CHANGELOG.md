@@ -7,6 +7,14 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Optional feedback card.** Start the server with `FEEDBACK=1` and a
+  speech-bubble button appears in the header: a grade, a kind and a comment about
+  the section you are looking at, appended as one line to `feedback.jsonl` next to
+  your budget. Off by default (no route, no button), never in demo mode, local only,
+  append-only, never served as a file, and it switches itself off after 30 days
+  without a note. The service-worker cache is bumped to `v8`. Checks:
+  `python audit/test_feedback_server.py` plus a feedback check in
+  `node audit/run-audit.mjs`.
 - **Help page catches up with the app.** Added the Scenarios tab, redo
   (Ctrl+Y / Ctrl+Shift+Z), bulk edit on Transactions, phone quick entry and its
   long-press shortcuts, the amount-field calculator, scheduled (future-dated)

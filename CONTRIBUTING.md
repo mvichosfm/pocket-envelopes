@@ -42,13 +42,15 @@ Use Node.js 22+ and Python 3.8+ for the core checks, from the repository root:
 ```sh
 node audit/run-audit.mjs
 python audit/test_server.py
+python audit/test_feedback_server.py
 ```
 
 Use `python3` if that is your Python command. The first command tests the
 accounting, reporting and asynchronous save functions with synthetic fixtures.
 The second starts temporary loopback servers and verifies real save/load,
 concurrent edits, backup rotation and restoration, and interrupted uploads.
-Neither command reads your budget.
+The third covers the optional feedback card's server half (off by default; see
+the README). None of them reads your budget.
 
 Browser checks need Python 3.12+ and optional development dependencies:
 
