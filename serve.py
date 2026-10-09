@@ -27,6 +27,10 @@ Endpoints beyond the static files:
                  single-user app, an explicit overwrite is allowed.
                  204 on success, with the new ETag.
 
+  GET / POST /feedback -> only when the server is started with FEEDBACK=1: the
+                 optional feedback card's store (see the FEEDBACK section
+                 below). Off by default; without it the card does not exist.
+
 Durability: writes go to finance-data.json.tmp, are fsync'd, then os.replace'd
 over the real file, so a crash mid-write can never leave a torn file. The
 previous contents rotate into finance-data.bak.0 (newest) .. .bak.4 (oldest).
@@ -55,6 +59,7 @@ the loopback bind; it is not authentication.
 Stdlib only -- no pip install. Python 3.8 or newer.
 """
 
+import datetime
 import hashlib
 import http.server
 import ipaddress
@@ -62,6 +67,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import shutil
 import socket
 import socketserver
@@ -86,8 +92,9 @@ APP_FILE = "pocket-envelopes.app"
 def _is_private_path(path_only: str) -> bool:
     """True for URL paths the static handler must never serve.
 
-    Matches the data file and its rotation/staging siblings, log files, and
-    any path component starting with a dot (.git, .claude, .env ...).
+    Matches the data file and its rotation/staging siblings, the feedback
+    card's store, log files, and any path component starting with a dot
+    (.git, .claude, .env ...).
     Call it on a DECODED path (see _is_private_url).
     """
     parts = [p for p in path_only.split("/") if p]
@@ -95,6 +102,10 @@ def _is_private_path(path_only: str) -> bool:
         return True
     name = parts[-1].lower() if parts else ""
     if name.startswith("finance-data"):
+        return True
+    # The optional feedback card's store and its start marker (see FEEDBACK below). With the default DATA_DIR they sit
+    # next to this file, so the static handler must refuse them by name like the budget itself.
+    if name.startswith("feedback") or name.endswith(".jsonl"):
         return True
     return name.endswith((".log", ".tmp", ".bak", ".bak.0", ".bak.1", ".bak.2", ".bak.3", ".bak.4"))
 
@@ -236,6 +247,196 @@ def _write_data(payload: bytes):
     os.replace(TMP_FILE, DATA_FILE)
 
 
+# ----------------------------------------------------------------- feedback --
+# The optional feedback card. Opt-in: it exists only when the server is started with FEEDBACK=1, so an ordinary install
+# has no such route and no button. A grade and a comment left inside the app are appended, one JSON line per record, to
+# feedback.jsonl in DATA_DIR. Append-only: nothing here edits or deletes a record. It is a store of its own, separate
+# from the budget, so it deliberately does not go through _write_data(); nothing leaves this machine.
+#
+#   GET  /feedback -> {"enabled", "count", "quiet_days", "last", "recent": [...]}   (404 when FEEDBACK is off)
+#   POST /feedback -> 201 {"record": {...}}, or 200 with "duplicate": true for a client id already stored. Needs the
+#                     X-Requested-With: pocket-envelopes header, which a cross-site page cannot send without a CORS
+#                     preflight this server never grants (the Host check alone does not stop a cross-site form post).
+#
+# The card switches itself off after FEEDBACK_QUIET_DAYS without a record, counted from the later of the newest record
+# and feedback-started.txt (created on first use; delete the file to restart the clock).
+FEEDBACK_ENABLED = os.environ.get("FEEDBACK", "").strip().lower() in ("1", "true", "yes", "on")
+DEFAULT_PORT = 8765
+FEEDBACK_FILE = os.path.join(DATA_DIR, "feedback.jsonl")
+FEEDBACK_STARTED = os.path.join(DATA_DIR, "feedback-started.txt")
+FEEDBACK_MAX_BYTES = 5 * 1024 * 1024
+FEEDBACK_BODY_MAX = 16 * 1024
+FEEDBACK_QUIET_DAYS = 30
+FEEDBACK_KINDS = ("look", "logic", "section", "idea")
+FEEDBACK_HEADER = ("X-Requested-With", "pocket-envelopes")
+_feedback_lock = threading.Lock()
+
+_FB_PAGE = re.compile(r"^[a-z][a-z0-9-]{0,29}$")
+_FB_ABOUT = re.compile(r"^[A-Za-z0-9._#/-]{1,40}$")
+_FB_CID = re.compile(r"^[A-Za-z0-9-]{8,40}$")
+_FB_FIELDS = {"page", "section", "grade", "kind", "comment", "width", "theme", "about", "cid"}
+
+
+class FeedbackOff(Exception):
+    """The card has switched itself off: no record for FEEDBACK_QUIET_DAYS days."""
+
+
+class FeedbackFull(Exception):
+    """feedback.jsonl has reached FEEDBACK_MAX_BYTES."""
+
+
+def _fb_now():
+    return datetime.datetime.now().astimezone()
+
+
+def _fb_int(value, low, high, what):
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ValueError("%s must be a whole number from %d to %d" % (what, low, high))
+    return value
+
+
+def _fb_text(value, limit, what, newlines=False):
+    if not isinstance(value, str):
+        raise ValueError("%s must be text" % what)
+    text = value.strip()
+    if not text or len(text) > limit:
+        raise ValueError("%s must be 1 to %d characters" % (what, limit))
+    allowed = "\n\r\t" if newlines else ""
+    if any((ord(c) < 32 and c not in allowed) or ord(c) == 127 for c in text):
+        raise ValueError("%s has control characters" % what)
+    return text
+
+
+def _fb_clean(body):
+    """The record a request body describes, or ValueError. Messages name fields, never echo their values."""
+    if not isinstance(body, dict):
+        raise ValueError("body must be an object")
+    if set(body) - _FB_FIELDS:
+        raise ValueError("unknown field")
+    page = body.get("page")
+    if not isinstance(page, str) or not _FB_PAGE.match(page):
+        raise ValueError("page must be a view name")
+    section = body.get("section")
+    section = None if section in (None, "") else _fb_text(section, 80, "section")
+    kind = body.get("kind")
+    if kind is not None and kind not in FEEDBACK_KINDS:
+        raise ValueError("kind must be one of %s" % ", ".join(FEEDBACK_KINDS))
+    theme = body.get("theme")
+    if theme is not None and theme not in ("dark", "light"):
+        raise ValueError("theme must be dark or light")
+    about = body.get("about")
+    if about in (None, ""):
+        about = None
+    elif not isinstance(about, str) or not _FB_ABOUT.match(about):
+        raise ValueError("about must be a short reference such as a commit or a note id")
+    cid = body.get("cid")
+    if not isinstance(cid, str) or not _FB_CID.match(cid):
+        raise ValueError("cid must be 8 to 40 letters, digits or dashes")
+    return {"page": page, "section": section, "grade": _fb_int(body.get("grade"), 1, 10, "grade"), "kind": kind,
+            "comment": _fb_text(body.get("comment"), 2000, "comment", newlines=True),
+            "width": _fb_int(body.get("width"), 1, 20000, "width"), "theme": theme, "about": about, "cid": cid}
+
+
+def _fb_records():
+    """Every readable record, oldest first. A torn last line (a crash mid-append) is skipped, never fatal."""
+    try:
+        with open(FEEDBACK_FILE, "rb") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        return []
+    out = []
+    for line in raw.split(b"\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            continue
+        if isinstance(rec, dict) and isinstance(rec.get("id"), str):
+            out.append(rec)
+    return out
+
+
+def _fb_time(text, fallback=None):
+    try:
+        t = datetime.datetime.fromisoformat(str(text).strip())
+    except ValueError:
+        return fallback
+    return t if t.tzinfo else t.astimezone()      # a hand-edited naive time is read as local
+
+
+def _fb_started(now):
+    """When the card was first used; written now if the marker is missing or unreadable."""
+    try:
+        with open(FEEDBACK_STARTED, "r", encoding="utf-8") as fh:
+            t = _fb_time(fh.read())
+        if t:
+            return t
+    except OSError:
+        pass
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(FEEDBACK_STARTED, "w", encoding="utf-8") as fh:
+        fh.write(now.isoformat(timespec="seconds"))
+    return now
+
+
+def _fb_quiet(records, started, now):
+    last = started
+    for r in records:
+        t = _fb_time(r.get("at"))
+        if t and t > last:
+            last = t
+    return last, now - last >= datetime.timedelta(days=FEEDBACK_QUIET_DAYS)
+
+
+def _fb_status(now=None):
+    now = now or _fb_now()
+    with _feedback_lock:
+        records = _fb_records()
+        last, quiet = _fb_quiet(records, _fb_started(now), now)
+    recent = [{"id": r.get("id"), "at": r.get("at"), "page": r.get("page"), "section": r.get("section"),
+               "grade": r.get("grade"), "kind": r.get("kind"), "comment": str(r.get("comment") or "")[:200]}
+              for r in records[-5:]][::-1]
+    return {"enabled": not quiet, "count": len(records), "quiet_days": FEEDBACK_QUIET_DAYS,
+            "last": last.isoformat(timespec="seconds"), "recent": recent}
+
+
+def _fb_add(body, env, now=None):
+    """Validate and append one record; returns it (with duplicate=True for a client id that is already stored)."""
+    rec = _fb_clean(body)
+    now = now or _fb_now()
+    with _feedback_lock:
+        records = _fb_records()
+        for r in records:
+            if r.get("cid") == rec["cid"]:
+                return dict(r, duplicate=True)
+        if _fb_quiet(records, _fb_started(now), now)[1]:
+            raise FeedbackOff()
+        try:
+            size = os.path.getsize(FEEDBACK_FILE)
+        except OSError:
+            size = 0
+        if size >= FEEDBACK_MAX_BYTES:
+            raise FeedbackFull()
+        record = {"id": "fb-%s-%s" % (now.strftime("%Y%m%d-%H%M%S"), os.urandom(2).hex()),
+                  "at": now.isoformat(timespec="seconds"), "env": env, **rec}
+        line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+        if size:                                   # close off a torn last line so the new record starts on its own line
+            with open(FEEDBACK_FILE, "rb") as fh:
+                fh.seek(-1, os.SEEK_END)
+                if fh.read(1) != b"\n":
+                    line = b"\n" + line
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(FEEDBACK_FILE, "ab") as fh:
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
+        return record
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     # Python 3.8's handler never consults the mimetypes registry: it reads only
     # this table, copied at import time, so the registrations above must be
@@ -308,6 +509,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None
         if self._route() == "/data":
             return self._get_data()
+        if FEEDBACK_ENABLED and self._route() == "/feedback":
+            return self._get_feedback()
         return super().do_GET()
 
     def do_HEAD(self):
@@ -325,6 +528,48 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self._route() == "/data":
             return self._put_data()
         self._send_error_json(405, "PUT is only supported on /data")
+
+    def do_POST(self):
+        self._touch()
+        if not self._host_ok():
+            return None
+        if FEEDBACK_ENABLED and self._route() == "/feedback":
+            return self._post_feedback()
+        # Without FEEDBACK=1 this is what the stdlib handler has always answered to a POST.
+        self.send_error(501, "Unsupported method ('POST')")
+
+    # -- /feedback (opt-in, see FEEDBACK above) -------------------------------
+    def _get_feedback(self):
+        self._send_json(200, json.dumps(_fb_status(), ensure_ascii=False).encode("utf-8"))
+
+    def _post_feedback(self):
+        if self.headers.get(FEEDBACK_HEADER[0]) != FEEDBACK_HEADER[1]:
+            return self._send_error_json(403, "missing the %s header" % FEEDBACK_HEADER[0])
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            return self._send_error_json(400, "invalid Content-Length")
+        if length <= 0:
+            return self._send_error_json(400, "empty body")
+        if length > FEEDBACK_BODY_MAX:
+            return self._send_error_json(413, "body too large")
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            return self._send_error_json(400, "body is not valid JSON")
+        # live = the normal port; anything else is a scratch copy (a preview), so its records can be told apart
+        env = "live" if PORT == DEFAULT_PORT else "preview"
+        try:
+            record = _fb_add(body, env)
+        except ValueError as exc:
+            return self._send_error_json(400, str(exc))
+        except FeedbackOff:
+            return self._send_error_json(403, "feedback is switched off: no record for %d days (delete "
+                                              "feedback-started.txt to start again)" % FEEDBACK_QUIET_DAYS)
+        except FeedbackFull:
+            return self._send_error_json(507, "the feedback file is full")
+        self._send_json(200 if record.get("duplicate") else 201,
+                        json.dumps({"record": record}, ensure_ascii=False).encode("utf-8"))
 
     # -- /data --------------------------------------------------------------
     def _get_data(self):
@@ -420,6 +665,8 @@ def main():
     # should click, whatever interface we listen on.
     print(f"Serving http://localhost:{PORT}/  ({shutdown_note})")
     print(f"Data file: {DATA_FILE}")
+    if FEEDBACK_ENABLED:
+        print(f"Feedback card: ON, records go to {FEEDBACK_FILE}")
     if BIND == "0.0.0.0":
         print(f"WARNING: BIND=0.0.0.0 -- reachable from every device on this machine's networks, port {PORT}, with no authentication.")
     try:

@@ -34,6 +34,8 @@ jobs:
         run: node audit/run-audit.mjs
       - name: Save, conflicts and disk recovery
         run: python audit/test_server.py
+      - name: Optional feedback card (server side)
+        run: python audit/test_feedback_server.py
 
   browser:
     name: Browser smoke checks

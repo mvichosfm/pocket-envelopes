@@ -173,6 +173,12 @@ A service worker caches the app shell, so it opens even when the server is aslee
 
 **Behind a sign-in proxy.** Instead of Tailscale you can put the server behind a reverse proxy that requires a login (an identity-aware proxy or tunnel with access control — never an open one, see Security). The app is built for it: the manifest is fetched with credentials so the app still installs, an expired session sends you to the sign-in page rather than into a cached copy of the app, and the app says "Sign in again" rather than "server unreachable". A save refused because the session expired is **not** saved; the message says so. Keep the proxy's session long (weeks, not hours) if you mostly budget from a phone.
 
+## Optional: a feedback card
+
+If you are shaping the app to your own household and want to jot down how it looks and behaves while you use it, start the server with `FEEDBACK=1` (`FEEDBACK=1 python serve.py`, or `set FEEDBACK=1` first on Windows). A speech-bubble button appears in the header. It opens a small form: the section you are looking at (picked for you), an optional grade from 1 to 10, an optional kind (look, logic, section, idea), a comment, and an optional reference to the change the note reacts to. Each note is appended as one line to `feedback.jsonl` next to your budget (in `DATA_DIR` if you set one).
+
+It is off by default: without `FEEDBACK=1` the server has no such route and the button never appears, and demo mode never shows it. Notes stay on your machine, are only ever appended, are never served as a file, and are git-ignored. The card switches itself off after 30 days without a note (delete `feedback-started.txt` to start the clock again).
+
 ## Troubleshooting
 
 - **"Could not bind to 127.0.0.1:8765"**: another copy is running. Close it, or start with `PORT=8790`.

@@ -8,6 +8,11 @@ finance-data.bak*.json
 finance-data.json.tmp
 finance-data.bak.*
 *.tmp
+# The optional feedback card's notes and its start marker (serve.py, FEEDBACK=1). Personal comments about the app:
+# never commit them. The `.jsonl` rule covers a renamed copy too.
+feedback.jsonl
+feedback-started.txt
+*.jsonl
 
 # Editing twin used when a tool refuses the .app extension (see CLAUDE.md)
 _edit.html
