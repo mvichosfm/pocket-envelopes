@@ -144,6 +144,10 @@
   .fb-recent { margin-top: 12px; font-size: 13px; color: var(--text-dim); }
   .fb-recent ul { margin: 6px 0 0; padding-left: 18px; }
   .fb-recent li { margin: 6px 0; line-height: 1.4; overflow-wrap: anywhere; }
+  .fb-st { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text-dim); }
+  .fb-st-new { border-color: var(--warn); color: var(--warn); }
+  .fb-st-built, .fb-st-kept { border-color: var(--good); color: var(--good); }
+  .fb-ref { color: var(--text-dim); }
   #fb_msg { min-height: 1.2em; margin-top: 8px; font-size: 13px; color: var(--bad); }
   [data-theme="light"] .btn:not(.primary):not(.ghost) { background: var(--bg-2); }
   [data-theme="light"] .btn:not(.primary):not(.ghost):hover { background: var(--bg-3); }
@@ -9493,7 +9497,7 @@ async function openFeedback() {
   const tabBtn = document.querySelector(`nav.tabs button[data-view="${activeView}"]`);
   const where = tabBtn ? tabBtn.textContent.trim() : activeView;
   const recent = (info.recent || []).map(r =>
-    `<li>${r.grade ? esc(String(r.grade)) + '/10 · ' : ''}${r.kind ? esc(r.kind) + ' · ' : ''}${esc(String(r.comment || ''))}</li>`).join('');
+    `<li><span class="badge fb-st fb-st-${esc(String(r.status || 'new'))}" ${r.ref ? `title="${esc(String(r.ref))}"` : ''}>${esc(String(r.status || 'new'))}</span> ${r.grade ? esc(String(r.grade)) + '/10 · ' : ''}${r.kind ? esc(r.kind) + ' · ' : ''}${esc(String(r.comment || ''))}${r.ref ? ` <span class="fb-ref">(${esc(String(r.ref))})</span>` : ''}</li>`).join('');
   openModal(`
     <h2>Send feedback</h2>
     <p style="color:var(--text-dim);line-height:1.5;margin:0 0 10px;">About <strong>${esc(where)}</strong>. Saved on this machine only, one line per note; nothing is edited or deleted.</p>

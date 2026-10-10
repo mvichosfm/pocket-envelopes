@@ -46,6 +46,7 @@ def load_module(folder):
     module.DATA_DIR = str(folder)
     module.FEEDBACK_FILE = str(Path(folder) / "feedback.jsonl")
     module.FEEDBACK_STARTED = str(Path(folder) / "feedback-started.txt")
+    module.FEEDBACK_HANDLED = str(Path(folder) / "feedback-handled.json")
     return module
 
 
@@ -181,8 +182,28 @@ class Store(unittest.TestCase):
         self.assertTrue(after.startswith(before))
         self.assertEqual([r["id"] for r in self.m._fb_records()], [first["id"], second["id"]])
 
+    def test_recent_notes_carry_their_processing_status_from_the_sidecar(self):
+        a = self.add("cid-aaaaaaaa", comment="first")
+        b = self.add("cid-bbbbbbbb", comment="second")
+        c = self.add("cid-cccccccc", comment="third")
+        status = {r["id"]: (r["status"], r["ref"]) for r in self.m._fb_status(self.NOW)["recent"]}
+        self.assertEqual(set(status.values()), {("new", "")})                  # no sidecar: everything is new
+        Path(self.m.FEEDBACK_HANDLED).write_text(json.dumps({
+            a["id"]: {"status": "built", "ref": "abc1234 " + "x" * 300},
+            b["id"]: {"status": "bogus", "ref": "ignored"},
+            "unknown-id": {"status": "dropped"}}), encoding="utf-8")
+        status = {r["id"]: (r["status"], r["ref"]) for r in self.m._fb_status(self.NOW)["recent"]}
+        self.assertEqual(status[a["id"]][0], "built")
+        self.assertEqual(len(status[a["id"]][1]), 120)                         # ref is capped
+        self.assertEqual(status[b["id"]], ("new", ""))                         # an unknown status is not trusted
+        self.assertEqual(status[c["id"]], ("new", ""))
+        before = Path(self.m.FEEDBACK_FILE).read_bytes()
+        Path(self.m.FEEDBACK_HANDLED).write_text("not json", encoding="utf-8")  # malformed sidecar: not fatal
+        self.assertEqual(len(self.m._fb_status(self.NOW)["recent"]), 3)
+        self.assertEqual(Path(self.m.FEEDBACK_FILE).read_bytes(), before)      # the store is never touched
+
     def test_private_names_are_refused_by_the_static_handler(self):
-        for path in ("/feedback.jsonl", "/feedback-started.txt", "/x/feedback.jsonl", "/notes.jsonl"):
+        for path in ("/feedback.jsonl", "/feedback-started.txt", "/feedback-handled.json", "/x/feedback.jsonl", "/notes.jsonl"):
             self.assertTrue(self.m._is_private_url(path), path)
         self.assertFalse(self.m._is_private_url("/pocket-envelopes.app"))
 

@@ -12,6 +12,7 @@ finance-data.bak.*
 # never commit them. The `.jsonl` rule covers a renamed copy too.
 feedback.jsonl
 feedback-started.txt
+feedback-handled.json
 *.jsonl
 
 # Editing twin used when a tool refuses the .app extension (see CLAUDE.md)
