@@ -7689,7 +7689,23 @@ function drawScenarios() {
         legend: { position: 'bottom', labels: { boxWidth: 44, boxHeight: 4, padding: 16 } },
         tooltip: { callbacks: { title: items => items.length ? fmtDate(items[0].label) : '', label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}` } }
       }
-    }
+    },
+    // Dashed zero line whenever 0 is in view; in the spendable view the area
+    // below it is tinted so "cash goes negative here" reads at a glance. The
+    // Difference view's zero is today's plan, not cash, so it gets no tint.
+    plugins: [{
+      id: 'scenarioZero',
+      beforeDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart, y = scales.y;
+        if (scMode === 'delta' || !chartArea || !y || !(y.min < 0 && y.max > 0)) return;
+        const bad = themeColor('--bad', '#d2685c');
+        ctx.save();
+        ctx.fillStyle = /^#[0-9a-f]{6}$/i.test(bad) ? bad + '26' : bad;
+        const py = y.getPixelForValue(0);
+        ctx.fillRect(chartArea.left, py, chartArea.right - chartArea.left, chartArea.bottom - py);
+        ctx.restore();
+      }
+    }, forecastMarksPlugin({ featuredDatasetIdx: -1, lowIdx: -1 })]
   });
 }
 
@@ -8345,6 +8361,9 @@ function drawNetWorth() {
     },
     options: {
       maintainAspectRatio: false,
+      // Index mode, not nearest-point: the points are invisible (radius 0), so
+      // the default only showed a tooltip when the cursor sat exactly on one.
+      interaction: { mode: "index", intersect: false },
       scales: {
         y: { ticks: { callback: v => fmt(v).replace(/[^\d\-.,€$]/g,'') },
              grid: { color: themeColor("--chart-grid", "rgba(255,255,255,.05)") } },
@@ -8352,7 +8371,7 @@ function drawNetWorth() {
       },
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: { label: c => fmt(c.parsed.y) } }
+        tooltip: { callbacks: { title: items => items.length ? fmtDate(items[0].label) : "", label: c => fmt(c.parsed.y) } }
       }
     }
   });
