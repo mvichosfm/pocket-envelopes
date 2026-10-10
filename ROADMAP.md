@@ -19,7 +19,7 @@ are implemented in the working tree; see CHANGELOG.md for released versions.
   with disposable budgets, plus browser save/conflict/restore checks.
 - [x] Add pull-request checks for Windows, macOS and Linux and browser checks for Chromium.
 - [x] Observe the new workflow passing on GitHub (all five jobs on `126021e`).
-- [ ] Configure required checks (`main` was unprotected on 2026-09-11).
+- [x] Required checks on `main`: decided not to configure (2026-10-10). A one-person repository; the local audit runs before changes land, and a required check would stop direct pushes. `main` stays unprotected on purpose; revisit if anyone else gets write access.
 - [ ] Recheck and triage the remaining findings in the September review before
   claiming the audit backlog is resolved.
 
