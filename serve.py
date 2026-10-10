@@ -264,6 +264,11 @@ FEEDBACK_ENABLED = os.environ.get("FEEDBACK", "").strip().lower() in ("1", "true
 DEFAULT_PORT = 8765
 FEEDBACK_FILE = os.path.join(DATA_DIR, "feedback.jsonl")
 FEEDBACK_STARTED = os.path.join(DATA_DIR, "feedback-started.txt")
+# What happened to each note, written by the person processing the feedback (never by this server, never by the app):
+# {"<record id>": {"status": "kept|built|dropped|later", "ref": "short text"}}. Read-only here; feedback.jsonl stays
+# append-only and untouched. A note with no entry is "new". The name starts with "feedback", so it is already private.
+FEEDBACK_HANDLED = os.path.join(DATA_DIR, "feedback-handled.json")
+FEEDBACK_STATUSES = ("kept", "built", "dropped", "later")
 FEEDBACK_MAX_BYTES = 5 * 1024 * 1024
 FEEDBACK_BODY_MAX = 16 * 1024
 FEEDBACK_QUIET_DAYS = 30
@@ -360,6 +365,24 @@ def _fb_records():
     return out
 
 
+def _fb_handled():
+    """The processing sidecar as a dict; a missing, unreadable or malformed file reads as 'nothing processed yet'."""
+    try:
+        with open(FEEDBACK_HANDLED, "rb") as fh:
+            obj = json.loads(fh.read().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _fb_note_state(entry):
+    """{"status", "ref"} for one note: an unknown or missing status is 'new'; ref is short plain text."""
+    if not isinstance(entry, dict) or entry.get("status") not in FEEDBACK_STATUSES:
+        return {"status": "new", "ref": ""}
+    ref = entry.get("ref")
+    return {"status": entry["status"], "ref": ref[:120] if isinstance(ref, str) else ""}
+
+
 def _fb_time(text, fallback=None):
     try:
         t = datetime.datetime.fromisoformat(str(text).strip())
@@ -397,8 +420,10 @@ def _fb_status(now=None):
     with _feedback_lock:
         records = _fb_records()
         last, quiet = _fb_quiet(records, _fb_started(now), now)
+    handled = _fb_handled()
     recent = [{"id": r.get("id"), "at": r.get("at"), "page": r.get("page"), "section": r.get("section"),
-               "grade": r.get("grade"), "kind": r.get("kind"), "comment": str(r.get("comment") or "")[:200]}
+               "grade": r.get("grade"), "kind": r.get("kind"), "comment": str(r.get("comment") or "")[:200],
+               **_fb_note_state(handled.get(r.get("id")))}
               for r in records[-5:]][::-1]
     return {"enabled": not quiet, "count": len(records), "quiet_days": FEEDBACK_QUIET_DAYS,
             "last": last.isoformat(timespec="seconds"), "recent": recent}
