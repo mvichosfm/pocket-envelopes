@@ -663,6 +663,8 @@
   .help details.faq summary { padding: 8px 0; font-weight: 500; }
   .help details.faq[open] summary { color: var(--accent); }
   .help details.faq > div { padding: 0 0 10px; color: var(--text); }
+  .help .faq-search { margin: 4px 0 14px; }
+  .help .faq-group h4 { margin: 18px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-dim); }
 
   /* Visual review branch: hierarchy, readable detail and phone layouts. */
   :root { --radius: 14px; --text-dim: #a4b0c1; }
@@ -3412,7 +3414,7 @@ function render() {
       case "networth": main.innerHTML = renderNetWorth(); bindNetWorth(); break;
       case "reports": main.innerHTML = renderReports(); bindReports(); break;
       case "settings": main.innerHTML = renderSettings(); bindSettings(); break;
-      case "help": main.innerHTML = renderHelp(); break;
+      case "help": main.innerHTML = renderHelp(); bindHelp(); break;
     }
     linkHelpTips(main);
     main.querySelectorAll('[data-add-tx]').forEach(b => { b.onclick = () => editTransaction(); });
@@ -9008,65 +9010,51 @@ function renderHelp() {
 
     <h3>FAQ</h3>
 
+    <div class="tx-search-row faq-search">
+      <input class="filter-input" id="faqSearch" type="search" placeholder="Search the FAQ, e.g. negative, still due, backup" aria-label="Search the FAQ" autocomplete="off">
+      <span class="micro" id="faqCount" role="status" aria-live="polite" style="align-self:center;"></span>
+    </div>
+
+    <section class="faq-group" data-faq-group><h4>Forecast and spendable</h4>
+
     <details class="faq"><summary>Why doesn't my forecast match my actual balance after I fund an envelope?</summary>
     <div>Funding an envelope doesn't move real cash — it just earmarks part of your existing balance for a category. Your total balance stays the same; your <em>spendable cash</em> (total minus envelope balances) goes down, though not always one-for-one: funding an overspent envelope first fills its hole, and money put into an envelope with a monthly allowance gets spent from that envelope before it ever touches spendable. "Fund the month" re-runs the forecast with your proposal applied so you see the real effect. On the Forecast tab, toggle "spendable cash" to see the line that reflects funding effects.</div>
-    </details>
-
-    <details class="faq"><summary>What's the difference between rollover and reset envelopes?</summary>
-    <div>At month close-out, a <strong>rollover</strong> envelope keeps its leftover balance — useful for irregular expenses like car maintenance where unspent money should stay reserved. A <strong>reset</strong> envelope's leftover returns to spendable cash at close-out — useful for "use it or lose it" categories like fun money or groceries where you don't want unspent budget to accumulate. A <strong>sweep</strong> envelope's leftover moves into the reserve envelope instead, so it stays set aside rather than going back into circulation. Annual envelopes always rollover regardless of policy.</div>
-    </details>
-
-    <details class="faq"><summary>How do I retire an account or envelope I no longer use?</summary>
-    <div><strong>Archive</strong> it (the button on the Accounts row or the envelope card). Deleting is refused while any transaction still points at the record, and that is deliberate: dropping it would orphan history or destroy it. Archiving keeps every transaction and every figure — an archived account still counts in balances and net worth, an archived envelope keeps its balance earmarked — and only takes the record out of the way: out of the lists, the pickers, the dashboard strip and the forecast's account selection. An archived envelope also has <em>no budget</em> any more, so it drops out of Fund the month, close-out, the monthly totals and the forecast's allowances; if it still holds money you want back, click <strong>Return</strong> first. Archived records sit in a collapsed list at the bottom of their tab with an <strong>Unarchive</strong> button, and Reports still shows an archived envelope for any month it was in use. You cannot archive the reserve envelope, or anything an <em>active</em> recurring entry still posts to — deactivate or reassign that first. Editing an old transaction still offers its archived account or envelope, marked "(archived)", so re-saving never loses it.</div>
-    </details>
-
-    <details class="faq"><summary>I typed a bill in by hand and it still shows as due. Why, and what do I do?</summary>
-    <div>A plain <strong>Add transaction</strong> does not tell the recurring entry that its occurrence happened — only the ⚡ button and the due review do — so the scheduled occurrence stays due, and until you clear it the forecast counts the bill twice: once as your real transaction, once as the due it still expects. Open <strong>Review</strong> on the dashboard banner. A due row that looks like something you already recorded (same account and amount, dated within three days of the schedule) shows that transaction underneath and defaults its action to <strong>Link</strong>: applying it marks your transaction as the record of that occurrence, nothing is booked twice, and the due clears. The match is only ever offered, never applied on its own — a wrong automatic link would hide a bill that is really still due. If it is not the same payment, choose Record or Skip as usual.</div>
-    </details>
-
-    <details class="faq"><summary>What does "Backed by account" do?</summary>
-    <div>It tells the forecast which account holds an envelope's money. Nothing changes while a forecast selects all your cash accounts. But a per-person forecast profile — one partner's accounts only — used to subtract <em>every</em> envelope from that partner's total, including envelopes funded from the other partner's account, so spendable came out too low and <strong>Fund the month</strong> warned against money that was there. Set <strong>Backed by</strong> on each envelope and a filtered forecast subtracts only the envelopes its accounts hold, and drains each allowance from the right account; the summary table lists what it left out. <strong>Household</strong> (the default) keeps the old behaviour for that envelope. The field is advisory: moving money between two envelopes backed by different accounts does not move cash between the accounts, so keep the backing in step with where the money really sits. A reserve envelope is always household-wide.</div>
-    </details>
-
-    <details class="faq"><summary>What is a reserve envelope?</summary>
-    <div>Tick <strong>Reserve envelope (emergency / catch-all)</strong> when editing an envelope to make it your emergency buffer. A reserve envelope has no budget and no cadence, and <strong>Fund the month</strong> never proposes funding it — it just sits holding money. You fill it mid-month with its own <strong>Fund</strong> button (or <strong>Fund reserve</strong> on the Dashboard, which offers the forecast's projected low so the low lands at zero), and at month-end close-out by choosing <strong>Sweep</strong> on the envelopes whose leftovers you want set aside, and you take money back out with <strong>Move funds</strong> whenever a real envelope needs it. Sweeping an envelope that ended the month <em>overspent</em> pulls from the reserve to bring it back to zero. Only one envelope can be the reserve; ticking the box on another moves the flag. Sweeps are envelope-to-envelope transfers, so no account is touched: sweeping a positive leftover leaves your spendable cash unchanged today (the money stays earmarked, just in a different envelope), while covering an overspend from the reserve raises spendable, because reserved money fills the hole. The <em>projected</em> low is unchanged too, as long as Forecast assumes Fund the month refills (the default): a budgeted envelope's money is then as kept as the reserve's. With refills off, money in the reserve is kept for the whole horizon whereas money in a budgeted envelope is spent inside it, so a sweep into the reserve lowers the projected low by the swept amount and a move out of it raises the low — see "Why did Move funds change my spendable or projected low?" below.</div>
     </details>
 
     <details class="faq"><summary>Why are some accounts missing from the forecast?</summary>
     <div>The Forecast tab has an account picker. By default it excludes investment accounts (their day-to-day value changes are market-driven, not transaction-driven) and any account with "Include in net worth" turned off. Open the account picker on the Forecast tab to add them back.</div>
     </details>
 
-    <details class="faq"><summary>How does the app save my data, and what about backups?</summary>
-    <div>The app saves to <code>finance-data.json</code> on the machine running <code>serve.py</code>, over HTTP — so every device that opens this address shares one file, and no browser permission is involved. Saves are debounced ~1s after you stop editing and flushed immediately when you switch tabs or close the page. The server rotates the previous five versions into <code>finance-data.bak.0</code> … <code>.bak.4</code> on disk, and the app additionally keeps <strong>rolling daily backups</strong> (last 7 days) in this browser's <code>localStorage</code> — see Settings → Backups to restore or download one. Use Export from Settings for an off-machine JSON copy any time. If two devices edit at once, the second save is refused with a conflict dialog rather than silently overwriting the first.</div>
+    <details class="faq"><summary>Why can Spendable today differ from the projected starting balance?</summary>
+    <div><strong>Spendable today</strong> uses recorded account balances, less positive envelope reservations. The projection also folds in recurring entries that are due but have not been recorded yet. An unpaid bill can therefore lower the forecast's starting point before it changes today's actual balance. Both figures use the accounts selected in Forecast, including each envelope's backing account.</div>
     </details>
 
-    <details class="faq"><summary>Can I try something out without touching my budget?</summary>
-    <div>Three ways. For a what-if about skipping funding or bills, use the <strong>Scenarios</strong> page: nothing changes until you apply. To explore the app itself, add <code>?demo=1</code> to the address. That loads a sample household and never reads or saves your file. Otherwise, make the change and press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> to go back; undo covers everything up to the last reload.</div>
+    <details class="faq"><summary>What does Lowest projected spendable mean?</summary>
+    <div>The lowest point over exactly the horizon selected in Forecast, using the same accounts and envelope-allowance setting. The Dashboard always shows spendable cash, even if the chart displays only total or individual account lines. The assumption chip states whether allowances are included and whether refills are assumed. By default the projection assumes you run <strong>Fund the month</strong> at the start of every future month, so each budgeted envelope gets its budget back on the 1st and the spendable line steps down by the whole budget each month; money set aside stays set aside. <strong>Fund the month</strong> recalculates the low for the amounts you propose for the current month, and <strong>Fund reserve</strong> offers to set exactly that low aside in your reserve envelope. With refills switched off in Forecast, envelopes are spent down and never topped up, and money already set aside pays for its envelope's projected spending first.</div>
     </details>
 
-    <details class="faq"><summary>What if I miss a month's close-out?</summary>
-    <div>The Dashboard attention panel only ever surfaces the most recent unreviewed month, so you won't see a multi-month catch-up. If you want to close out a specific older month manually, go to Settings → Envelope close-out and pick the month.</div>
+    <details class="faq"><summary>Why did Move funds change my spendable or projected low? No cash moved.</summary>
+    <div>Spendable is cash minus the money set aside in envelopes. <strong>Spendable today</strong> only moves when an envelope crosses zero: moving more out of an envelope than it holds lowers spendable by the shortfall (only its positive balance was earmarked), and covering an overspent envelope from another raises spendable by the overspend covered (that overspend had already come out of spendable, and the other envelope now pays for it). The <strong>projected low</strong>, with the default setting that Forecast assumes <strong>Fund the month</strong> on the 1st, does not move for a transfer between two positive envelopes: every budgeted envelope is topped up each month, so its money is as kept as the reserve's, and the only exception is a <em>reset</em> envelope, which hands its leftover back to spendable at month end. If you switch refills off in Forecast, the projection treats a budgeted envelope's balance as pre-paid spending that frees up inside the horizon while an envelope with no budget (the reserve, an archived envelope) keeps its balance — then reserve → Food raises the low by the amount moved and Food → reserve or a close-out sweep lowers it. The Move funds dialog shows both figures before and after, with the reason.</div>
+    </details>
+
+    </section>
+
+    <section class="faq-group" data-faq-group><h4>Envelopes and funding</h4>
+
+    <details class="faq"><summary>What's the difference between rollover and reset envelopes?</summary>
+    <div>At month close-out, a <strong>rollover</strong> envelope keeps its leftover balance — useful for irregular expenses like car maintenance where unspent money should stay reserved. A <strong>reset</strong> envelope's leftover returns to spendable cash at close-out — useful for "use it or lose it" categories like fun money or groceries where you don't want unspent budget to accumulate. A <strong>sweep</strong> envelope's leftover moves into the reserve envelope instead, so it stays set aside rather than going back into circulation. Annual envelopes always rollover regardless of policy.</div>
+    </details>
+
+    <details class="faq"><summary>What is a reserve envelope?</summary>
+    <div>Tick <strong>Reserve envelope (emergency / catch-all)</strong> when editing an envelope to make it your emergency buffer. A reserve envelope has no budget and no cadence, and <strong>Fund the month</strong> never proposes funding it — it just sits holding money. You fill it mid-month with its own <strong>Fund</strong> button (or <strong>Fund reserve</strong> on the Dashboard, which offers the forecast's projected low so the low lands at zero), and at month-end close-out by choosing <strong>Sweep</strong> on the envelopes whose leftovers you want set aside, and you take money back out with <strong>Move funds</strong> whenever a real envelope needs it. Sweeping an envelope that ended the month <em>overspent</em> pulls from the reserve to bring it back to zero. Only one envelope can be the reserve; ticking the box on another moves the flag. Sweeps are envelope-to-envelope transfers, so no account is touched: sweeping a positive leftover leaves your spendable cash unchanged today (the money stays earmarked, just in a different envelope), while covering an overspend from the reserve raises spendable, because reserved money fills the hole. The <em>projected</em> low is unchanged too, as long as Forecast assumes Fund the month refills (the default): a budgeted envelope's money is then as kept as the reserve's. With refills off, money in the reserve is kept for the whole horizon whereas money in a budgeted envelope is spent inside it, so a sweep into the reserve lowers the projected low by the swept amount and a move out of it raises the low — see "Why did Move funds change my spendable or projected low?" below.</div>
+    </details>
+
+    <details class="faq"><summary>What does "Backed by account" do?</summary>
+    <div>It tells the forecast which account holds an envelope's money. Nothing changes while a forecast selects all your cash accounts. But a per-person forecast profile — one partner's accounts only — used to subtract <em>every</em> envelope from that partner's total, including envelopes funded from the other partner's account, so spendable came out too low and <strong>Fund the month</strong> warned against money that was there. Set <strong>Backed by</strong> on each envelope and a filtered forecast subtracts only the envelopes its accounts hold, and drains each allowance from the right account; the summary table lists what it left out. <strong>Household</strong> (the default) keeps the old behaviour for that envelope. The field is advisory: moving money between two envelopes backed by different accounts does not move cash between the accounts, so keep the backing in step with where the money really sits. A reserve envelope is always household-wide.</div>
     </details>
 
     <details class="faq"><summary>Why is an envelope balance negative?</summary>
     <div>You've spent more on that category than you've funded into the envelope. Either fund it from spendable cash (the envelope's <strong>Fund</strong> button), shift money in from another envelope (<strong>Move funds</strong>), or accept it and let the next month's funding catch up.</div>
-    </details>
-
-    <details class="faq"><summary>Can I edit a recurring template after I've already applied some occurrences?</summary>
-    <div>Yes. Editing a recurring template changes every unrecorded occurrence — already-applied transactions stay exactly as they were recorded. If you need to edit a past occurrence, find it on the Transactions tab and edit the individual record. To change just one future occurrence, use Occurrences instead (next question). The date box in the editor shows the entry's <strong>next occurrence</strong>, not when the series began. Leave it alone and the series keeps its original anchor day. Type a later date and the series moves to start there. Type an earlier date, one the entry has already gone past, and the occurrences from that date become due again; you are warned if one of them was already recorded, so nothing gets booked twice by accident.</div>
-    </details>
-    <details class="faq"><summary>What happens when I pause a recurring entry?</summary>
-    <div>A paused entry stops producing occurrences: none fall due, none show in Upcoming, and the forecast drops them. If it is an <strong>expense on an envelope</strong> (say a 35-a-month subscription on a 1000-a-month entertainment envelope), pausing also takes it out of that envelope's budget while it stays paused. The envelope then reads 965, marked "(35.00 paused)". Fund the month proposes 965, close-out and Budget vs actual measure against 965, and the forecast's spendable and projected low rise by 35 for every future month. <strong>Enable</strong> on the row puts it all back. Paused one-off entries, income and transfers have no budget effect. If an entry is gone for good, delete it or give it an end date rather than leaving it paused.</div>
-    </details>
-    <details class="faq"><summary>Can one occurrence of a recurring entry have a different amount, or be skipped?</summary>
-    <div>Yes. The <strong>Occurrences</strong> button on the entry's row (Recurring tab) lists its next dates. Type a different amount on a row and that date alone uses it — the template and every other date keep the template amount; set it back to the template amount to remove it. The skip button on a row skips that one date without touching the dates around it (unlike the row's skip button on the Recurring tab, which skips the <em>next</em> occurrence). The forecast, the Dashboard's Upcoming panel and the due review all use the date's own amount and leave a skipped date out, the Recurring tab marks a changed next occurrence with <em>this time</em>, and a hand-typed transaction is matched against the date's own amount. Once an occurrence is recorded or skipped and the entry's history moves past it, its custom amount is dropped — the recorded transaction carries it.</div>
-    </details>
-
-    <details class="faq"><summary>Why can Spendable today differ from the projected starting balance?</summary>
-    <div><strong>Spendable today</strong> uses recorded account balances, less positive envelope reservations. The projection also folds in recurring entries that are due but have not been recorded yet. An unpaid bill can therefore lower the forecast's starting point before it changes today's actual balance. Both figures use the accounts selected in Forecast, including each envelope's backing account.</div>
-    </details>
-    <details class="faq"><summary>What does Lowest projected spendable mean?</summary>
-    <div>The lowest point over exactly the horizon selected in Forecast, using the same accounts and envelope-allowance setting. The Dashboard always shows spendable cash, even if the chart displays only total or individual account lines. The assumption chip states whether allowances are included and whether refills are assumed. By default the projection assumes you run <strong>Fund the month</strong> at the start of every future month, so each budgeted envelope gets its budget back on the 1st and the spendable line steps down by the whole budget each month; money set aside stays set aside. <strong>Fund the month</strong> recalculates the low for the amounts you propose for the current month, and <strong>Fund reserve</strong> offers to set exactly that low aside in your reserve envelope. With refills switched off in Forecast, envelopes are spent down and never topped up, and money already set aside pays for its envelope's projected spending first.</div>
     </details>
 
     <details class="faq"><summary>What counts as spent this month?</summary>
@@ -9076,14 +9064,89 @@ function renderHelp() {
     <details class="faq"><summary>Fund the month vs. Fund vs. Move funds vs. Return — which do I use?</summary>
     <div><strong>Fund the month</strong> (Envelopes toolbar) assigns one month's budget to every envelope in one go — the start-of-month action. It funds the budgeted <em>amount</em>, not the gap to the budget, so an envelope you overspent last month lands below its target and you feel the overspend this month; switch the modal to <strong>Top up to full target</strong> if you'd rather clear it in one go. A single envelope's <strong>Fund</strong> button sets money aside in just that envelope, mid-month, out of spendable cash — the reserve included. Its dialog asks which account the money sits in (that account's forecast supplies the figures and is noted on the entry; a household envelope can opt to be <em>backed</em> by it from then on), shows spendable today and the projected low, and <strong>Use projected low</strong> fills the most you can set aside before that low reaches zero. For the reserve that is the projected low itself, which is how you park a month's surplus: the Dashboard's <strong>Fund reserve</strong> button opens the same dialog with that amount filled in. <strong>Move funds</strong> shifts money from one envelope to another; no account changes, and its dialog shows what the move does to spendable today and the projected low before you confirm. <strong>Return</strong> un-earmarks money from an envelope back to spendable cash, and the forecast stops projecting that amount as the envelope's spending this month. All of these only move virtual allocations — your account totals stay the same.</div>
     </details>
+
+    <details class="faq"><summary>How do I retire an account or envelope I no longer use?</summary>
+    <div><strong>Archive</strong> it (the button on the Accounts row or the envelope card). Deleting is refused while any transaction still points at the record, and that is deliberate: dropping it would orphan history or destroy it. Archiving keeps every transaction and every figure — an archived account still counts in balances and net worth, an archived envelope keeps its balance earmarked — and only takes the record out of the way: out of the lists, the pickers, the dashboard strip and the forecast's account selection. An archived envelope also has <em>no budget</em> any more, so it drops out of Fund the month, close-out, the monthly totals and the forecast's allowances; if it still holds money you want back, click <strong>Return</strong> first. Archived records sit in a collapsed list at the bottom of their tab with an <strong>Unarchive</strong> button, and Reports still shows an archived envelope for any month it was in use. You cannot archive the reserve envelope, or anything an <em>active</em> recurring entry still posts to — deactivate or reassign that first. Editing an old transaction still offers its archived account or envelope, marked "(archived)", so re-saving never loses it.</div>
+    </details>
+
+    <details class="faq"><summary>What if I miss a month's close-out?</summary>
+    <div>The Dashboard attention panel only ever surfaces the most recent unreviewed month, so you won't see a multi-month catch-up. If you want to close out a specific older month manually, go to Settings → Envelope close-out and pick the month.</div>
+    </details>
+
+    </section>
+
+    <section class="faq-group" data-faq-group><h4>Recurring entries</h4>
+
+    <details class="faq"><summary>I typed a bill in by hand and it still shows as due. Why, and what do I do?</summary>
+    <div>A plain <strong>Add transaction</strong> does not tell the recurring entry that its occurrence happened — only the ⚡ button and the due review do — so the scheduled occurrence stays due, and until you clear it the forecast counts the bill twice: once as your real transaction, once as the due it still expects. Open <strong>Review</strong> on the dashboard banner. A due row that looks like something you already recorded (same account and amount, dated within three days of the schedule) shows that transaction underneath and defaults its action to <strong>Link</strong>: applying it marks your transaction as the record of that occurrence, nothing is booked twice, and the due clears. The match is only ever offered, never applied on its own — a wrong automatic link would hide a bill that is really still due. If it is not the same payment, choose Record or Skip as usual.</div>
+    </details>
+
+    <details class="faq"><summary>Can I edit a recurring template after I've already applied some occurrences?</summary>
+    <div>Yes. Editing a recurring template changes every unrecorded occurrence — already-applied transactions stay exactly as they were recorded. If you need to edit a past occurrence, find it on the Transactions tab and edit the individual record. To change just one future occurrence, use Occurrences instead (next question). The date box in the editor shows the entry's <strong>next occurrence</strong>, not when the series began. Leave it alone and the series keeps its original anchor day. Type a later date and the series moves to start there. Type an earlier date, one the entry has already gone past, and the occurrences from that date become due again; you are warned if one of them was already recorded, so nothing gets booked twice by accident.</div>
+    </details>
+
+    <details class="faq"><summary>What happens when I pause a recurring entry?</summary>
+    <div>A paused entry stops producing occurrences: none fall due, none show in Upcoming, and the forecast drops them. If it is an <strong>expense on an envelope</strong> (say a 35-a-month subscription on a 1000-a-month entertainment envelope), pausing also takes it out of that envelope's budget while it stays paused. The envelope then reads 965, marked "(35.00 paused)". Fund the month proposes 965, close-out and Budget vs actual measure against 965, and the forecast's spendable and projected low rise by 35 for every future month. <strong>Enable</strong> on the row puts it all back. Paused one-off entries, income and transfers have no budget effect. If an entry is gone for good, delete it or give it an end date rather than leaving it paused.</div>
+    </details>
+
+    <details class="faq"><summary>Can one occurrence of a recurring entry have a different amount, or be skipped?</summary>
+    <div>Yes. The <strong>Occurrences</strong> button on the entry's row (Recurring tab) lists its next dates. Type a different amount on a row and that date alone uses it — the template and every other date keep the template amount; set it back to the template amount to remove it. The skip button on a row skips that one date without touching the dates around it (unlike the row's skip button on the Recurring tab, which skips the <em>next</em> occurrence). The forecast, the Dashboard's Upcoming panel and the due review all use the date's own amount and leave a skipped date out, the Recurring tab marks a changed next occurrence with <em>this time</em>, and a hand-typed transaction is matched against the date's own amount. Once an occurrence is recorded or skipped and the entry's history moves past it, its custom amount is dropped — the recorded transaction carries it.</div>
+    </details>
+
+    </section>
+
+    <section class="faq-group" data-faq-group><h4>Scenarios and trying things out</h4>
+
     <details class="faq"><summary>What is the Scenarios page?</summary>
     <div>A place to test “what if” changes without touching your budget. A scenario is a saved set of skips: <strong>skip an envelope's funding</strong> for a number of months (optionally <em>also pausing its spending</em>, so that month's budget is zero) and <strong>skip a recurring entry</strong> for a number of months. Tick <strong>Include</strong> on any mix of scenarios and the chart and table compare each one on its own, and all of them together, against today's plan; the low, the day spendable first goes below zero and the end-of-horizon figure all update. The page always projects with envelope allowances on, because a skipped funding only matters to a projection that projects envelopes. Skipping funding <em>without</em> pausing spending means the envelope keeps spending from what it holds, then from your spendable cash, so an empty envelope changes little. <strong>Apply to budget…</strong> lists exactly what will change, then records the skipped months on the envelopes (Fund the month leaves them out and the forecast honours them) and skips the recurring occurrences in those months; one Undo reverts it. An applied scenario's button becomes <strong>Unapply…</strong>, which takes back exactly what that scenario wrote (restoring the value it replaced) and leaves anything you changed since alone. Applied skips are also listed at the bottom of the page and can be removed there; recurring ones are managed per entry under Recurring → Occurrences. Funding for the current month is already booked, so it only affects the Fund the month dialog.</div>
     </details>
-    <details class="faq"><summary>Why did Move funds change my spendable or projected low? No cash moved.</summary>
-    <div>Spendable is cash minus the money set aside in envelopes. <strong>Spendable today</strong> only moves when an envelope crosses zero: moving more out of an envelope than it holds lowers spendable by the shortfall (only its positive balance was earmarked), and covering an overspent envelope from another raises spendable by the overspend covered (that overspend had already come out of spendable, and the other envelope now pays for it). The <strong>projected low</strong>, with the default setting that Forecast assumes <strong>Fund the month</strong> on the 1st, does not move for a transfer between two positive envelopes: every budgeted envelope is topped up each month, so its money is as kept as the reserve's, and the only exception is a <em>reset</em> envelope, which hands its leftover back to spendable at month end. If you switch refills off in Forecast, the projection treats a budgeted envelope's balance as pre-paid spending that frees up inside the horizon while an envelope with no budget (the reserve, an archived envelope) keeps its balance — then reserve → Food raises the low by the amount moved and Food → reserve or a close-out sweep lowers it. The Move funds dialog shows both figures before and after, with the reason.</div>
+
+    <details class="faq"><summary>Can I try something out without touching my budget?</summary>
+    <div>Three ways. For a what-if about skipping funding or bills, use the <strong>Scenarios</strong> page: nothing changes until you apply. To explore the app itself, add <code>?demo=1</code> to the address. That loads a sample household and never reads or saves your file. Otherwise, make the change and press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> to go back; undo covers everything up to the last reload.</div>
     </details>
+
+    </section>
+
+    <section class="faq-group" data-faq-group><h4>Saving and backups</h4>
+
+    <details class="faq"><summary>How does the app save my data, and what about backups?</summary>
+    <div>The app saves to <code>finance-data.json</code> on the machine running <code>serve.py</code>, over HTTP — so every device that opens this address shares one file, and no browser permission is involved. Saves are debounced ~1s after you stop editing and flushed immediately when you switch tabs or close the page. The server rotates the previous five versions into <code>finance-data.bak.0</code> … <code>.bak.4</code> on disk, and the app additionally keeps <strong>rolling daily backups</strong> (last 7 days) in this browser's <code>localStorage</code> — see Settings → Backups to restore or download one. Use Export from Settings for an off-machine JSON copy any time. If two devices edit at once, the second save is refused with a conflict dialog rather than silently overwriting the first.</div>
+    </details>
+
+    </section>
+    <p id="faqNone" class="help-lead" hidden>No question matches. Try a shorter word.</p>
   </div>
   `;
+}
+
+// FAQ search: every typed word must appear in a question's text (question or answer). Matching questions stay,
+// the rest hide, a category with no match hides its heading. With at most three matches they open so the answer is
+// on screen; clearing the box closes only the ones the search opened. Not saved across renders: it is a finding aid.
+function faqMatches(text, query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = text.toLowerCase();
+  return words.every(w => hay.includes(w));
+}
+function bindHelp() {
+  const input = document.getElementById('faqSearch');
+  if (!input) return;
+  const items = [...document.querySelectorAll('.help details.faq')];
+  const texts = items.map(d => d.textContent);
+  const apply = () => {
+    const q = input.value.trim();
+    const hits = items.map((d, i) => !q || faqMatches(texts[i], q));
+    const n = hits.filter(Boolean).length;
+    items.forEach((d, i) => {
+      d.hidden = !hits[i];
+      if (q && n <= 3 && hits[i]) { if (!d.open) { d.open = true; d.dataset.auto = '1'; } }
+      else if (d.dataset.auto) { d.open = false; delete d.dataset.auto; }
+    });
+    document.querySelectorAll('[data-faq-group]').forEach(g => { g.hidden = !g.querySelector('details.faq:not([hidden])'); });
+    document.getElementById('faqNone').hidden = n > 0;
+    document.getElementById('faqCount').textContent = q ? plural(n, 'question', 'questions') + ' match' + (n === 1 ? 'es' : '') : '';
+  };
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', e => { if (e.key === 'Escape' && input.value) { input.value = ''; apply(); e.stopPropagation(); } });
 }
 
 //=============================================================================
