@@ -42,4 +42,6 @@ Not proposed: rewriting any answer, adding or removing questions.
 
 ## Decisions
 
-(pending)
+1. Keep A + C (headings and search). Category names accepted as proposed (five).
+
+Outcome: merged on "merge it" as 7b549ab (feature commit 4d68fd4); the live server on 8765 serves the new Help page (faqSearch present in the served app). Built on branch feedback-faq. Preview checked on a scratch server with demo data: 20 questions in five groups, search narrows by every typed word, one match opens its answer, no-match message and clear restore the list, no horizontal overflow at 375 px. Audit 41/41. Not checked: Escape-to-clear by keyboard in a real browser.
