@@ -7,6 +7,20 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **A red line per account.** The account editor has a new optional field,
+  *Show red when below*. Without it an account is red below zero, as before; with
+  it the balance turns red and carries a "below your limit" tag under that amount
+  instead, on the Accounts tab, the Dashboard's pinned accounts and the archived
+  list. The limit replaces the below-zero rule for that account, so a credit card
+  with a negative limit stays calm until it passes it. Display only: forecasts,
+  net worth and spendable ignore it.
+- **Move to reserve.** A button on the Envelopes tab opens a list of your
+  envelopes; tick any and each one's whole balance moves to the reserve in one go
+  (a transfer, so no cash moves). The dialog re-forecasts with the moves before you
+  commit and shows spendable today and the projected low before and after; it is one
+  Undo. Empty and overspent envelopes cannot be ticked, nothing is ticked at the
+  start, and with no reserve it says so. Also in the Ctrl/Cmd-K palette.
+
 - **Optional feedback card.** Start the server with `FEEDBACK=1` and a
   speech-bubble button appears in the header: a grade, a kind and a comment about
   the section you are looking at, appended as one line to `feedback.jsonl` next to
