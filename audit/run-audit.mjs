@@ -169,6 +169,7 @@ function logicApi() {
     "envelopeSpendingAccount", "forecastAccountBalances", "spendableLow",
     "spendableMinAfterFunding", "envelopeFundSuggestion", "isCashflowTx",
     "spendableToday", "fundingToZeroLow",
+    "accountWarnBelow", "accountIsLow", "accountBalanceClass", "reserveEnvelope", "buildReserveMoves",
     "lastDayOfMonthKey", "envelopeMonthSummary", "envelopeMonthSpendMap", "reportsAggregates",
   ];
   const bundle = [
@@ -176,6 +177,7 @@ function logicApi() {
     "let _balCache = null;",
     "const HAND_LOG_WINDOW_DAYS = 3;",
     "const RETURN_PAYEE = 'Return to spendable';",
+    "const RESERVE_MOVE_PAYEE = 'Move to reserve';",
     "const MONTH_KEY_RE = /^\\d{4}-(0[1-9]|1[0-2])$/;",
     "const SCENARIO_ID_RE = /^[A-Za-z0-9_\\-]{1,80}$/;",
     "const uid = () => 'audit-id';",
@@ -890,6 +892,73 @@ if (api) {
     // The restore runs even when the probe throws.
     assert.throws(() => api.withProbeTxs([probe("food", "reserve", 1)], () => { throw new Error("boom"); }), /boom/);
     assert.equal(api.getData().transactions, saved);
+  });
+
+  check("Per-account red line: a limit replaces the below-zero rule, no limit keeps it, junk is ignored", () => {
+    assert.equal(api.accountWarnBelow({}), null);
+    assert.equal(api.accountWarnBelow({ warnBelow: "5" }), null, "a string is not a limit");
+    assert.equal(api.accountWarnBelow({ warnBelow: NaN }), null);
+    assert.equal(api.accountWarnBelow({ warnBelow: 0 }), 0, "zero is a real limit");
+    // No limit: exactly today's rule.
+    assert.equal(api.accountIsLow({}, -0.01), true);
+    assert.equal(api.accountIsLow({}, 0), false);
+    assert.equal(api.accountBalanceClass({}, -5), "neg");
+    assert.equal(api.accountBalanceClass({}, 5), "");
+    // A limit: red strictly under it, and a limit above zero also covers the negative range.
+    assert.equal(api.accountIsLow({ warnBelow: 200 }, 199.99), true);
+    assert.equal(api.accountIsLow({ warnBelow: 200 }, 200), false, "equal to the limit is not low");
+    assert.equal(api.accountIsLow({ warnBelow: 200 }, -50), true);
+    // A limit replaces the zero rule: a credit card with a negative limit is not red until it passes it.
+    assert.equal(api.accountIsLow({ warnBelow: -1000 }, -400), false);
+    assert.equal(api.accountIsLow({ warnBelow: -1000 }, -1000.01), true);
+    // Whole-cent comparison: float noise on a sum of cents cannot flip the colour.
+    assert.equal(api.accountIsLow({ warnBelow: 0.1 + 0.2 }, 0.3), false);
+    assert.equal(api.accountIsLow({ warnBelow: 300 }, 299.99999999), false);
+    // Nothing else reads it: the balance is the balance.
+    api.setToday("2026-10-15");
+    api.setData({ accounts: [{ id: "a", openingBalance: 100, warnBelow: 500, includeInNetWorth: true }], envelopes: [], transactions: [], recurring: [] });
+    assert.equal(api.accountBalance(api.getData().accounts[0]), 100);
+  });
+
+  check("Move to reserve: whole positive balances only, one row each, preview equals booking", () => {
+    api.setToday("2026-10-15");
+    const build = () => ({
+      accounts: [{ id: "cash", openingBalance: 5000, includeInNetWorth: true }],
+      envelopes: [
+        { id: "a", name: "A", openingBalance: 120.5, budgetAmount: 100, cadence: "monthly", rolloverPolicy: "rollover" },
+        { id: "b", name: "B", openingBalance: 0, budgetAmount: 50, cadence: "monthly", rolloverPolicy: "rollover" },
+        { id: "c", name: "C", openingBalance: -30, budgetAmount: 50, cadence: "monthly", rolloverPolicy: "rollover" },
+        { id: "d", name: "D", openingBalance: 70, budgetAmount: 0, cadence: "monthly", archived: true },
+        { id: "e", name: "E", openingBalance: 200, budgetAmount: 0, cadence: "monthly", rolloverPolicy: "rollover" },
+        { id: "reserve", name: "Reserve", openingBalance: 500, budgetAmount: 0, cadence: "monthly", isReserve: true },
+      ],
+      transactions: [], recurring: [],
+    });
+    api.setData(build());
+    const moves = api.buildReserveMoves(["a", "b", "c", "d", "reserve", "a", "ghost", "e"], "2026-10-15");
+    assert.equal(JSON.stringify(moves.map((m) => [m.fromEnvelopeId, m.toEnvelopeId, m.amount])), JSON.stringify([["a", "reserve", 120.5], ["e", "reserve", 200]]),
+      "overspent, empty, archived, the reserve, unknown and repeated ids are all skipped");
+    assert.ok(moves.every((m) => m.type === "transfer-envelope" && m.payee === "Move to reserve" && m.date === "2026-10-15"));
+    // Preview == booking: the projected low with the rows as probes is the low after booking them.
+    const low = () => api.spendableLow(api.forecastAccountBalances(["cash"], 90, { includeAllowances: true, assumeRefill: true })).min;
+    const today0 = api.spendableToday(["cash"]);
+    const previewLow = api.withProbeTxs(moves, low);
+    assert.equal(api.getData().transactions.length, 0, "the probe leaves no row behind");
+    api.getData().transactions.push(...moves);
+    assert.ok(Math.abs(low() - previewLow) < 0.005, "booked low equals the previewed low");
+    // The envelopes land on zero, the reserve holds the sum, and no cash or spendable-today moved.
+    const bal = (id) => api.envelopeBalance(api.envelopeById(id));
+    assert.equal(bal("a"), 0);
+    assert.equal(bal("e"), 0);
+    assert.equal(bal("reserve"), 820.5);
+    assert.equal(bal("c"), -30, "an overspent envelope is left alone");
+    assert.equal(api.accountBalance(api.getData().accounts[0]), 5000);
+    assert.equal(api.spendableToday(["cash"]), today0, "spendable today is unchanged by a move between positive envelopes");
+    // Without a reserve there is nothing to move to.
+    const noReserve = build();
+    noReserve.envelopes = noReserve.envelopes.filter((e) => !e.isReserve);
+    api.setData(noReserve);
+    assert.equal(api.buildReserveMoves(["a", "e"], "2026-10-15").length, 0);
   });
 
   check("Envelope-only adjustments are excluded from cashflow", () => {

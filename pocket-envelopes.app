@@ -284,6 +284,17 @@
   .badge.expense { color: var(--bad); border-color: var(--bad); }
   .badge.transfer { color: var(--text-dim); border-color: var(--text-dim); }
   .badge.due { color: var(--warn); border-color: var(--warn); }
+  /* "below your limit" beside an account balance (decision #68): the word backs the red colour up. */
+  .badge.low { color: var(--bad); border-color: var(--bad); margin-right: 8px; white-space: nowrap; }
+  /* Move envelopes to the reserve (decision #69): one tick row per envelope. */
+  .mtr-tools { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 8px; }
+  .mtr-list { max-height: min(48vh, 420px); overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
+  .mtr-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; min-height: 44px; border-bottom: 1px solid var(--border); cursor: pointer; font-weight: 400; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
+  .mtr-row:last-child { border-bottom: 0; }
+  .mtr-row input { width: auto; margin: 0; flex: 0 0 auto; }
+  .mtr-row .mtr-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .mtr-row .num { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .mtr-row.mtr-off { opacity: .55; cursor: default; }
   /* A transaction dated after today. Balances exclude it (accountBalance /
      envelopeBalance stop at today), so the row must not look like a posted one. */
   .badge.scheduled { color: var(--warn); border-color: var(--warn); border-style: dashed; }
@@ -1179,6 +1190,12 @@ function migrate(raw) {
     for (const r of (raw.recurring || [])) fixTag(r);
   }
   raw.accounts = raw.accounts || [];
+  // warnBelow is the optional per-account red line (decision #68): a finite number or absent.
+  // Anything else (a hand-edited string, null) is dropped so the account falls back to the
+  // below-zero rule instead of comparing a balance with junk.
+  for (const _a of raw.accounts) {
+    if (_a && typeof _a === 'object' && 'warnBelow' in _a && !(typeof _a.warnBelow === 'number' && isFinite(_a.warnBelow))) delete _a.warnBelow;
+  }
   raw.envelopes = raw.envelopes || [];
   raw.transactions = raw.transactions || [];
   raw.recurring = raw.recurring || [];
@@ -2025,7 +2042,9 @@ const archSuffix = x => x.archived ? ' (archived)' : '';
 // transfers — they don't have a single primary envelope or account).
 // Payees the app books on its own; they are bookkeeping, not somewhere the
 // user shops, so they stay out of the payee picker and out of fuzzy matching.
-const BOOKKEEPING_PAYEES = new Set(['Envelope refill', 'Close-out adjustment', 'Close-out sweep', 'Market adjustment']);
+// The payee "Move to reserve" books: an envelope-to-envelope transfer of a whole balance (decision #69).
+const RESERVE_MOVE_PAYEE = 'Move to reserve';
+const BOOKKEEPING_PAYEES = new Set(['Envelope refill', 'Close-out adjustment', 'Close-out sweep', 'Market adjustment', RESERVE_MOVE_PAYEE]);
 // The payee "Return to spendable" books. The forecast reads it (decision #59):
 // a return dated this month also removes that amount from the envelope's
 // remaining projected spending, because returning money says the envelope
@@ -2374,6 +2393,52 @@ function envelopeSuspendedBudget(e) {
 // two sweep destinations.
 function reserveEnvelope() {
   return data.envelopes.find(e => e.isReserve) || null;
+}
+
+// Per-account red line (decision #68). With no limit an account is red exactly when its balance is
+// below zero, as it always was; with a limit that rule is REPLACED, so a credit card given a negative
+// limit stops being red until it passes it. Limits compare in whole cents so float noise on a sum
+// of cents cannot flip the colour. Display only: nothing in the forecast, net worth or spendable
+// reads it.
+function accountWarnBelow(a) {
+  const v = a && a.warnBelow;
+  return typeof v === 'number' && isFinite(v) ? v : null;
+}
+function accountIsLow(a, balance) {
+  const limit = accountWarnBelow(a);
+  return limit === null ? balance < 0 : Math.round(balance * 100) < Math.round(limit * 100);
+}
+function accountBalanceClass(a, balance) {
+  return accountIsLow(a, balance) ? 'neg' : '';
+}
+// The word that backs the colour up; only for an account that has a limit and is under it.
+function accountLimitTag(a, balance) {
+  const limit = accountWarnBelow(a);
+  if (limit === null || !accountIsLow(a, balance)) return '';
+  return `<span class="badge low" title="Below the limit you set for this account (${esc(fmt(limit))})">below your limit</span>`;
+}
+
+// The rows "Move envelopes to the reserve" books (decision #69): one envelope-to-envelope transfer per
+// ticked envelope, for its whole positive balance, to the reserve. Never the reserve itself, an
+// archived or unknown envelope, or one with nothing in it; a repeated id counts once. No reserve → no
+// rows. Amounts are rounded to whole cents so the envelope lands on zero. The same rows are the
+// preview's probes and the booking, so the two cannot disagree.
+function buildReserveMoves(envIds, date) {
+  const reserve = reserveEnvelope();
+  if (!reserve) return [];
+  const moves = [];
+  for (const id of new Set(envIds)) {
+    const e = envelopeById(id);
+    if (!e || e.isReserve || e.archived) continue;
+    const bal = Math.round(envelopeBalance(e) * 100) / 100;
+    if (!(bal > 0)) continue;
+    moves.push({
+      id: uid(), date, type: 'transfer-envelope', amount: bal,
+      fromEnvelopeId: e.id, toEnvelopeId: reserve.id,
+      payee: RESERVE_MOVE_PAYEE, notes: 'Whole balance moved to the reserve'
+    });
+  }
+  return moves;
 }
 
 function totalNetWorth() {
@@ -3702,7 +3767,7 @@ function renderDashboard() {
             <a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a>
             ${a.type ? `<span style="color:var(--text-dim);font-size:.85em;margin-left:6px;">${esc(a.type)}</span>` : ''}
           </td>
-          <td class="num ${b < 0 ? 'neg' : ''}"><strong>${fmt(b)}</strong></td>
+          <td class="num ${accountBalanceClass(a, b)}">${accountLimitTag(a, b)}<strong>${fmt(b)}</strong></td>
         </tr>`).join('')}</tbody>
       </table>
     </div>` : ''}
@@ -4086,7 +4151,7 @@ function renderAccounts() {
           <td>${esc(a.type || '')}</td>
           <td>${esc(a.owner || '')}</td>
           <td class="num">${fmt(a.openingBalance || 0)}</td>
-          <td class="num ${b < 0 ? 'neg' : ''}"><strong>${fmt(b)}</strong>${Math.abs(sched) >= 0.005 ? `<div class="micro" title="Net of transactions dated after today, which the balance excludes">${sched > 0 ? '+' : ''}${fmt(sched)} scheduled</div>` : ''}</td>
+          <td class="num ${accountBalanceClass(a, b)}">${accountLimitTag(a, b)}<strong>${fmt(b)}</strong>${Math.abs(sched) >= 0.005 ? `<div class="micro" title="Net of transactions dated after today, which the balance excludes">${sched > 0 ? '+' : ''}${fmt(sched)} scheduled</div>` : ''}</td>
           <td class="actions">
             <button class="btn sm" data-edit="${a.id}">Edit</button>
             ${a.isInvestment ? `<button class="btn sm" data-update="${a.id}">Update value</button>` : ''}
@@ -4106,7 +4171,7 @@ function renderAccounts() {
           ${archived.map(({a, b}) => `<tr>
             <td><strong><a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a></strong> <span class="badge">archived</span></td>
             <td>${esc(a.type || '')}</td>
-            <td class="num ${b < 0 ? 'neg' : ''}"><strong>${fmt(b)}</strong></td>
+            <td class="num ${accountBalanceClass(a, b)}">${accountLimitTag(a, b)}<strong>${fmt(b)}</strong></td>
             <td class="actions">
               <button class="btn sm" data-unarchive="${a.id}">Unarchive</button>
               <button class="btn sm ghost" data-edit="${a.id}">Edit</button>
@@ -4207,6 +4272,8 @@ function editAccount(id) {
     <div style="font-size:13px;color:var(--text-dim);margin:-6px 0 12px;line-height:1.4;">
       Edit either field — typing a new Current balance updates Opening balance by the same amount, so the figure on the Accounts page matches what your bank shows.
     </div>
+    <div class="field"><label>Show red when below <span class="help-tip" tabindex="0" title="Optional. When this account's balance is under this amount it turns red and gets a 'below your limit' tag. Leave empty to keep the usual rule (red below zero). A limit replaces that rule for this account: a credit card with a limit of -500 is red only below -500. It only changes how the balance looks; forecasts and net worth ignore it.">?</span></label>
+      <input type="text" inputmode="decimal" autocomplete="off" id="f_warn" value="${accountWarnBelow(a) === null ? '' : accountWarnBelow(a).toFixed(2)}" placeholder="empty = red below zero" title="You can type arithmetic, e.g. 300+50"></div>
     <div class="field check"><label><input type="checkbox" id="f_inv" ${a.isInvestment?'checked':''}> Investment account</label></div>
     <div class="field check"><label><input type="checkbox" id="f_nw" ${a.includeInNetWorth!==false?'checked':''}> Include in net worth</label></div>
     <div class="field"><label>Notes</label><textarea id="f_notes" rows="2">${esc(a.notes || '')}</textarea></div>
@@ -4257,6 +4324,14 @@ function editAccount(id) {
     a.isInvestment = document.getElementById("f_inv").checked;
     a.includeInNetWorth = document.getElementById("f_nw").checked;
     a.notes = document.getElementById("f_notes").value;
+    // The red line (decision #68): empty clears it; anything that does not evaluate refuses the save.
+    const warnRaw = document.getElementById("f_warn").value.trim();
+    if (!warnRaw) delete a.warnBelow;
+    else {
+      const warnVal = evalAmount(warnRaw);
+      if (isNaN(warnVal)) { toast("Show red when below: invalid expression", 3000, 'error'); return; }
+      a.warnBelow = Math.round(warnVal * 100) / 100;
+    }
     if (id && modalFormState() === initialFields) { closeModal(); return; }
     pushUndo(id ? 'Edit account' : 'Add account');
     if (!id) data.accounts.push(a);
@@ -4444,6 +4519,7 @@ function renderEnvelopes() {
     <button class="btn primary" id="addEnv">+ Add envelope</button>
     <button class="btn" id="refillBtn" title="Assign one month's budget to each envelope (or top up to full target)">${icon('refresh')}Fund the month</button>
     <button class="btn" id="transferBtn">${icon('swap')}Move funds</button>
+    <button class="btn" id="reserveBtn" title="Tick envelopes and move their whole balances to the reserve">${icon('download')}Move to reserve</button>
     <div class="spacer"></div>
     <div class="toolbar-stat">
       <span class="stat-label">Balance / monthly budget</span>
@@ -4561,6 +4637,7 @@ function bindEnvelopes() {
   document.getElementById("addEnv").onclick = () => editEnvelope();
   document.getElementById("refillBtn").onclick = refillEnvelopes;
   document.getElementById("transferBtn").onclick = () => transferEnvelopes();
+  document.getElementById("reserveBtn").onclick = () => moveToReserve();
   document.querySelectorAll("[data-edit-env]").forEach(b =>
     b.onclick = () => editEnvelope(b.dataset.editEnv));
   document.querySelectorAll("[data-del-env]").forEach(b =>
@@ -5773,6 +5850,101 @@ function transferEnvelopes(fromId) {
       notes: document.getElementById("tr_note").value
     });
     saveDirty(); closeModal(); render(); toast("Funds moved");
+  };
+}
+
+// "Move to reserve" (decision #69): tick envelopes, move each one's whole positive balance into the
+// reserve in one go. The same envelope-to-envelope transfer Move funds and the close-out sweep book,
+// so no cash moves and spendable today is unchanged; the projected low can move, and the line under
+// the list says by how much by re-forecasting with the rows as probes (never by arithmetic, decision
+// #27). One snapshot for the whole batch, Undo in the toast. Nothing is ticked at the start: this
+// moves money, so the person chooses what.
+function moveToReserve() {
+  const reserve = reserveEnvelope();
+  if (!reserve) {
+    toast('No reserve envelope yet: tick "Reserve envelope" when editing one, then try again', 5000, 'error');
+    return;
+  }
+  const rows = activeEnvelopes().filter(e => !e.isReserve).map(e => ({ e, bal: envelopeBalance(e) }));
+  if (!rows.length) { toast('There are no other envelopes to move from', 3000, 'error'); return; }
+  const $ = id => document.getElementById(id);
+  openModal(`
+    <h2>Move envelopes to ${esc(reserve.name)}</h2>
+    <p class="micro">Each ticked envelope gives its whole balance to the reserve. No cash moves and nothing is spent. An envelope with nothing in it cannot be ticked.</p>
+    <div class="mtr-tools">
+      <button type="button" class="btn sm ghost" id="mtr_all">Tick all with a balance</button>
+      <button type="button" class="btn sm ghost" id="mtr_none">Clear</button>
+    </div>
+    <div class="mtr-list" role="group" aria-label="Envelopes to move">
+      ${rows.map(({ e, bal }) => {
+        const off = !(Math.round(bal * 100) > 0);
+        return `<label class="mtr-row ${off ? 'mtr-off' : ''}" ${off ? `title="${bal < 0 ? 'Overspent: nothing to move' : 'Nothing to move'}"` : ''}>
+          <input type="checkbox" data-mtr="${e.id}" ${off ? 'disabled' : ''}>
+          <span class="mtr-name">${esc(e.name)}${e.category ? ` <span class="micro">${esc(e.category)}</span>` : ''}</span>
+          <span class="num ${bal < 0 ? 'neg' : ''}">${fmt(bal)}</span>
+        </label>`;
+      }).join('')}
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input type="date" id="mtr_date" value="${todayISO()}"></div>
+    </div>
+    <div class="micro" id="mtr_total" style="min-height:14px;"></div>
+    <div class="micro" id="mtr_effect" style="margin:2px 0 10px; min-height:14px;"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" id="mtr_save">Move to reserve</button>
+    </div>
+  `);
+
+  const fcDays = forecastState.days || 90;
+  const fcOpts = forecastOpts();
+  const ticked = () => [...document.querySelectorAll('#modal [data-mtr]:checked')].map(b => b.dataset.mtr);
+  const update = () => {
+    const eff = $('mtr_effect');
+    eff.style.color = '';
+    const date = $('mtr_date').value || todayISO();
+    const moves = buildReserveMoves(ticked(), date);
+    if (!moves.length) { $('mtr_total').textContent = 'Nothing ticked.'; eff.textContent = ''; return; }
+    const total = moves.reduce((s, m) => s + m.amount, 0);
+    $('mtr_total').textContent = `${plural(moves.length, 'envelope')}, ${fmt(total)} in all, to ${reserve.name}.`;
+    const ids = forecastSelectedAccountIds();
+    if (!ids.length) { eff.textContent = 'Select accounts in Forecast to see the effect on spendable cash.'; return; }
+    const probes = moves.map((m, i) => ({ ...m, id: '__reserveProbe' + i }));
+    const snap = () => ({ today: spendableToday(ids), low: spendableLow(forecastAccountBalances(ids, fcDays, fcOpts)) });
+    const before = snap();
+    const after = withProbeTxs(probes, snap);
+    const dToday = after.today - before.today, dLow = after.low.min - before.low.min;
+    const moved = v => Math.abs(v) >= 0.005;
+    const arrow = (a, b) => `${fmt(a)} → ${fmt(b)}`;
+    if (!moved(dToday) && !moved(dLow)) {
+      eff.textContent = `No change to spendable today (${fmt(before.today)}) or the projected low (${fmt(before.low.min)}).`;
+      return;
+    }
+    const text = `Spendable today ${moved(dToday) ? arrow(before.today, after.today) : `${fmt(before.today)} (unchanged)`} · projected low ${moved(dLow) ? arrow(before.low.min, after.low.min) : `${fmt(before.low.min)} (unchanged)`}, next ${fcDays} days.`;
+    const refill = fcOpts.includeAllowances && fcOpts.assumeRefill;
+    const resets = refill ? moves.map(m => envelopeById(m.fromEnvelopeId)).filter(e => e && e.rolloverPolicy === 'reset' && e.cadence !== 'annual') : [];
+    const why = [];
+    if (resets.length) why.push(`${resets.map(e => esc(e.name)).join(', ')} would return ${resets.length === 1 ? 'its' : 'their'} leftover to spendable at month end (reset policy); the reserve keeps it.`);
+    if (dLow < -0.005 && refill) why.push('An emptied envelope that runs short of its budget inside the horizon sends the shortfall to spendable, while the reserve keeps what it receives.');
+    else if (dLow < -0.005) why.push('With refills off, a budgeted envelope spends its budget either way, so money moved out of it is missing from spendable later; the reserve keeps it.');
+    else if (!why.length) why.push('Timing only: the envelopes are spent down at different rates inside the horizon.');
+    if (after.low.min < -0.005 && before.low.min >= -0.005) eff.style.color = 'var(--bad)';
+    eff.innerHTML = esc(text) + ` <span class="muted">${why.join(' ')}</span>`;
+  };
+  document.querySelectorAll('#modal [data-mtr]').forEach(b => b.addEventListener('change', update));
+  $('mtr_date').addEventListener('change', update);
+  $('mtr_all').onclick = () => { document.querySelectorAll('#modal [data-mtr]:not(:disabled)').forEach(b => { b.checked = true; }); update(); };
+  $('mtr_none').onclick = () => { document.querySelectorAll('#modal [data-mtr]').forEach(b => { b.checked = false; }); update(); };
+  update();
+
+  $('mtr_save').onclick = () => {
+    const moves = buildReserveMoves(ticked(), $('mtr_date').value || todayISO());
+    if (!moves.length) { toast('Tick at least one envelope that has a balance', 3000, 'error'); return; }
+    const total = moves.reduce((s, m) => s + m.amount, 0);
+    pushUndo('Move envelopes to reserve');
+    data.transactions.push(...moves);
+    saveDirty(); closeModal(); render();
+    toast(`Moved ${plural(moves.length, 'envelope')} (${fmt(total)}) to ${reserve.name}`, 6000, 'success', { label: 'Undo', onClick: performUndo });
   };
 }
 
@@ -8971,9 +9143,9 @@ function renderHelp() {
       <dt>Dashboard</dt>
       <dd>Spendable today and the lowest projected spendable balance, followed by items needing attention, wealth totals, upcoming entries, lowest envelopes, pinned accounts and recent transactions.</dd>
       <dt>Accounts</dt>
-      <dd>Manage real-money accounts. Pin to dashboard with the pin icon, drag rows by their grip to reorder. Investment accounts have an <strong>Update value</strong> button: enter today's market value and the app books the difference. Accounts you no longer use can be archived.</dd>
+      <dd>Manage real-money accounts. Pin to dashboard with the pin icon, drag rows by their grip to reorder. Investment accounts have an <strong>Update value</strong> button: enter today's market value and the app books the difference. Accounts you no longer use can be archived. In <strong>Edit</strong>, <strong>Show red when below</strong> sets a limit for that account: under it the balance turns red and carries a <em>below your limit</em> tag. Without a limit an account is red below zero, and a limit replaces that rule for the account. It only changes how the balance looks.</dd>
       <dt>Envelopes</dt>
-      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only, mid-month — say which account the money sits in, or take the forecast's projected low in one click) and <strong>Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope. Edit, Archive and Delete sit in each card's <strong>More actions</strong> menu. The bar on a card is this month's <strong>pace</strong>: the fill is how much of the month's budget is spent, the tick is how far through the month you are. It keeps its normal colour while spending stays behind the tick, turns amber when it runs ahead, and red once the budget is used up. The coloured edge on the left turns red when the balance is negative, and amber when it is under a quarter of the budget.</dd>
+      <dd>Virtual buckets grouped by category. <strong>Fund the month</strong> tops them all up at once; each envelope also has <strong>Spend</strong>, <strong>Fund</strong> (this one only, mid-month — say which account the money sits in, or take the forecast's projected low in one click) and <strong>Return</strong> (un-earmark to spendable). <strong>Move funds</strong> shifts money envelope-to-envelope, and <strong>Move to reserve</strong> ticks several envelopes and sends each one's whole balance to the reserve in one go. Edit, Archive and Delete sit in each card's <strong>More actions</strong> menu. The bar on a card is this month's <strong>pace</strong>: the fill is how much of the month's budget is spent, the tick is how far through the month you are. It keeps its normal colour while spending stays behind the tick, turns amber when it runs ahead, and red once the budget is used up. The coloured edge on the left turns red when the balance is negative, and amber when it is under a quarter of the budget.</dd>
       <dt>Transactions</dt>
       <dd>Every recorded movement: expenses, income, account-to-account transfers, envelope-to-envelope transfers, grouped by day, newest first. Searchable and filterable by type, account, envelope, tag and date. The total line counts real cash in and out only (transfers and envelope bookkeeping are left out). Tick rows to re-tag, re-file or delete them in bulk. An expense can be <strong>split</strong> across several envelopes, and <strong>Import CSV</strong> brings in a bank statement through a column-mapping wizard (mappings save as named profiles), with duplicate detection and a review step before anything is recorded.</dd>
       <dt>Recurring</dt>
@@ -9282,6 +9454,7 @@ function _buildCommands() {
     { label: 'Add transaction', hint: 'n', keywords: 'new expense income', run: () => editTransaction() },
     { label: 'Account transfer', keywords: 'move money between accounts', run: () => editTransaction(null, 'transfer-account') },
     { label: 'Move funds between envelopes', keywords: 'envelope transfer reallocate', run: () => transferEnvelopes() },
+    { label: 'Move envelopes to the reserve', keywords: 'envelope reserve catch-all emergency sweep transfer empty', run: () => moveToReserve() },
     { label: 'Import CSV…', keywords: 'bank statement import', run: () => csvImportStart() },
     { label: 'Add account', keywords: 'new account', run: () => editAccount() },
     { label: 'Add envelope', keywords: 'new envelope budget category', run: () => editEnvelope() },
