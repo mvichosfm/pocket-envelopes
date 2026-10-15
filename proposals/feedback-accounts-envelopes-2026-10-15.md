@@ -71,7 +71,9 @@ No ideas of my own. Both items come from the two records above. Not proposed fro
 
 | Item | Commit | Checked |
 |---|---|---|
-| P1 | | |
-| P2 | | |
+| P1 | fd2d516, merged as 79fdd53 | Scratch preview with synthetic data, 1440 and 375 px: limit above the balance gives red plus the tag; a credit card with a negative limit stays calm at a small negative balance; a bad expression refuses the save; the limit lands in the file; a hand-edited string limit is dropped on load; no horizontal overflow (the tag is nowrap after a first look showed it wrapping to three lines at 375 px). Audit check for the limit rules. |
+| P2 | fd2d516, merged as 79fdd53 | Same preview: empty and overspent rows cannot be ticked; the previewed projected low equalled the low after booking to the cent; spendable today unchanged; one Undo restored both envelopes; no reserve gives the message and no dialog; Save visible and no overflow at 375 px. Audit check for the row builder and preview == booking. |
 
-What he asked for in words vs what he wanted once he saw it (if different):
+Both built in one commit (shared files). Suites after the merge: audit 43/43, `test_server.py` and `test_feedback_server.py` OK; browser regressions OK before the merge. The live server serves static files, so no restart was needed: the served app contains the new code. Not checked: the live page itself (deliberately not opened in the pane), the details question left at "no preference" (built the narrow reading), Escape-to-close by keyboard.
+
+What he asked for in words vs what he wanted once he saw it (if different): nothing recorded yet; he has not used either on the live app.
