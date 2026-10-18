@@ -917,6 +917,9 @@
     --shadow-card: none;
     --radius: 2px;
     --chart-grid: rgba(32,30,29,.08); --chart-total: #201e1d;
+    /* Palette slots 5-8 (tag chips and chart slices). Each theme has its own so the chip text stays legible
+       on its 12% tint: the light-theme #62c5ee was 1.5:1, and the dark theme cannot use the navy at all. */
+    --chart-c5: #004961; --chart-c6: #d6006c; --chart-c7: #7d7979; --chart-c8: #007a66;
     --font-heading: "Source Serif 4", Georgia, serif;
     --font-body: "Source Serif 4", Georgia, serif;
   }
@@ -929,6 +932,7 @@
     --manila: #bab6b6; --manila-soft: rgba(243,242,242,.07);
     --shadow: 0 12px 32px rgba(0,0,0,.45);
     --chart-grid: rgba(243,242,242,.08); --chart-total: #f3f2f2;
+    --chart-c5: #8fa8ff; --chart-c6: #ff6fae; --chart-c7: #c4bebe; --chart-c8: #6ee7c4;
   }
   html, body { font: 15px/1.55 var(--font-body); font-optical-sizing: auto; font-variant-numeric: lining-nums; }
   h1, h2, h3, h4, .modal h2 { font-family: var(--font-heading); font-weight: 600; letter-spacing: -.015em; }
@@ -2340,7 +2344,8 @@ function chartPalette() {
     themeColor('--accent-2', '#5b8def'),
     themeColor('--warn', '#f0a64a'),
     themeColor('--bad', '#e06c75'),
-    '#004961', '#d6006c', '#7d7979', '#62c5ee',
+    themeColor('--chart-c5', '#004961'), themeColor('--chart-c6', '#d6006c'),
+    themeColor('--chart-c7', '#7d7979'), themeColor('--chart-c8', '#007a66'),
     themeColor('--text-dim', '#abb2bf')
   ];
 }

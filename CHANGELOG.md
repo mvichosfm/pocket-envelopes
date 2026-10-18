@@ -7,6 +7,10 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Tag chips are readable in dark mode.** The fifth to eighth tag colours were fixed
+  hex values chosen for the light theme, so in dark mode the fifth (a navy) was close to
+  invisible on its chip. They are now per-theme tokens (`--chart-c5` to `--chart-c8`),
+  which also fixes the pale eighth colour in light mode. Chart slices share them.
 - **Broadsheet theme.** A newspaper-style look in Source Serif 4 replaces the navy
   "security tint" palette in both light and dark. Layout and every figure are
   unchanged. The font is vendored locally (latin subset, so Greek and other
