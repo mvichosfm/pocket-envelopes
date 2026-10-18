@@ -965,8 +965,10 @@
   .modal { border: 0; border-radius: var(--radius); padding: 28px; box-shadow: var(--shadow); background: var(--bg-2); }
   .modal-bg { background: color-mix(in srgb, #2e2b25 50%, transparent); }
 
-  /* Figures in the display face */
-  .stat, .hero-amount, .hero-low, .ev-bal, .dash-fc-value, .toolbar-stat strong { font-family: var(--font-heading); font-weight: 400; letter-spacing: 0; }
+  /* Only the one big dashboard figure keeps the display face; Caprasimo's digits are
+     decorative (a 3 reads like an S) and fail below ~50px, so every other figure uses the body face. */
+  .hero-amount { font-family: var(--font-heading); font-weight: 400; letter-spacing: 0; }
+  .stat, .hero-low, .ev-bal, .dash-fc-value, .toolbar-stat strong { font-family: var(--font-body); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0; }
   .stat { font-size: 30px; }
   .stat-label, .dash-fc-label { font-weight: 600; color: var(--text-dim); }
 
