@@ -7,6 +7,10 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Navigation and page-title icons.** Each view's tab, its phone-dock button and the
+  heading on its page now carry a small ink icon that follows the theme's text colour.
+  The icons are inlined in the page, so there are no new files or requests. They are
+  hidden on the desktop tab strip below 1180px, where space is tight.
 - **Slightly rounded corners in the Broadsheet theme.** Buttons, inputs and cards are
   6px, modals and menus 10px, badges 4px, bars 2px, as the design system specifies;
   they were square at 2px. Colours, type and layout are unchanged.
