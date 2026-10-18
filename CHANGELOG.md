@@ -7,6 +7,9 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Slightly rounded corners in the Broadsheet theme.** Buttons, inputs and cards are
+  6px, modals and menus 10px, badges 4px, bars 2px, as the design system specifies;
+  they were square at 2px. Colours, type and layout are unchanged.
 - **Tag chips are readable in dark mode.** The fifth to eighth tag colours were fixed
   hex values chosen for the light theme, so in dark mode the fifth (a navy) was close to
   invisible on its chip. They are now per-theme tokens (`--chart-c5` to `--chart-c8`),

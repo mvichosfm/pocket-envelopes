@@ -901,7 +901,8 @@
   /* ── Broadsheet theme ───────────────────────────────────────────────────
      Newsprint: near-black Source Serif 4 on paper white, the serif is the
      chrome. Cyan is the one interactive spot colour, magenta the rarer
-     second (debits, overspend). Square 2px corners, no pills, no rules
+     second (debits, overspend). Slightly rounded corners (6px controls and
+     cards, 10px modals and menus, 4px badges, 2px bars), no pills, no rules
      between sections; hierarchy comes from the serif scale and whitespace.
      Values come from the Broadsheet ramps (OKLCH, shared lightness scale);
      good/warn are tuned to the same 700 step so they sit beside them.    */
@@ -915,7 +916,7 @@
     --rule: color-mix(in srgb, var(--text) 16%, transparent);
     --shadow: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
     --shadow-card: none;
-    --radius: 2px;
+    --radius: 6px; --radius-lg: 10px; --radius-badge: 4px; --radius-bar: 2px;
     --chart-grid: rgba(32,30,29,.08); --chart-total: #201e1d;
     /* Palette slots 5-8 (tag chips and chart slices). Each theme has its own so the chip text stays legible
        on its 12% tint: the light-theme #62c5ee was 1.5:1, and the dark theme cannot use the navy at all. */
@@ -976,7 +977,7 @@
 
   /* Cards: surface-filled, no hairline, no shadow — kept for discrete items */
   .card { border: 0; border-radius: var(--radius); padding: 24px; box-shadow: none; background: var(--bg-2); }
-  .modal { border: 0; border-radius: 4px; padding: 28px; box-shadow: var(--shadow); background: var(--bg-2); }
+  .modal { border: 0; border-radius: var(--radius-lg); padding: 28px; box-shadow: var(--shadow); background: var(--bg-2); }
   .modal-bg { background: color-mix(in srgb, #2d2b2b 50%, transparent); }
 
   /* Figures: lining, tabular serif numerals; the hero is the front-page splash */
@@ -994,7 +995,7 @@
   .cash-low .stat-label, .cash-low .muted { color: var(--text-dim); }
   .hero-amount { font-size: clamp(46px, 5.4vw, 80px); line-height: 1; }
   .hero-low { font-size: clamp(30px, 3vw, 42px); }
-  .assumption-chip, .status-label, .pill { border-radius: var(--radius); padding: 3px 10px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); white-space: nowrap; }
+  .assumption-chip, .status-label, .pill { border-radius: var(--radius-badge); padding: 3px 10px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); white-space: nowrap; }
   .assumption-chip.allowances-off, .status-label.due { background: var(--tint); color: var(--tint-ink); }
   .status-label { background: color-mix(in srgb, var(--good) 12%, transparent); color: var(--good); }
   .attention-row + .attention-row { border-top-color: color-mix(in srgb, var(--text) 10%, transparent); }
@@ -1010,7 +1011,7 @@
   tr.tx-day:hover td { background: transparent; }
 
   /* Badges as small tinted tags */
-  .badge { border: 0; border-radius: 1.5px; padding: 2px 8px; font-size: 12px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text-dim); }
+  .badge { border: 0; border-radius: var(--radius-badge); padding: 2px 8px; font-size: 12px; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text-dim); }
   .badge.income { background: color-mix(in srgb, var(--good) 12%, transparent); color: var(--good); }
   .badge.expense { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
   .badge.due { background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); border: 0; }
@@ -1023,20 +1024,20 @@
   .envelope .ev-name { font-family: var(--font-heading); font-weight: 600; font-size: 19px; letter-spacing: -.01em; }
   .envelope .ev-bal { font-size: 32px; font-family: var(--font-body); font-weight: 600; font-variant-numeric: lining-nums tabular-nums; }
   .envelope .ev-balance .stat-label { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
-  .envelope .ev-balance .stat-label::before { content: ""; width: 8px; height: 8px; border-radius: 1px; background: var(--good); }
+  .envelope .ev-balance .stat-label::before { content: ""; width: 8px; height: 8px; border-radius: var(--radius-bar); background: var(--good); }
   .envelope[data-state="low"] .ev-balance .stat-label::before { background: var(--warn); }
   .envelope[data-state="over"] .ev-balance .stat-label::before { background: var(--magenta); }
   .envelope .ev-meta { border-top: 0; padding: 0; border-radius: 0; background: transparent; margin-top: 16px; font-style: italic; }
   .envelope .ev-meta span { white-space: nowrap; }
-  .envelope .ev-bar { height: 5px; border-radius: 1px; background: color-mix(in srgb, var(--text) 12%, transparent); margin-top: 32px; }
-  .envelope .ev-bar-fill { border-radius: 1px; background: var(--text); }
+  .envelope .ev-bar { height: 5px; border-radius: var(--radius-bar); background: color-mix(in srgb, var(--text) 12%, transparent); margin-top: 32px; }
+  .envelope .ev-bar-fill { border-radius: var(--radius-bar); background: var(--text); }
   .envelope .ev-bar[data-pace="ahead"] .ev-bar-fill { background: var(--magenta); }
   .envelope .ev-bar-tick { width: 2px; top: -5px; bottom: -5px; border-radius: 0; background: var(--accent); }
   .ev-today { bottom: 16px; }
-  .bva-bar { height: 5px; border-radius: 1px; background: color-mix(in srgb, var(--text) 12%, transparent); }
-  .bva-fill { border-radius: 1px; background: var(--text); }
+  .bva-bar { height: 5px; border-radius: var(--radius-bar); background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .bva-fill { border-radius: var(--radius-bar); background: var(--text); }
   .bva-bar[data-state="ahead"] .bva-fill { background: var(--magenta); }
-  .ev-more .menu { border: 0; border-radius: 4px; padding: 5px; box-shadow: var(--shadow); background: var(--bg); }
+  .ev-more .menu { border: 0; border-radius: var(--radius-lg); padding: 5px; box-shadow: var(--shadow); background: var(--bg); }
   .menu-item { border-radius: var(--radius); padding: 7px 12px; }
   .menu-item:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
 
@@ -1053,14 +1054,14 @@
   .filter-group { border-radius: var(--radius); background: var(--bg-3); border-color: var(--rule); }
   .tx-advanced { border-radius: var(--radius); }
   .bulk-bar { border-radius: var(--radius); border-color: var(--accent); background: var(--tint); }
-  .tx-allocation { border-radius: 4px; background: var(--bg-3); }
+  .tx-allocation { border-radius: var(--radius); background: var(--bg-3); }
   .tx-amount-field input { font-family: var(--font-heading); font-weight: 600; font-variant-numeric: lining-nums tabular-nums; border-radius: var(--radius) !important; }
-  .checkbox-list, .fc-acc-picker, .mtr-list { border-radius: 4px; background: var(--bg-3); }
+  .checkbox-list, .fc-acc-picker, .mtr-list { border-radius: var(--radius); background: var(--bg-3); }
   .help details.faq { border: 0; border-radius: var(--radius); background: var(--bg-2); padding: 4px 18px; }
   .help details.faq summary { font-weight: 600; }
   .ob-card { border-left: 0; }
   .ob-step { border: 0; border-radius: var(--radius); padding: 10px 16px; }
-  .ob-num { border: 0; border-radius: 1px; background: var(--bg-2); font-weight: 600; }
+  .ob-num { border: 0; border-radius: var(--radius-bar); background: var(--bg-2); font-weight: 600; }
   .help-tip { border: 0; background: var(--border); }
   kbd { border-radius: var(--radius); font-family: var(--font-body); }
 
