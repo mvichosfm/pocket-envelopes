@@ -1010,6 +1010,8 @@
   .envelope { border-left: 0; padding: 24px; }
   .envelope .ev-name { font-family: var(--font-heading); font-weight: 400; font-size: 19px; }
   .envelope .ev-bal { font-size: 30px; }
+  /* Caprasimo's digits are decorative and hard to tell apart at card size: figures use the body face. */
+  .envelope .ev-bal { font-family: var(--font-body); font-weight: 700; font-variant-numeric: tabular-nums; }
   .envelope .ev-balance .stat-label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
   .envelope .ev-balance .stat-label::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--good); }
   .envelope[data-state="low"] .ev-balance .stat-label::before { background: var(--accent); }
