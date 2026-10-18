@@ -7,11 +7,10 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
-- **Organic theme.** A warm cream-and-terracotta look (sage for credits, pill
-  controls, rounded cards, Lucide-style icons) replaces the navy "security tint"
-  palette in both light and dark. Layout and every figure are unchanged.
-- Organic theme fonts (Caprasimo, Figtree) vendored locally; no external font requests.
-  Latin subset only, so Greek and other scripts fall back to the system font.
+- **Broadsheet theme.** A newspaper-style look in Source Serif 4 replaces the navy
+  "security tint" palette in both light and dark. Layout and every figure are
+  unchanged. The font is vendored locally (latin subset, so Greek and other
+  scripts fall back to Georgia); no external font requests.
 
 - **A red line per account.** The account editor has a new optional field,
   *Show red when below*. Without it an account is red below zero, as before; with
