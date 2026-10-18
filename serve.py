@@ -160,11 +160,13 @@ def _host_allowed_name(host_header) -> bool:
 # Content types the stdlib would get wrong. Windows' registry-backed
 # mimetypes module reports .js as text/plain on some machines, which makes the
 # browser refuse to register the service worker ("unsupported MIME type") — so
-# pin all three explicitly rather than trusting the host.
+# pin all of them explicitly rather than trusting the host (older stdlibs have
+# no .woff2 entry either).
 _STATIC_TYPES = {
     ".app": "text/html",
     ".webmanifest": "application/manifest+json",
     ".js": "text/javascript",
+    ".woff2": "font/woff2",
 }
 for _ext, _mime in _STATIC_TYPES.items():
     mimetypes.add_type(_mime, _ext)

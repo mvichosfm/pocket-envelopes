@@ -15,8 +15,8 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <!-- Tints the browser/OS chrome around the app. Two entries so the bar follows
      the OS scheme, matching the app's own 'auto' theme default. -->
-<meta name="theme-color" content="#0f1419" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f6f8fa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#2e2b25" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5ead8" media="(prefers-color-scheme: light)">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -26,6 +26,15 @@
 <script>try{document.documentElement.dataset.theme=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}catch(e){}</script>
 <script src="vendor/chart.umd.min.js"></script>
 <style>
+  /* Organic theme fonts, vendored (SIL OFL 1.1; see vendor/fonts/OFL.txt). Latin subset. */
+  @font-face {
+    font-family: "Caprasimo"; font-style: normal; font-weight: 400; font-display: swap;
+    src: url("vendor/fonts/caprasimo-400.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Figtree"; font-style: normal; font-weight: 300 900; font-display: swap;
+    src: url("vendor/fonts/figtree-variable.woff2") format("woff2");
+  }
   /* ── "Security tint" ─────────────────────────────────────────────────────
      The palette is taken from the object this app is about: a paper envelope.
      Ink navy is the inside of the envelope, manila is the paper itself, and
@@ -888,6 +897,179 @@
     .mobile-nav button { font-size: 10px; }
   }
 
+  /* ── Organic theme ──────────────────────────────────────────────────────
+     Cream-and-sand ground, terracotta acts, sage credits. Caprasimo for
+     headings and figures, Figtree for everything else. Over-rounded: cards
+     at 32px, every control a pill. Values come from the Organic design
+     system's ramps; bad/warn are OKLCH steps tuned to sit beside them.  */
+  :root, [data-theme="light"] {
+    --bg: #f5ead8; --bg-2: #ebddc5; --bg-3: #f9f4ed;
+    --border: #dcd3c4; --text: #201e1d; --text-dim: #645c50;
+    --accent: #c67139; --accent-2: #8c491a; --accent-hover: #b2622d; --accent-press: #8c491a;
+    --sage: #56633f; --sage-soft: #e1eecc; --sage-mid: #ccdbb2; --tint: #fff2eb; --tint-ink: #643312;
+    --warn: #8a6516; --bad: #a3402b; --good: #56633f; --on-fill: #f5ead8;
+    --manila: #a19786; --manila-soft: rgba(32,30,29,.06);
+    --shadow: 0 12px 32px color-mix(in srgb, #2e2b25 22%, transparent);
+    --shadow-card: none;
+    --radius: 32px;
+    --chart-grid: rgba(32,30,29,.08); --chart-total: #56633f;
+    --font-heading: "Caprasimo", system-ui, sans-serif;
+    --font-body: "Figtree", system-ui, sans-serif;
+  }
+  [data-theme="dark"] {
+    --bg: #2e2b25; --bg-2: #3a3630; --bg-3: #474238;
+    --border: #645c50; --text: #f5ead8; --text-dim: #c0b6a5;
+    --accent: #f6a06b; --accent-2: #ffc6a5; --accent-hover: #ffc6a5; --accent-press: #ffe1d0;
+    --sage: #ccdbb2; --sage-soft: #3d472b; --sage-mid: #56633f; --tint: #643312; --tint-ink: #ffe1d0;
+    --warn: #e2b866; --bad: #f2937a; --good: #aebf92; --on-fill: #2e2b25;
+    --manila: #c0b6a5; --manila-soft: rgba(245,234,216,.08);
+    --shadow: 0 12px 32px rgba(0,0,0,.4);
+    --chart-grid: rgba(245,234,216,.08); --chart-total: #aebf92;
+  }
+  html, body { font: 15px/1.55 var(--font-body); }
+  h1, h2, h3, h4, .modal h2 { font-family: var(--font-heading); font-weight: 400; letter-spacing: -.01em; }
+  h2 { font-size: 32px; line-height: 1.12; }
+  h3 { font-size: 20px; line-height: 1.2; }
+  a { color: var(--accent-2); }
+  ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+
+  /* Header: sits on the ground, no rule under it */
+  header.top { background: var(--bg); border-bottom: 0; box-shadow: none; padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+  header.top h1 { font-family: var(--font-heading); font-weight: 400; font-size: 20px; white-space: nowrap; }
+  .brand-icon { width: 36px; height: 36px; padding: 8px; border-radius: 50%; background: var(--accent); color: var(--on-fill); stroke-width: 2.75; margin-right: 10px; }
+  .nav-group + .nav-group { border-left: 0; padding-left: 12px; }
+  nav.tabs button { border: 0; border-radius: 999px; padding: 8px 14px; margin: 6px 0 10px; font-weight: 600; color: var(--text-dim); white-space: nowrap; }
+  nav.tabs button:hover { background: var(--tint); color: var(--tint-ink); }
+  nav.tabs button.active { background: var(--accent); color: var(--on-fill); border: 0; }
+
+  /* Buttons: pills in the display face */
+  .btn { font-family: var(--font-heading); font-weight: 400; border-radius: 999px; padding: 8px 16px; white-space: nowrap;
+    background: transparent; border: 1px solid color-mix(in srgb, var(--text) 16%, transparent); }
+  [data-theme="light"] .btn:not(.primary):not(.ghost) { background: transparent; }
+  .btn:hover, [data-theme="light"] .btn:not(.primary):not(.ghost):hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+  .btn:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-fill); font-weight: 400; }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); filter: none; }
+  .btn.primary:active { background: var(--accent-press); border-color: var(--accent-press); }
+  .btn.ghost { border-color: transparent; color: var(--accent-2); }
+  .btn.ghost:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent-2); }
+  .btn.danger:hover { background: color-mix(in srgb, var(--bad) 10%, transparent); }
+  .btn.selected { background: var(--tint); border-color: var(--accent); color: var(--tint-ink); }
+  .btn.sm { padding: 5px 13px; }
+  .btn.icon { padding: 5px 9px; }
+  .ic { stroke-width: 2.75; }
+  .btn:focus-visible, nav.tabs button:focus-visible, summary:focus-visible, a:focus-visible, [role="button"]:focus-visible { border-radius: 999px; }
+
+  /* Cards: surface-filled, no hairline */
+  .card { border: 0; border-radius: var(--radius); padding: 24px; box-shadow: none; }
+  .modal { border: 0; border-radius: var(--radius); padding: 28px; box-shadow: var(--shadow); background: var(--bg-2); }
+  .modal-bg { background: color-mix(in srgb, #2e2b25 50%, transparent); }
+
+  /* Figures in the display face */
+  .stat, .hero-amount, .hero-low, .ev-bal, .dash-fc-value, .toolbar-stat strong { font-family: var(--font-heading); font-weight: 400; letter-spacing: 0; }
+  .stat { font-size: 30px; }
+  .stat-label, .dash-fc-label { font-weight: 600; color: var(--text-dim); }
+
+  /* Dashboard hero in the sage voice, with one soft circle */
+  .cash-hero { position: relative; overflow: hidden; background: var(--sage-soft) !important; border: 0; padding: 32px; }
+  .cash-hero::before { content: ""; position: absolute; right: -90px; top: -110px; width: 320px; height: 320px; border-radius: 50%; background: var(--sage-mid); pointer-events: none; }
+  .cash-hero > * { position: relative; }
+  .cash-hero .section-heading h3 { color: var(--sage); font-size: 22px; }
+  .cash-hero .stat-label, .cash-hero .muted, .cash-hero .hero-note, .cash-hero .hero-context { color: var(--sage); }
+  .cash-low { border-left: 0; padding: 22px 26px; background: var(--bg); border-radius: 28px; }
+  .cash-low .stat-label, .cash-low .muted { color: var(--text-dim); }
+  .hero-amount { font-size: clamp(40px, 4.4vw, 64px); line-height: 1.05; }
+  .hero-low { font-size: clamp(30px, 3vw, 42px); }
+  .cash-hero .btn:not(.primary) { background: var(--bg); }
+  .assumption-chip, .status-label, .pill { border-radius: 999px; padding: 5px 12px; background: var(--bg-3); color: var(--text); white-space: nowrap; }
+  .assumption-chip.allowances-off, .status-label.due { background: var(--tint); color: var(--tint-ink); }
+  .status-label { background: var(--sage-soft); color: var(--sage); }
+  .attention-row + .attention-row { border-top-color: color-mix(in srgb, var(--text) 12%, transparent); }
+  .wealth-summary { border-bottom: 0; }
+  .wealth-item + .wealth-item { border-left: 0; }
+  .delta.up, .dash-fc-delta.up { color: var(--good); font-weight: 600; }
+
+  /* Tables */
+  table th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; border-bottom: 1px solid color-mix(in srgb, var(--text) 16%, transparent); }
+  table td { border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
+  table tr:hover td { background: color-mix(in srgb, var(--text) 4%, transparent); }
+  tr.tx-day td { background: var(--bg-3); }
+  tr.tx-day td:first-child { border-radius: 999px 0 0 999px; }
+  tr.tx-day td:last-child { border-radius: 0 999px 999px 0; }
+
+  /* Badges as tinted tags */
+  .badge { border: 0; padding: 3px 10px; font-size: 12px; background: var(--bg-3); color: var(--text-dim); }
+  .badge.income { background: var(--sage-soft); color: var(--sage); }
+  .badge.expense { background: var(--tint); color: var(--tint-ink); }
+  .badge.due, .badge.scheduled { background: var(--tint); color: var(--tint-ink); border: 0; }
+  .badge.invest { background: var(--sage-soft); color: var(--sage); }
+  .badge.low { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+  .badge.tag { border: 1px solid var(--tag-c, var(--border)); }
+
+  /* Envelope cards: spine becomes a status dot, the pace bar a pill */
+  .envelope { border-left: 0; padding: 24px; }
+  .envelope .ev-name { font-family: var(--font-heading); font-weight: 400; font-size: 19px; }
+  .envelope .ev-bal { font-size: 30px; }
+  .envelope .ev-balance .stat-label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+  .envelope .ev-balance .stat-label::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--good); }
+  .envelope[data-state="low"] .ev-balance .stat-label::before { background: var(--accent); }
+  .envelope[data-state="over"] .ev-balance .stat-label::before { background: var(--bad); }
+  .envelope .ev-meta { border-top: 0; padding: 8px 14px; border-radius: 999px; background: var(--bg); margin-top: 16px; }
+  .envelope .ev-meta span { white-space: nowrap; }
+  .envelope .ev-bar { height: 10px; border-radius: 999px; background: var(--border); margin-top: 32px; }
+  .envelope .ev-bar-fill { border-radius: 999px; background: var(--good); }
+  .envelope .ev-bar[data-pace="ahead"] .ev-bar-fill { background: var(--accent); }
+  .envelope .ev-bar-tick { width: 3px; top: -4px; bottom: -4px; border-radius: 999px; background: var(--text); }
+  .ev-today { bottom: 16px; }
+  .bva-bar { height: 8px; border-radius: 999px; background: var(--border); }
+  .bva-fill { border-radius: 999px; background: var(--good); }
+  .bva-bar[data-state="ahead"] .bva-fill { background: var(--accent); }
+  .ev-more .menu { border: 0; border-radius: 20px; padding: 6px; box-shadow: var(--shadow); background: var(--bg-3); }
+  .menu-item { border-radius: 999px; padding: 7px 14px; }
+
+  /* Fields: pill inputs on the inset tone */
+  .field label { font-size: 12px; color: var(--text-dim); }
+  .field input:not([type="checkbox"]), .field select, .setting-row input, .setting-row select, .filter-input,
+  .tx-search-row #txFilter, .tx-search-row #recFilter, .bulk-bar select, .co-table select, .sc-row select, .sc-row input[type="number"], .sc-head input[type="text"] {
+    background: var(--bg-3); border: 1px solid color-mix(in srgb, var(--text) 16%, transparent); border-radius: 999px; padding: 8px 14px; caret-color: var(--accent); }
+  .field textarea { background: var(--bg-3); border: 1px solid color-mix(in srgb, var(--text) 16%, transparent); border-radius: 20px; padding: 10px 14px; }
+  .field input:focus, .field select:focus, .field textarea:focus, .setting-row input:focus, .setting-row select:focus { border-color: var(--accent); }
+  input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+  .filter-group { border-radius: 999px; background: var(--bg-3); border-color: color-mix(in srgb, var(--text) 16%, transparent); }
+  .tx-advanced { border-radius: var(--radius); }
+  .bulk-bar { border-radius: 999px; border-color: var(--accent); background: var(--tint); }
+  .tx-allocation { border-radius: 24px; background: var(--bg-3); }
+  .tx-amount-field input { font-family: var(--font-heading); font-weight: 400; border-radius: 24px !important; }
+  .checkbox-list, .fc-acc-picker, .mtr-list { border-radius: 20px; background: var(--bg-3); }
+  .help details.faq { border: 0; border-radius: 20px; background: var(--bg-3); padding: 4px 18px; }
+  .ob-card { border-left: 0; }
+  .ob-step { border: 0; border-radius: 999px; padding: 10px 16px; }
+  .ob-num { border: 0; background: var(--bg-2); }
+  .help-tip { border: 0; background: var(--border); }
+  kbd { border-radius: 8px; }
+
+  /* Layout guards: headings take the room, controls never wrap */
+  .nav-group { flex-wrap: nowrap; }
+  .nav-admin { margin-left: auto !important; }
+  .page-heading > div:first-child, .section-heading > h3 { flex: 1 1 auto; min-width: 0; }
+  .page-heading > .btn, .section-heading > .hero-actions, .section-heading > .muted { flex-shrink: 0; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .btn > .ic:first-child:not(:only-child) { margin-right: 0; }
+  .toolbar-stat strong { white-space: nowrap; }
+  /* Toast & mobile nav */
+  .toast { border: 0; border-radius: 999px; padding: 12px 20px; background: var(--text); color: var(--bg); box-shadow: var(--shadow); }
+  .toast.success { box-shadow: inset 6px 0 0 var(--good), var(--shadow); }
+  .toast.error { box-shadow: inset 6px 0 0 var(--bad), var(--shadow); }
+  .toast.info { box-shadow: inset 6px 0 0 var(--accent), var(--shadow); }
+  .toast button.toast-action { color: var(--accent); }
+  @media (max-width: 720px) {
+    .mobile-nav { border-top: 0; background: var(--bg-2); border-radius: 28px 28px 0 0; }
+    .mobile-nav button { border-radius: 999px; }
+    .mobile-nav button.active { color: var(--tint-ink); background: var(--tint); }
+    .brand-icon { width: 30px; height: 30px; padding: 6px; }
+    .cash-hero { padding: 24px; }
+  }
+
 </style>
 </head>
 <body>
@@ -896,27 +1078,28 @@
      themes. Use via icon('name') in JS; never inline emoji or text glyphs
      for controls. -->
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
-  <symbol id="i-pin" viewBox="0 0 16 16"><path d="M9.5 2.5l4 4-1.8.6-2.4 2.4.2 2.8L8 11l-3.5 3.5M8 11L5 8l-1.3-.5 2.4-2.4L6.7 3.3z"/></symbol>
-  <symbol id="i-grip" viewBox="0 0 16 16"><circle cx="6" cy="4" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="4" r="1.1" fill="currentColor" stroke="none"/><circle cx="6" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="8" r="1.1" fill="currentColor" stroke="none"/><circle cx="6" cy="12" r="1.1" fill="currentColor" stroke="none"/><circle cx="10" cy="12" r="1.1" fill="currentColor" stroke="none"/></symbol>
-  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></symbol>
-  <symbol id="i-return" viewBox="0 0 16 16"><path d="M6 4L2.5 7.5 6 11M2.5 7.5H10a3.5 3.5 0 0 1 0 7H8"/></symbol>
-  <symbol id="i-skip" viewBox="0 0 16 16"><path d="M3 3.5v9l7-4.5zM12.5 3.5v9"/></symbol>
-  <symbol id="i-bolt" viewBox="0 0 16 16"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"/></symbol>
-  <symbol id="i-swap" viewBox="0 0 16 16"><path d="M2.5 5.5h11l-3-3M13.5 10.5h-11l3 3"/></symbol>
-  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 2v8m0 0L4.5 6.5M8 10l3.5-3.5M2.5 13.5h11"/></symbol>
-  <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/></symbol>
-  <symbol id="i-theme" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11A5.5 5.5 0 0 0 8 2.5z" fill="currentColor" stroke="none"/></symbol>
-  <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor" stroke="none"/></symbol>
-  <symbol id="i-caret" viewBox="0 0 16 16"><path d="M4 6.5l4 4 4-4"/></symbol>
-  <symbol id="i-copy" viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/></symbol>
-  <symbol id="i-play" viewBox="0 0 16 16"><path d="M4.5 3v10l8-5z"/></symbol>
-  <symbol id="i-pause" viewBox="0 0 16 16"><path d="M5.5 3v10M10.5 3v10"/></symbol>
-  <symbol id="i-envelope" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="m2 4 6 4 6-4"/></symbol>
-  <symbol id="i-grid" viewBox="0 0 16 16"><rect x="2" y="2" width="4" height="4" rx="1"/><rect x="10" y="2" width="4" height="4" rx="1"/><rect x="2" y="10" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/></symbol>
-  <symbol id="i-list" viewBox="0 0 16 16"><path d="M6 4h8M6 8h8M6 12h8M2 4h.1M2 8h.1M2 12h.1"/></symbol>
-  <symbol id="i-trend" viewBox="0 0 16 16"><path d="M2 2v12h12M4 10l3-3 3 1 4-5M11 3h3v3"/></symbol>
-  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
-  <symbol id="i-chat" viewBox="0 0 16 16"><path d="M2.5 3h11v8h-6l-3 2.5V11h-2z"/><path d="M5.5 6h5M5.5 8.5h3"/></symbol>
+<!-- Lucide (lucide.dev, ISC) — Organic theme -->
+  <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-return" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></symbol>
+  <symbol id="i-skip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="m5 4 10 8-10 8V4z"/><path d="M19 5v14"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 18a6 6 0 0 0 0-12v12z"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+  <symbol id="i-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></symbol>
+  <symbol id="i-envelope" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"/><rect x="2" y="4" width="20" height="16" rx="2"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
 </svg>
 <header class="top">
   <h1><svg class="ic brand-icon" aria-hidden="true"><use href="#i-envelope"/></svg>Pocket Envelopes</h1>
@@ -2146,7 +2329,7 @@ function chartPalette() {
     themeColor('--accent-2', '#5b8def'),
     themeColor('--warn', '#f0a64a'),
     themeColor('--bad', '#e06c75'),
-    '#c678dd', '#56b6c2', '#d19a66', '#98c379',
+    '#8fa073', '#f6a06b', '#a19786', '#56633f',
     themeColor('--text-dim', '#abb2bf')
   ];
 }

@@ -13,6 +13,23 @@ IP or User-Agent to a CDN.
 - **Loaded from**: the `<script src="vendor/chart.umd.min.js">` tag near the
   top of `pocket-envelopes.app`
 
+## `fonts/` — Caprasimo and Figtree (Organic theme)
+
+- **Files**: `caprasimo-400.woff2` (Caprasimo Regular, v6) and
+  `figtree-variable.woff2` (Figtree variable, weight 300–900, v9). Both are the
+  **latin** subset only, so Greek and other non-latin text falls back to
+  `system-ui`.
+- **Upstream**: https://github.com/docrepair-fonts/caprasimo-fonts and
+  https://github.com/erikdkennedy/figtree
+- **License**: SIL Open Font License 1.1 — full texts in `fonts/OFL.txt`
+- **Source**: fetched 2026-10-18 from Google Fonts (the `latin` blocks of
+  `https://fonts.googleapis.com/css2?family=Caprasimo&family=Figtree:wght@300..900`,
+  files under `https://fonts.gstatic.com/s/caprasimo/v6/` and
+  `https://fonts.gstatic.com/s/figtree/v9/`)
+- **Loaded from**: the `@font-face` rules at the top of the main `<style>`
+  in the app file, by relative path. Both files are also in `sw.js`'s `SHELL`
+  list so the installed PWA renders correctly offline.
+
 ## Updating
 
 Replace the file with a newer release from the same path

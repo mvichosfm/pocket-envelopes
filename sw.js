@@ -21,12 +21,14 @@
  *
  * Bump CACHE_NAME to force every client to drop its old shell.
  */
-const CACHE_NAME = "pocket-envelopes-shell-v8";
+const CACHE_NAME = "pocket-envelopes-shell-v9";
 
-// Kept deliberately small: the app is one file, plus Chart.js and the icons.
+// Kept deliberately small: the app is one file, plus Chart.js, the two web fonts and the icons.
 const SHELL = [
   "./",
   "./vendor/chart.umd.min.js",
+  "./vendor/fonts/caprasimo-400.woff2",
+  "./vendor/fonts/figtree-variable.woff2",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
