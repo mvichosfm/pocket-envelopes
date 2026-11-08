@@ -7629,13 +7629,10 @@ function statementLinkOk(s) {
   if (!m) return false;
   return !['http', 'https', 'javascript', 'data', 'file', 'blob', 'vbscript', 'about', 'ftp', 'ws', 'wss', 'mailto', 'tel', 'sms', 'chrome', 'view-source', 'intent'].includes(m[1]);
 }
-function bankFetchStatement() {
-  const link = data && data.settings && data.settings.statementLink;
-  if (!statementLinkOk(link)) { toast('No statement helper link is set (Settings → Statement helper link)', 4000, 'error'); return; }
-  const a = document.createElement('a');
-  a.href = link; a.style.display = 'none';
-  document.body.appendChild(a); a.click(); a.remove();
-  toast('Asked this PC to start the statement helper. Log in to your bank in the window that opens; the Check a statement dialog follows.', 10000, 'info');
+// Shown when the "Fetch from the bank" link is clicked. The link itself does the work (the browser hands it to the
+// operating system); if nothing opens, the browser asked and was refused or the PC has no handler for the scheme.
+function bankFetchHint() {
+  toast('Asked this PC to start the statement helper. If nothing opens, allow the browser prompt, or check the helper is registered on this PC.', 12000, 'info');
 }
 const bankSigned = n =>`<span class="${n < 0 ? 'neg' : 'pos'}">${n < 0 ? '−' : '+'}${fmt(Math.abs(n))}</span>`;
 
@@ -7985,7 +7982,7 @@ function renderReconcile() {
   <div class="page-heading"><div><h2>Reconcile with the bank</h2><p>Compare a bank statement with the app, add what is missing, and decide the rest.</p></div>
     <button class="btn primary" id="bankImportBtn">${icon('download')}Check a statement</button></div>
   <div class="toolbar">
-    ${statementLinkOk(data.settings.statementLink) ? `<button class="btn" id="bankFetchBtn" title="Starts the statement helper on this PC: you log in to your bank, it downloads the statements and hands them to Check a statement">${icon('refresh')}Fetch from the bank</button>` : ''}
+    ${statementLinkOk(data.settings.statementLink) ? `<a class="btn" id="bankFetchBtn" href="${esc(data.settings.statementLink.trim())}" title="Starts the statement helper on this PC: you log in to your bank, it downloads the statements and hands them to Check a statement">${icon('refresh')}Fetch from the bank</a>` : ''}
     <button class="btn" id="bankSetBtn">Set a bank balance by hand</button>
     <div class="spacer"></div>
     ${open.length ? `<div class="toolbar-stat"><span class="stat-label">Waiting for you</span><strong>${plural(open.length, 'line')} · ${bankSigned(openSum)}</strong></div>` : ''}
@@ -8023,7 +8020,9 @@ function bindReconcile() {
   document.getElementById('bankImportBtn').onclick = () => bankImportStart();
   document.getElementById('bankSetBtn').onclick = () => bankSetBalanceDialog();
   const fetchBtn = document.getElementById('bankFetchBtn');
-  if (fetchBtn) fetchBtn.onclick = () => bankFetchStatement();
+  // A real link, so the browser itself hands it to the operating system (a script-made click was not reliable);
+  // the handler only adds the hint and never cancels the navigation.
+  if (fetchBtn) fetchBtn.onclick = () => bankFetchHint();
   on('[data-bank-check]', b => bankImportStart(b.dataset.bankCheck));
   on('[data-bank-set]', b => bankSetBalanceDialog(b.dataset.bankSet));
   on('[data-bank-stop]', b => bankStopTracking(b.dataset.bankStop));

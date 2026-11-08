@@ -354,10 +354,8 @@ class ReleaseRegressions(unittest.TestCase):
         self.assertEqual(p.evaluate("data.settings.statementLink"), 'statement-fetch:')
         p.evaluate("activeView='reconcile';render()")
         self.assertEqual(p.locator('#bankFetchBtn').count(), 1)
-        # The click would hand the link to the operating system; here it must at least not navigate the page away.
-        p.evaluate("window.__opened=[];const o=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){window.__opened.push(this.getAttribute('href'))};0")
-        p.locator('#bankFetchBtn').click()
-        self.assertEqual(p.evaluate("window.__opened"), ['statement-fetch:'])
+        # A real link (the browser hands it to the operating system); a quote in the setting cannot break out of the attribute.
+        self.assertEqual(p.locator('#bankFetchBtn').evaluate("e => [e.tagName, e.getAttribute('href')]"), ['A', 'statement-fetch:'])
 
     def test_scenarios_compare_apply_and_undo(self):
         p=self.page
