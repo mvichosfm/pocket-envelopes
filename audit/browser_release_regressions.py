@@ -356,6 +356,52 @@ class ReleaseRegressions(unittest.TestCase):
         p.evaluate("performUndo()")
         self.assertEqual(p.evaluate("data.accounts[0].bank.balance"), 10)
 
+    def test_remote_fetch_button_follows_the_servers_status(self):
+        """Decision #77: when the server offers /fetch, the button asks the server, follows its status and loads the result when done."""
+        import json as _json
+        p = self.page
+        box = {'cur': {'state': 'idle', 'message': '', 'at': None}, 'posts': 0, 'post_status': 202}
+        def handler(route):
+            req = route.request
+            if req.method == 'POST':
+                box['posts'] += 1
+                self.assertEqual(req.headers.get('x-requested-with'), 'pocket-envelopes')
+                if box['post_status'] == 429:
+                    return route.fulfill(status=429, content_type='application/json', body=_json.dumps({'error': 'too soon', 'retry_after': 120}))
+                box['cur'] = {'state': 'starting', 'message': '', 'at': None}
+                return route.fulfill(status=202, content_type='application/json', body=_json.dumps({'state': 'starting', 'status': box['cur']}))
+            route.fulfill(status=200, content_type='application/json', body=_json.dumps({'enabled': True, 'status': box['cur']}))
+        p.route('**/fetch', handler)
+        p.evaluate("""() => { demoMode=false; bankFetchPollMs=200; window.bankFetchReload=()=>{window.__reloaded=true};
+          data=emptyData(); data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:0,includeInNetWorth:true}];
+          activeView='reconcile'; render(); }""")
+        self.assertEqual(p.locator('#bankFetchBtn').count(), 0, 'before the probe: no server route known, no link set, no button')
+        p.evaluate("bankFetchProbe()")
+        p.wait_for_selector('#bankFetchBtn')
+        self.assertEqual(p.locator('#bankFetchBtn').evaluate("e => e.tagName"), 'BUTTON')
+        self.assertEqual(p.locator('#bankFetchStatus').inner_text(), '')
+        # too soon: told, nothing starts
+        box['post_status'] = 429
+        p.locator('#bankFetchBtn').click()
+        p.wait_for_function('document.body.innerText.includes("too soon")')
+        box['post_status'] = 202
+        p.locator('#bankFetchBtn').click()
+        p.wait_for_function('document.getElementById("bankFetchBtn").disabled')
+        self.assertIn('Asked the PC', p.locator('#bankFetchStatus').inner_text())
+        box['cur'] = {'state': 'waiting-approval', 'message': '', 'at': None}
+        p.wait_for_function('document.getElementById("bankFetchStatus").innerText.includes("Approve the login on your phone")')
+        # With unsaved changes in this tab the page must NOT reload under the user: it says so instead.
+        p.evaluate("dirty=true")
+        box['cur'] = {'state': 'done', 'message': '', 'at': '2026-11-08T10:00:00+02:00', 'summary': {'booked': 2, 'queued': 3}}
+        p.wait_for_function('document.body.innerText.includes("unsaved changes in this tab")')
+        self.assertFalse(p.evaluate("!!window.__reloaded"))
+        # Clean tab: the saved result is loaded.
+        p.evaluate("dirty=false; bankFetch.status={state:'comparing',message:'',at:null}; bankFetchPoll()")
+        p.wait_for_function('window.__reloaded === true')
+        self.assertIn('2 booked automatically, 3 waiting', p.locator('#bankFetchStatus').inner_text())
+        self.assertFalse(p.locator('#bankFetchBtn').is_disabled(), 'free to start another run once it is done')
+        self.assertEqual(box['posts'], 2)
+
     def test_two_bank_files_make_one_app_account(self):
         """Decision #75: an app account that is the sum of two bank accounts takes two files, adds their balances, drops moves between them."""
         p = self.page

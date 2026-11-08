@@ -15,6 +15,11 @@ feedback-started.txt
 feedback-handled.json
 *.jsonl
 
+# Private server switches (serve-daemon.cmd calls it if present) and the statement task's progress file (FETCH_TASK).
+serve-env.cmd
+fetch-status.json
+fetch-status.json.tmp
+
 # Editing twin used when a tool refuses the .app extension (see CLAUDE.md)
 _edit.html
 

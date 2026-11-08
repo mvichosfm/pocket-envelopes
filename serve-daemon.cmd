@@ -18,6 +18,10 @@ set IDLE_TIMEOUT=0
 set PORT=8765
 set LOGFILE=%~dp0serve-daemon.log
 
+REM Optional, private, not in git: serve-env.cmd may set more switches for this server,
+REM e.g. `set FETCH_TASK=<a Windows scheduled task>` (see README, "start a statement downloader").
+if exist "%~dp0serve-env.cmd" call "%~dp0serve-env.cmd"
+
 REM Run the server in the FOREGROUND, not via `start /b`. This script is the
 REM task's process, so blocking here is what makes the scheduled task track
 REM the server's real lifetime: the task shows Running while it serves, Stop

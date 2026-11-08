@@ -67,6 +67,8 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;     // never proxy third parties
   if (url.pathname.replace(/\/+$/, "").endsWith("/data")) return;  // rule 1
+  // /fetch is the statement run's live status (opt-in route): a cached copy would show a run that is long over.
+  if (url.pathname.replace(/\/+$/, "").endsWith("/fetch")) return;
 
   event.respondWith((async () => {
     // Cached copy for this request, else the shell entry for a navigation.

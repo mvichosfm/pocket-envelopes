@@ -35,6 +35,11 @@ because those are the ones worth re-checking your own figures after.
   Reconcile tab: it opens a custom link such as `statement-fetch:` that the user's own PC answers
   by starting a statement downloader. Only a custom scheme is accepted (never a web address,
   script, data or file URL), on entry and again when a file loads; the app itself runs nothing.
+  The button can also start the downloader from **any device**: start the server with
+  `FETCH_TASK=<a Windows scheduled task>` and `POST /fetch` runs exactly `schtasks /Run /TN <task>`
+  (nothing from the request; header-guarded; one run at a time; a cooldown between runs), the task
+  reports progress in a small status file, and the page follows it and loads the saved result.
+  Off unless `FETCH_TASK` is set.
   Nothing leaves the machine. The fields are additive (`account.bank`, `data.bankQueue`, and
   `bankRef` / `bankDesc` / `bankAuto` / `source: 'statement'` on a transaction): no schema bump.
 - **Navigation and page-title icons.** Each view's tab, its phone-dock button and the

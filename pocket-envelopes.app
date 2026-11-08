@@ -7669,6 +7669,77 @@ function statementLinkOk(s) {
 function bankFetchHint() {
   toast('Asked this PC to start the statement helper. If nothing opens, allow the browser prompt, or check the helper is registered on this PC.', 12000, 'info');
 }
+// ---- remote fetch (decision #77) -------------------------------------------------------------------------------
+// When the server was started with FETCH_TASK, GET /fetch says so and the button asks the SERVER to start the statement
+// task (which runs on the server's PC), so it works from any device; the page follows progress from the status the task
+// writes and, when it is done, loads the saved result. Without it the button is the custom link above.
+const BANK_FETCH_ACTIVE = ['starting', 'logging-in', 'waiting-approval', 'downloading', 'comparing'];
+let bankFetch = { enabled: false, status: null, timer: null };
+let bankFetchPollMs = 3000;
+function bankFetchText(st) {
+  if (!st || st.state === 'idle') return '';
+  const m = { 'starting': 'Asked the PC to start the statement helper…', 'logging-in': 'Logging in to the bank…',
+    'waiting-approval': 'Approve the login on your phone…', 'downloading': 'Downloading the statements…', 'comparing': 'Comparing with the app…' }[st.state];
+  if (m) return m + (st.message ? ' ' + st.message : '');
+  let when = '';
+  try { if (st.at) when = ' (' + new Date(st.at).toLocaleString(displayLocale(), { dateStyle: 'short', timeStyle: 'short' }) + ')'; } catch (e) { /* no time */ }
+  if (st.state === 'done') {
+    const s = st.summary;
+    return 'Last run: done.' + (s ? ` ${s.booked || 0} booked automatically, ${s.queued || 0} waiting for your decision.` : '') + (st.message ? ' ' + st.message : '') + when;
+  }
+  return (st.state === 'failed' ? 'Last run failed: ' : 'Last run stopped: ') + (st.message || 'see the PC') + when;
+}
+function bankFetchPaint() {
+  const el = document.getElementById('bankFetchStatus');
+  if (el) el.textContent = bankFetchText(bankFetch.status);
+  const b = document.getElementById('bankFetchBtn');
+  if (b && b.tagName === 'BUTTON') b.disabled = !!(bankFetch.status && BANK_FETCH_ACTIVE.includes(bankFetch.status.state));
+}
+async function bankFetchGet() {
+  const r = await fetch('/fetch', { cache: 'no-store', redirect: 'manual' });
+  return r.ok ? r.json() : null;
+}
+async function bankFetchProbe() {
+  if (demoMode) return;
+  try {
+    const j = await bankFetchGet();
+    if (!j || !j.enabled) return;
+    bankFetch.enabled = true; bankFetch.status = j.status;
+    if (activeView === 'reconcile') render();
+    if (BANK_FETCH_ACTIVE.includes(j.status.state)) bankFetchPoll();
+  } catch (e) { /* no such route on this server: the link, if one is set, stays */ }
+}
+function bankFetchPoll() {
+  if (bankFetch.timer) return;
+  bankFetch.timer = setInterval(async () => {
+    try {
+      const j = await bankFetchGet();
+      if (!j) return;
+      bankFetch.status = j.status; bankFetchPaint();
+      if (!BANK_FETCH_ACTIVE.includes(j.status.state)) {
+        clearInterval(bankFetch.timer); bankFetch.timer = null;
+        if (j.status.state === 'done') bankFetchFinished();
+      }
+    } catch (e) { /* a blip: the next tick tries again */ }
+  }, bankFetchPollMs);
+}
+function bankFetchReload() { location.href = location.pathname + '?view=reconcile'; }
+function bankFetchFinished() {
+  // The task saved to the same file from its own window, so this tab's copy is out of date.
+  if (dirty) { toast('The statement run finished. Press Reload to see it (you have unsaved changes in this tab).', 12000, 'info'); return; }
+  toast('The statement run finished; loading the result…', 3000, 'success');
+  setTimeout(bankFetchReload, 800);
+}
+async function bankFetchRemote() {
+  try {
+    const r = await fetch('/fetch', { method: 'POST', headers: { 'X-Requested-With': 'pocket-envelopes' }, redirect: 'manual' });
+    if (needsSignIn(r)) { toast('Sign in again, then press the button again.', 6000, 'error'); return; }
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 202 || r.status === 409) { bankFetch.status = j.status || { state: 'starting' }; bankFetchPaint(); bankFetchPoll(); return; }
+    if (r.status === 429) { toast(`That was too soon after the last run. Try again in ${j.retry_after || 'a few'} seconds.`, 6000, 'info'); return; }
+    toast(j.error || 'Could not start the statement run', 6000, 'error');
+  } catch (e) { toast('Could not reach the server', 4000, 'error'); }
+}
 const bankSigned = n =>`<span class="${n < 0 ? 'neg' : 'pos'}">${n < 0 ? '−' : '+'}${fmt(Math.abs(n))}</span>`;
 
 // ---- the statement dialog ---------------------------------------------------
@@ -8062,11 +8133,13 @@ function renderReconcile() {
   <div class="page-heading"><div><h2>Reconcile with the bank</h2><p>Compare a bank statement with the app, add what is missing, and decide the rest.</p></div>
     <button class="btn primary" id="bankImportBtn">${icon('download')}Check a statement</button></div>
   <div class="toolbar">
-    ${statementLinkOk(data.settings.statementLink) ? `<a class="btn" id="bankFetchBtn" href="${esc(data.settings.statementLink.trim())}" title="Starts the statement helper on this PC: you log in to your bank, it downloads the statements and hands them to Check a statement">${icon('refresh')}Fetch from the bank</a>` : ''}
+    ${bankFetch.enabled ? `<button class="btn" id="bankFetchBtn" ${bankFetch.status && BANK_FETCH_ACTIVE.includes(bankFetch.status.state) ? 'disabled' : ''} title="Asks the PC this server runs on to start the statement helper: you approve the bank login on your phone, it downloads and compares the statements">${icon('refresh')}Fetch from the bank</button>`
+      : statementLinkOk(data.settings.statementLink) ? `<a class="btn" id="bankFetchBtn" href="${esc(data.settings.statementLink.trim())}" title="Starts the statement helper on this PC: you log in to your bank, it downloads the statements and hands them to Check a statement">${icon('refresh')}Fetch from the bank</a>` : ''}
     <button class="btn" id="bankSetBtn">Set a bank balance by hand</button>
     <div class="spacer"></div>
     ${open.length ? `<div class="toolbar-stat"><span class="stat-label">Waiting for you</span><strong>${plural(open.length, 'line')} · ${bankSigned(openSum)}</strong></div>` : ''}
   </div>
+  ${bankFetch.enabled ? `<p class="micro" id="bankFetchStatus" role="status" aria-live="polite" style="margin:-6px 0 12px;">${esc(bankFetchText(bankFetch.status))}</p>` : ''}
   ${tracked.length ? `<div class="card" style="padding:0;"><table class="bank-queue bank-tracked">
     <thead><tr><th>Account</th><th class="num">In the app</th><th class="num">At the bank</th><th class="num">Difference</th><th>To decide</th><th></th></tr></thead>
     <tbody>${tracked.map(a => {
@@ -8102,7 +8175,7 @@ function bindReconcile() {
   const fetchBtn = document.getElementById('bankFetchBtn');
   // A real link, so the browser itself hands it to the operating system (a script-made click was not reliable);
   // the handler only adds the hint and never cancels the navigation.
-  if (fetchBtn) fetchBtn.onclick = () => bankFetchHint();
+  if (fetchBtn) fetchBtn.onclick = fetchBtn.tagName === 'BUTTON' ? () => bankFetchRemote() : () => bankFetchHint();
   on('[data-bank-check]', b => bankImportStart(b.dataset.bankCheck));
   on('[data-bank-set]', b => bankSetBalanceDialog(b.dataset.bankSet));
   on('[data-bank-stop]', b => bankStopTracking(b.dataset.bankStop));
@@ -11165,6 +11238,7 @@ function applyUrlParams() {
   }
   registerServiceWorker();
   initFeedback();         // shows the header button only if the server offers the optional feedback card
+  if (loaded && data) bankFetchProbe();   // likewise the Reconcile page's server-side "Fetch from the bank", if the server offers it
 })();
 
 // Register the shell-caching service worker (see sw.js for what it does and,

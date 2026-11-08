@@ -71,6 +71,7 @@ import re
 import shutil
 import socket
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -106,6 +107,8 @@ def _is_private_path(path_only: str) -> bool:
     # The optional feedback card's store and its start marker (see FEEDBACK below). With the default DATA_DIR they sit
     # next to this file, so the static handler must refuse them by name like the budget itself.
     if name.startswith("feedback") or name.endswith(".jsonl"):
+        return True
+    if name.startswith("fetch-status"):      # the statement-fetch task's progress file (see FETCH_TASK below)
         return True
     return name.endswith((".log", ".tmp", ".bak", ".bak.0", ".bak.1", ".bak.2", ".bak.3", ".bak.4"))
 
@@ -464,6 +467,102 @@ def _fb_add(body, env, now=None):
         return record
 
 
+# ---- An optional "fetch statements" trigger (FETCH_TASK) ----------------------------------------------------------
+# OFF unless FETCH_TASK names a Windows scheduled task. The Reconcile page's "Fetch from the bank" button normally
+# opens a custom link that the browser's own PC answers; from another device that does nothing. With this switched on,
+# the button asks THIS server instead, and the server starts that one task (which runs a statement downloader in the
+# user's session). Deliberately narrow:
+#   - the only thing a request can cause is `schtasks /Run /TN <FETCH_TASK>`: a fixed argument list, no shell, the task
+#     name validated at start-up, nothing taken from the request;
+#   - POST needs the X-Requested-With: pocket-envelopes header (a cross-site page cannot send it) on top of the Host
+#     check, there is at most one run at a time, and a FETCH_COOLDOWN (default 300 s) between starts;
+#   - progress comes from a small JSON file the task writes (FETCH_STATUS_FILE, default fetch-status.json next to the
+#     data); this server never writes it, serves only a whitelisted, size-capped view of it, and refuses it as a static file.
+#
+#   GET  /fetch -> {"enabled": true, "status": {"state", "message", "at", "summary"?}}      (404 when FETCH_TASK is unset)
+#   POST /fetch -> 202 {"state": "starting"}, 409 already running, 429 too soon (retry_after), 502 the task could not start
+FETCH_TASK = os.environ.get("FETCH_TASK", "").strip()
+if FETCH_TASK and not re.fullmatch(r"[A-Za-z0-9 _.-]{1,60}", FETCH_TASK):
+    raise SystemExit("FETCH_TASK may only contain letters, digits, spaces, _ . - (up to 60 characters)")
+FETCH_STATUS_FILE = os.environ.get("FETCH_STATUS_FILE") or os.path.join(DATA_DIR, "fetch-status.json")
+FETCH_COOLDOWN = int(os.environ.get("FETCH_COOLDOWN", "300"))
+FETCH_ACTIVE = ("starting", "logging-in", "waiting-approval", "downloading", "comparing")
+FETCH_STATES = FETCH_ACTIVE + ("done", "failed", "stopped")
+FETCH_STALE_SECONDS = 20 * 60          # an active state this old means the run died without saying so
+FETCH_STATUS_MAX_BYTES = 8 * 1024
+_FETCH_SUMMARY_KEYS = ("booked", "queued", "lines", "gap", "unexplained")
+_fetch_lock = threading.Lock()
+_fetch_started_at = None               # when this server last started the task (aware datetime)
+_fetch_started_mono = 0.0
+
+
+def _fetch_parse_time(text):
+    try:
+        t = datetime.datetime.fromisoformat(str(text))
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else t.astimezone()
+
+
+def _fetch_read_status():
+    """The status file as a whitelisted dict, or None (missing, unreadable, too big, not an object)."""
+    try:
+        if os.path.getsize(FETCH_STATUS_FILE) > FETCH_STATUS_MAX_BYTES:
+            return None
+        with open(FETCH_STATUS_FILE, "r", encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(raw, dict) or raw.get("state") not in FETCH_STATES:
+        return None
+    out = {"state": raw["state"], "message": str(raw.get("message") or "")[:200]}
+    at = _fetch_parse_time(raw.get("at"))
+    out["at"] = at.isoformat() if at else None
+    summary = raw.get("summary")
+    if isinstance(summary, dict):
+        keep = {k: summary[k] for k in _FETCH_SUMMARY_KEYS
+                if isinstance(summary.get(k), (int, float)) and not isinstance(summary.get(k), bool)}
+        if keep:
+            out["summary"] = keep
+    return out
+
+
+def _fetch_status():
+    now = datetime.datetime.now().astimezone()
+    st = _fetch_read_status()
+    started = _fetch_started_at
+    at = _fetch_parse_time(st["at"]) if st else None
+    if started and (st is None or at is None or at < started):
+        return {"state": "starting", "message": "Asked this PC to start the statement helper.", "at": started.isoformat()}
+    if st is None:
+        return {"state": "idle", "message": "", "at": None}
+    if st["state"] in FETCH_ACTIVE and (at is None or (now - at).total_seconds() > FETCH_STALE_SECONDS):
+        return {"state": "stopped", "message": "The last run did not finish.", "at": st["at"]}
+    return st
+
+
+def _fetch_start():
+    """(http status, payload) for a request to start the task."""
+    global _fetch_started_at, _fetch_started_mono
+    with _fetch_lock:
+        st = _fetch_status()
+        if st["state"] in FETCH_ACTIVE:
+            return 409, {"error": "a statement run is already in progress", "status": st}
+        wait = FETCH_COOLDOWN - (time.monotonic() - _fetch_started_mono)
+        if _fetch_started_mono and wait > 0:
+            return 429, {"error": "too soon after the last run", "retry_after": int(wait) + 1, "status": st}
+        schtasks = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "schtasks.exe")
+        try:
+            done = subprocess.run([schtasks, "/Run", "/TN", FETCH_TASK], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            return 502, {"error": "could not ask Task Scheduler to start the task"}
+        if done.returncode != 0:
+            return 502, {"error": "Task Scheduler refused to start the task (is the user logged on?)"}
+        _fetch_started_at = datetime.datetime.now().astimezone()
+        _fetch_started_mono = time.monotonic()
+        return 202, {"state": "starting", "status": _fetch_status()}
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     # Python 3.8's handler never consults the mimetypes registry: it reads only
     # this table, copied at import time, so the registrations above must be
@@ -538,6 +637,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._get_data()
         if FEEDBACK_ENABLED and self._route() == "/feedback":
             return self._get_feedback()
+        if FETCH_TASK and self._route() == "/fetch":
+            return self._get_fetch()
         return super().do_GET()
 
     def do_HEAD(self):
@@ -562,8 +663,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None
         if FEEDBACK_ENABLED and self._route() == "/feedback":
             return self._post_feedback()
+        if FETCH_TASK and self._route() == "/fetch":
+            return self._post_fetch()
         # Without FEEDBACK=1 this is what the stdlib handler has always answered to a POST.
         self.send_error(501, "Unsupported method ('POST')")
+
+    # -- /fetch (opt-in, see FETCH_TASK above) ---------------------------------
+    def _get_fetch(self):
+        self._send_json(200, json.dumps({"enabled": True, "status": _fetch_status()}, ensure_ascii=False).encode("utf-8"))
+
+    def _post_fetch(self):
+        if self.headers.get(FEEDBACK_HEADER[0]) != FEEDBACK_HEADER[1]:
+            return self._send_error_json(403, "missing the %s header" % FEEDBACK_HEADER[0])
+        code, payload = _fetch_start()
+        extra = [("Retry-After", str(payload["retry_after"]))] if code == 429 else []
+        self._send_json(code, json.dumps(payload, ensure_ascii=False).encode("utf-8"), extra)
 
     # -- /feedback (opt-in, see FEEDBACK above) -------------------------------
     def _get_feedback(self):
@@ -694,6 +808,8 @@ def main():
     print(f"Data file: {DATA_FILE}")
     if FEEDBACK_ENABLED:
         print(f"Feedback card: ON, records go to {FEEDBACK_FILE}")
+    if FETCH_TASK:
+        print(f"Statement fetch: ON, POST /fetch starts the scheduled task {FETCH_TASK!r} (status file {FETCH_STATUS_FILE})")
     if BIND == "0.0.0.0":
         print(f"WARNING: BIND=0.0.0.0 -- reachable from every device on this machine's networks, port {PORT}, with no authentication.")
     try:
