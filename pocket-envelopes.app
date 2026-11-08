@@ -7092,7 +7092,7 @@ function txFormModal(tx, isNew, opts) {
     // survive an edit, or the next statement would offer the line again. Saving
     // drops `bankAuto` on purpose — a line the user has looked at is theirs, and
     // from then on it counts as history for the guesses.
-    for (const k of ['bankRef', 'bankDesc', 'source']) if (tx[k]) out[k] = tx[k];
+    for (const k of ['bankRef', 'bankDesc', 'source', 'bankPending', 'bankHoldRef', 'bankHoldGone']) if (tx[k]) out[k] = tx[k];
     // Snapshot before mutating. This handler backs Add Tx, Edit Tx and the
     // recurring-instance-now flow — the highest-frequency mutation in the app.
     // Without it, Ctrl-Z would pop an older snapshot and revert an unrelated
@@ -7164,9 +7164,14 @@ function bankAddDays(iso, n) {
   return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10);
 }
 // The account's balance as the bank would have shown it at the end of `iso`.
-function accountBalanceAsOf(account, iso) {
+// Card payments the bank has only HELD (booked here as pending entries, decision #78) are not in its ledger
+// balance yet, so they are left out, except the ones in `settledIds` (a statement line settles them in this run).
+function accountBalanceAsOf(account, iso, settledIds) {
   let bal = account.openingBalance || 0;
-  for (const tx of data.transactions) if (tx.date <= iso) bal += txAccountDelta(tx, account.id);
+  for (const tx of data.transactions) {
+    if (tx.date > iso || (tx.bankPending && !(settledIds && settledIds.has(tx.id)))) continue;
+    bal += txAccountDelta(tx, account.id);
+  }
   return bal;
 }
 
@@ -7514,6 +7519,71 @@ function bankSuggest(row, accountId, hist, dueList) {
   }
 }
 
+// ---- held card payments (decision #78) ---------------------------------------
+// A card payment is HELD by the bank for a few days before it settles: it lowers the bank's available balance at once
+// but is not on the statement yet. A downloader can hand the held list over (bankSetHolds); each held payment is then
+// booked as a PENDING entry (`bankPending`, identity `bankHoldRef`), by the same 90% rule as statement lines (the rest
+// wait on the Reconcile page), so the app's balance tracks the bank's available balance. When the statement line
+// arrives it pairs with the pending entry by amount and date like any entry and settles it (the entry gets the line's
+// bankRef and stops being pending). A held payment the bank stops showing without a settled line is flagged, never
+// deleted on its own.
+function bankHoldRefs(holds, accountId) {
+  const rows = (holds || []).filter(h => h && /^\d{4}-\d{2}-\d{2}$/.test(String(h.date)) && Number.isFinite(h.amount) && bankCents(h.amount) !== 0)
+    .map(h => ({ date: h.date, amount: bankRound(h.amount), desc: String(h.desc == null ? '' : h.desc).replace(/\s+/g, ' ').trim().slice(0, 200) }))
+    .sort((x, y) => x.date < y.date ? -1 : (x.date > y.date ? 1 : 0));
+  const seen = new Map();
+  for (const x of rows) {
+    const base = `hold|${accountId}|${x.date}|${bankCents(x.amount)}|${bankDescKey(x.desc)}`;
+    const k = seen.get(base) || 0;
+    seen.set(base, k + 1);
+    x.ref = base + '|' + k;
+  }
+  return rows;
+}
+// The unsettled pending entry a statement line most likely settles for a different amount, or null: same direction,
+// within 10 days, amount within 15% (at least 1.00), and at least one word of the description in common.
+function bankPendingNear(row, pending, accountId) {
+  const words = new Set(bankNormTokens(row.desc));
+  let best = null, bestGap = Infinity;
+  for (const t of pending) {
+    const d = txAccountDelta(t, accountId);
+    if (!d || Math.sign(d) !== Math.sign(row.amount)) continue;
+    if (Math.abs(bankDayDiff(t.date, row.date)) > 10) continue;
+    const diff = Math.abs(Math.abs(d) - Math.abs(row.amount));
+    if (diff > Math.max(1, Math.abs(d) * 0.15)) continue;
+    const other = bankNormTokens((t.bankDesc || '') + ' ' + (t.payee || ''));
+    if (!other.some(w => words.has(w))) continue;
+    if (diff < bestGap) { best = t; bestGap = diff; }
+  }
+  return best;
+}
+// What a run would do with the held list: which held payments are new (booked or queued), which were already entered
+// by hand, which pending entries the bank no longer holds, and which queued held payments have gone.
+function bankPlanHolds(accountId, rawHolds, m, hist, due) {
+  const list = bankHoldRefs(rawHolds, accountId);
+  const current = new Set(list.map(h => h.ref));
+  const known = new Set(data.transactions.filter(t => t.bankHoldRef).map(t => t.bankHoldRef));
+  const queued = new Set((data.bankQueue || []).map(q => q.ref));
+  const usedByLines = new Set(m.matched.map(x => x.tx.id));
+  // Entries the user typed in for a card payment already: same effect on the account, within the date window.
+  const hand = data.transactions.filter(t => !t.bankRef && !t.bankHoldRef && !t.bankPending && !usedByLines.has(t.id) && txAccountDelta(t, accountId));
+  const usedHand = new Set();
+  const fresh = [], typedPairs = [];
+  for (const h of list) {
+    if (known.has(h.ref) || queued.has(h.ref)) continue;
+    const typed = hand.find(t => !usedHand.has(t.id) && bankCents(txAccountDelta(t, accountId)) === bankCents(h.amount) && Math.abs(bankDayDiff(t.date, h.date)) <= BANK_DATE_WINDOW);
+    // Typed in by the user already: nothing to book; it is marked pending so it stays out of the statement comparison until it settles.
+    if (typed) { usedHand.add(typed.id); typedPairs.push({ hold: h, tx: typed }); continue; }
+    const sug = bankSuggest(h, accountId, hist, due);
+    fresh.push({ hold: h, sug, auto: sug.conf >= BANK_AUTO_CONF - 1e-9 && !sug.rec });
+  }
+  const settled = new Set(m.matched.map(x => x.tx.id));
+  const released = data.transactions.filter(t => t.bankPending && t.bankHoldRef && t.bankHoldRef.split('|')[1] === accountId &&
+    !current.has(t.bankHoldRef) && !settled.has(t.id) && !t.bankHoldGone);
+  const goneQueue = (data.bankQueue || []).filter(q => q.hold && q.status === 'open' && q.accountId === accountId && !current.has(q.ref));
+  return { list, fresh, typed: typedPairs, byHand: typedPairs.length, released, goneQueue, sum: bankRound(list.reduce((s, h) => s + h.amount, 0)) };
+}
+
 // ---- the plan ---------------------------------------------------------------
 // Everything a statement run would do, computed without touching the data.
 function bankPlan(accountId, parsed, bankBalance, asOf, opts) {
@@ -7523,16 +7593,20 @@ function bankPlan(accountId, parsed, bankBalance, asOf, opts) {
   const inWin = d => (!from || d >= from) && d <= asOf;
   // Lines before `from` are kept for one purpose only: to pair with app entries just inside the window.
   const pool = parsed.rows.filter(r => r.date <= asOf && (!from || r.date >= bankAddDays(from, -BANK_DATE_WINDOW)));
-  const appBal = bankRound(accountBalanceAsOf(acc, asOf));
-  const gap = bankRound(bankBalance - appBal);
   const m = bankMatchRows(accountId, pool, asOf);
+  // Held card payments booked as pending entries are not in the bank's ledger balance, so they stay out of the
+  // comparison, except those a statement line now settles.
+  const settledIds = new Set(m.matched.filter(x => x.tx.bankPending).map(x => x.tx.id));
+  m.appOnly = m.appOnly.filter(x => !x.tx.bankPending);
+  const appBal = bankRound(accountBalanceAsOf(acc, asOf, settledIds));
+  const gap = bankRound(bankBalance - appBal);
   const rows = pool.filter(r => inWin(r.date));
   const matchedWin = m.matched.filter(x => inWin(x.row.date));
   m.missing = m.missing.filter(r => inWin(r.date));
   m.queued = m.queued.filter(r => inWin(r.date));
   m.appOnly = m.appOnly.filter(x => !from || x.tx.date >= from);
   // Where the two stood the day before the window: drift older than the window is not this check's business.
-  const startApp = from ? bankRound(accountBalanceAsOf(acc, bankAddDays(from, -1))) : null;
+  const startApp = from ? bankRound(accountBalanceAsOf(acc, bankAddDays(from, -1), settledIds)) : null;
   const startBank = from && Number.isFinite(opts.startBank) ? bankRound(opts.startBank) : null;
   const startGap = startBank === null ? null : bankRound(startBank - startApp);
   // A pair that straddles the window's first day counts on one side only.
@@ -7543,9 +7617,18 @@ function bankPlan(accountId, parsed, bankBalance, asOf, opts) {
     else if (!rowIn && txIn) boundary -= txAccountDelta(x.tx, accountId);
   }
   const hist = bankHistoryIndex(), due = dueRecurringOccurrences();
+  // A held payment that settles for a different amount (currency, tip, hotel deposit) does not pair by amount: its
+  // statement line must not be booked on top of the pending entry, so it is sent to the user instead.
+  const unsettled = data.transactions.filter(t => t.bankPending && !settledIds.has(t.id) && txAccountDelta(t, accountId));
   const missing = m.missing.map(row => {
     const sug = bankSuggest(row, accountId, hist, due);
-    return { row, sug, auto: sug.conf >= BANK_AUTO_CONF - 1e-9 && !sug.rec };
+    const near = bankPendingNear(row, unsettled, accountId);
+    if (near) {
+      sug.conf = Math.min(sug.conf, 0.5);
+      sug.pendingId = near.id;
+      sug.why = `Looks like the held card payment “${near.payee || near.bankDesc || ''}” (${Math.abs(near.amount).toFixed(2)}) settling for a different amount: book this and delete or keep the held one.` + (sug.why ? ' ' + sug.why : '');
+    }
+    return { row, sug, auto: sug.conf >= BANK_AUTO_CONF - 1e-9 && !sug.rec && !near };
   });
   const sumRows = arr => bankRound(arr.reduce((s, x) => s + x.row.amount, 0));
   const auto = missing.filter(x => x.auto), queue = missing.filter(x => !x.auto);
@@ -7559,9 +7642,10 @@ function bankPlan(accountId, parsed, bankBalance, asOf, opts) {
     holdReason = 'Fewer than one statement line in five matches anything already in the app. This may be the wrong account, or the first statement you check for it.';
   else if (!balanced && auto.length > BANK_MAX_AUTO)
     holdReason = `${auto.length} lines would be added automatically, more than the ${BANK_MAX_AUTO} that are booked without a look.`;
+  const holds = Array.isArray(opts.holds) ? bankPlanHolds(accountId, opts.holds, m, hist, due) : null;
   return {
     accountId, asOf, from, startBank, startApp, startGap, bankBalance: bankRound(bankBalance), appBal, gap, rows, skipped: parsed.skipped,
-    matched: matchedWin, queuedAlready: m.queued, missing, auto, queue, appOnly: m.appOnly,
+    matched: matchedWin, allMatched: m.matched, settledIds, holds, queuedAlready: m.queued, missing, auto, queue, appOnly: m.appOnly,
     missingSum, autoSum: sumRows(auto), queueSum: sumRows(queue), appOnlySum,
     // (bank − app) now, less the same on the day before the window = lines the app lacks − entries the bank lacks + boundary + unexplained
     unexplained: bankRound(gap - (startGap || 0) - missingSum - earlierSum + appOnlySum - boundary), earlierSum,
@@ -7610,6 +7694,42 @@ function bankApplyPlan(plan, autoOn) {
       sug: { conf: it.sug.conf, payee: it.sug.payee, envelopeId: it.sug.envelopeId, tag: it.sug.tag, why: it.sug.why, rec: it.sug.rec || '' }
     });
   }
+  // Held payments a statement line now settles: the entry becomes an ordinary statement entry.
+  let settledCount = 0;
+  for (const x of plan.allMatched || []) {
+    if (!x.tx.bankPending) continue;
+    x.tx.bankRef = x.row.ref;
+    if (!x.tx.bankDesc) x.tx.bankDesc = x.row.desc;
+    delete x.tx.bankPending; delete x.tx.bankHoldRef; delete x.tx.bankHoldGone;
+    settledCount++;
+  }
+  // Held card payments (only when a downloader handed the list over in this run).
+  const holdIds = [];
+  let holdsQueued = 0, holdsGone = 0;
+  if (plan.holds) {
+    for (const it of plan.holds.fresh) {
+      const h = it.hold;
+      if (autoOn && it.auto) {
+        const tx = {
+          id: uid(), date: bankBookingDate(h.date), type: h.amount < 0 ? 'expense' : 'income', amount: Math.abs(h.amount),
+          accountId: plan.accountId, envelopeId: it.sug.envelopeId || null, payee: it.sug.payee || h.desc,
+          notes: 'Card payment held by the bank, not settled yet', source: 'statement-hold', bankPending: true, bankHoldRef: h.ref,
+          bankDesc: h.desc, bankAuto: true, ...(it.sug.tag ? { tag: it.sug.tag } : {})
+        };
+        data.transactions.push(tx);
+        holdIds.push(tx.id);
+      } else {
+        data.bankQueue.push({
+          id: uid(), accountId: plan.accountId, date: h.date, amount: h.amount, desc: h.desc, ref: h.ref, status: 'open', hold: true,
+          sug: { conf: it.sug.conf, payee: it.sug.payee, envelopeId: it.sug.envelopeId, tag: it.sug.tag, why: it.sug.why, rec: it.sug.rec || '' }
+        });
+        holdsQueued++;
+      }
+    }
+    for (const p of plan.holds.typed) { p.tx.bankPending = true; p.tx.bankHoldRef = p.hold.ref; if (!p.tx.bankDesc) p.tx.bankDesc = p.hold.desc; }
+    for (const t of plan.holds.released) { t.bankHoldGone = todayISO(); holdsGone++; }
+    for (const q of plan.holds.goneQueue) { q.status = 'dismissed'; q.note = 'No longer held at the bank'; }
+  }
   const autoSum = bankRound(autoIds.length ? plan.auto.reduce((s, x) => s + x.row.amount, 0) : 0);
   const queuedItems = plan.balanced ? [] : (doAuto ? plan.queue : plan.missing);
   // The bank's AVAILABLE balance (the ledger balance less money held for card payments) is not in a statement; a
@@ -7624,11 +7744,13 @@ function bankApplyPlan(plan, autoOn) {
       appOnly: plan.appOnly.slice(0, 40).map(x => ({ id: x.tx.id, date: x.tx.date, payee: String(x.tx.payee || '').slice(0, 80), delta: x.delta, pending: !!x.maybePending })),
       appOnlyCount: plan.appOnly.length, appOnlySum: plan.appOnlySum, unexplained: plan.unexplained,
       earlierCount: plan.queuedAlready.length, earlierSum: plan.earlierSum, internalCount: plan.internalLeftOut,
-      from: plan.from, startBank: plan.startBank, startApp: plan.startApp, startGap: plan.startGap
+      from: plan.from, startBank: plan.startBank, startApp: plan.startApp, startGap: plan.startGap,
+      ...(plan.holds ? { holds: { count: plan.holds.list.length, sum: plan.holds.sum, booked: holdIds.length, queued: holdsQueued,
+        byHand: plan.holds.byHand, gone: holdsGone, settled: settledCount, ids: holdIds } } : (settledCount ? { holds: { settled: settledCount } } : {}))
     }
   };
   saveDirty();
-  return { autoIds, queued: queuedItems.length };
+  return { autoIds, queued: queuedItems.length, holdsBooked: holdIds.length, holdsQueued, holdsGone, settled: settledCount };
 }
 
 // The bank's available balance, when something that can read it (the statement downloader) hands it over: the amount, the
@@ -7658,6 +7780,10 @@ function bankStatus(a) {
   const open = (data.bankQueue || []).filter(q => q.accountId === a.id && q.status === 'open');
   return {
     bank: b.balance, asOf: b.asOf, avail: b.available || null, app, diff, ok: Math.abs(diff) < 0.005,
+    // The app's balance today (held card payments included) against the bank's available balance (decision #78).
+    appNow: bankRound(accountBalance(a)),
+    availDiff: b.available ? bankRound(b.available.amount - accountBalance(a)) : null,
+    pending: data.transactions.filter(t => t.bankPending && txAccountDelta(t, a.id)).length,
     open: open.length, openSum: bankRound(open.reduce((s, q) => s + q.amount, 0)),
     ageDays: Math.max(0, bankDayDiff(todayISO(), b.asOf))
   };
@@ -7666,7 +7792,9 @@ function bankStatusLine(a) {
   const s = bankStatus(a);
   if (!s) return '';
   return `<div class="micro bank-line" title="The balance on the last bank statement you checked, against the app's balance on that date">
-    Bank ${fmt(s.bank)} · ${fmtDate(s.asOf)}${s.avail ? ` · available ${fmt(s.avail.amount)}` : ''}
+    Bank ${fmt(s.bank)} · ${fmtDate(s.asOf)}${s.avail ? ` · available ${fmt(s.avail.amount)} ${Math.abs(s.availDiff) < 0.005
+      ? '<span class="badge income" title="The app today equals what the bank shows as available">= app</span>'
+      : `<span class="badge due" title="The bank's available balance less the app's balance today">app differs by ${fmt(Math.abs(s.availDiff))}</span>`}` : ''}
     ${s.ok ? '<span class="badge income">matches</span>' : `<span class="badge due">differs by ${fmt(Math.abs(s.diff))}</span>`}
     ${s.open ? `<a href="#" data-go-reconcile>${plural(s.open, 'line')} to decide</a>` : ''}</div>`;
 }
@@ -7679,10 +7807,11 @@ function bankNoteDeleted(removed) {
   // import: remember its line as dismissed.
   data.bankQueue = data.bankQueue || [];
   for (const t of removed) {
-    if (!t.bankRef || (t.type !== 'expense' && t.type !== 'income') || !t.accountId) continue;
-    if (data.bankQueue.some(q => q.ref === t.bankRef)) continue;
+    const ref = t.bankRef || t.bankHoldRef;          // a deleted pending (held) entry must not come back either
+    if (!ref || (t.type !== 'expense' && t.type !== 'income') || !t.accountId) continue;
+    if (data.bankQueue.some(q => q.ref === ref)) continue;
     data.bankQueue.push({ id: uid(), accountId: t.accountId, date: t.date, amount: t.type === 'expense' ? -Math.abs(t.amount) : Math.abs(t.amount),
-      desc: t.bankDesc || t.payee || '', ref: t.bankRef, status: 'dismissed', note: 'Deleted from the app' });
+      desc: t.bankDesc || t.payee || '', ref, status: 'dismissed', note: 'Deleted from the app', ...(t.bankHoldRef && !t.bankRef ? { hold: true } : {}) });
   }
 }
 function bankCandidateAccounts() { return activeAccounts().filter(a => !a.isInvestment && a.type !== 'investment' && a.type !== 'loan'); }
@@ -7994,7 +8123,8 @@ function bankImportRun() {
   if (s.from && !/^\d{4}-\d{2}-\d{2}$/.test(s.from)) { toast('Choose the first day to compare, or clear it to compare every line', 3500, 'error'); return; }
   if (s.from && s.from > s.asOf) { toast('The first day to compare is after the balance date', 3500, 'error'); return; }
   const start = bankStartPosition(s.sources, s.accountId, s.from);
-  const plan = bankPlan(s.accountId, s.merged, bal, s.asOf, { from: s.from || '', startBank: start ? start.bank : null });
+  const hh = _bankHoldsHint && _bankHoldsHint.accountId === s.accountId ? _bankHoldsHint.holds : undefined;
+  const plan = bankPlan(s.accountId, s.merged, bal, s.asOf, { from: s.from || '', startBank: start ? start.bank : null, holds: hh });
   if (plan.holdReason && plan.missing.length) { bankHoldDialog(plan); return; }
   bankFinish(plan, true);
 }
@@ -8014,15 +8144,43 @@ function bankHoldDialog(plan) {
 }
 function bankFinish(plan, autoOn) {
   const res = bankApplyPlan(plan, autoOn);
+  if (plan.holds) _bankHoldsHint = null;           // used: a later Compare without a fresh list must not re-apply an old one
   closeModal();
   activeView = 'reconcile';
   render();
   window.scrollTo({ top: 0 });
   const acc = accountById(plan.accountId);
-  toast(plan.balanced
-    ? `${acc.name}: the app already matches the bank (${fmt(plan.bankBalance)})`
-    : `${acc.name}: ${plural(res.autoIds.length, 'line')} added automatically · ${plural(res.queued, 'line')} for you to decide`,
-    7000, 'success', plan.balanced ? undefined : { label: 'Undo', onClick: performUndo });
+  const held = plan.holds ? ` · held card payments: ${res.holdsBooked} booked as pending, ${res.holdsQueued} to decide` +
+    (res.holdsGone ? `, ${res.holdsGone} no longer held` : '') : '';
+  const settled = res.settled ? ` · ${plural(res.settled, 'held payment')} settled` : '';
+  const changed = !plan.balanced || res.holdsBooked || res.holdsQueued || res.holdsGone || res.settled;
+  toast((plan.balanced
+    ? `${acc.name}: the statement already matches the bank (${fmt(plan.bankBalance)})`
+    : `${acc.name}: ${plural(res.autoIds.length, 'line')} added automatically · ${plural(res.queued, 'line')} for you to decide`) + held + settled,
+    9000, 'success', changed ? { label: 'Undo', onClick: performUndo } : undefined);
+}
+// The held card payments a downloader reads from the bank (decision #78): kept until the next Compare of that account.
+let _bankHoldsHint = null;
+function bankSetHolds(accountId, holds) {
+  if (!accountById(accountId) || !Array.isArray(holds)) return false;
+  _bankHoldsHint = { accountId, holds: holds.map(h => ({ date: String(h.date || ''), amount: Number(h.amount), desc: String(h.desc || '') })) };
+  return true;
+}
+// Pending entries the bank no longer holds and that no statement line settled (decision #78): delete, or keep as ordinary.
+function bankHoldDelete(id) {
+  const t = data.transactions.find(x => x.id === id); if (!t) return;
+  pushUndo('Delete released card hold');
+  data.transactions = data.transactions.filter(x => x.id !== id);
+  saveDirty(); render();
+  toast(`Deleted “${t.payee || t.bankDesc || ''}”`, 6000, 'success', { label: 'Undo', onClick: performUndo });
+}
+function bankHoldKeep(id) {
+  const t = data.transactions.find(x => x.id === id); if (!t) return;
+  pushUndo('Keep card payment');
+  delete t.bankPending; delete t.bankHoldRef; delete t.bankHoldGone;
+  t.notes = ((t.notes || '').replace('Card payment held by the bank, not settled yet', '').trim() + ' Kept by hand after the bank stopped holding it.').trim();
+  saveDirty(); render();
+  toast(`Kept “${t.payee || t.bankDesc || ''}” as an ordinary entry`, 6000, 'success', { label: 'Undo', onClick: performUndo });
 }
 
 function bankSetBalanceDialog(accountId) {
@@ -8053,17 +8211,24 @@ function bankSetBalanceDialog(accountId) {
 
 // ---- resolving the queue ----------------------------------------------------
 function bankQueueItem(id) { return (data.bankQueue || []).find(q => q.id === id); }
+// How an entry made from a queued line is tied to the bank: a statement line by its ref; a held card payment as a
+// pending entry by its hold ref (the statement line settles it later).
+function bankLinkFields(q) {
+  return q.hold
+    ? { source: 'statement-hold', bankPending: true, bankHoldRef: q.ref, bankDesc: q.desc }
+    : { source: 'statement', bankRef: q.ref, bankDesc: q.desc };
+}
 function bankResolve(id) {
   const q = bankQueueItem(id); if (!q) return;
   const s = q.sug || {};
   const prefill = {
     id: uid(), date: bankBookingDate(q.date), type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
     envelopeId: s.envelopeId && envelopeById(s.envelopeId) ? s.envelopeId : null, payee: s.payee || q.desc,
-    notes: q.date > todayISO() ? bankStatementNote(q.date) : '',
-    ...(s.tag ? { tag: s.tag } : {}), source: 'statement', bankRef: q.ref, bankDesc: q.desc
+    notes: q.hold ? 'Card payment held by the bank, not settled yet' : (q.date > todayISO() ? bankStatementNote(q.date) : ''),
+    ...(s.tag ? { tag: s.tag } : {}), ...bankLinkFields(q)
   };
   txFormModal(prefill, true, {
-    banner: `Bank line: <strong>${esc(q.desc || '—')}</strong> · ${fmtDate(q.date)} · ${bankSigned(q.amount)}. Split it across envelopes with “Split across envelopes…”.`,
+    banner: `${q.hold ? 'Card payment held by the bank' : 'Bank line'}: <strong>${esc(q.desc || '—')}</strong> · ${fmtDate(q.date)} · ${bankSigned(q.amount)}. Split it across envelopes with “Split across envelopes…”.`,
     afterSave: () => { data.bankQueue = (data.bankQueue || []).filter(x => x.id !== id); }
   });
 }
@@ -8074,7 +8239,7 @@ function bankUseGuess(id) {
   data.transactions.push({
     id: uid(), date: bankBookingDate(q.date), type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
     envelopeId: s.envelopeId && envelopeById(s.envelopeId) ? s.envelopeId : null, payee: s.payee || q.desc,
-    notes: bankStatementNote(q.date), source: 'statement', bankRef: q.ref, bankDesc: q.desc, ...(s.tag ? { tag: s.tag } : {})
+    notes: q.hold ? 'Card payment held by the bank, not settled yet' : bankStatementNote(q.date), ...bankLinkFields(q), ...(s.tag ? { tag: s.tag } : {})
   });
   data.bankQueue = data.bankQueue.filter(x => x.id !== id);
   saveDirty(); render();
@@ -8126,6 +8291,8 @@ function bankRunHTML(a) {
       ${r.earlierCount ? `<tr><td>Already known from earlier checks <span class="help-tip" tabindex="0" title="Statement lines an earlier check put on this page, waiting or dismissed. They are not in the app and explain part of the difference.">?</span></td><td class="num">${r.earlierCount} · ${bankSigned(r.earlierSum || 0)}</td></tr>` : ''}
       ${r.internalCount ? `<tr><td>Moves between your own bank accounts, left out</td><td class="num">${r.internalCount}</td></tr>` : ''}
       <tr><td>In the app but not on the statement</td><td class="num">${r.appOnlyCount || 0}${r.appOnlyCount ? ' · ' + bankSigned(r.appOnlySum) : ''}</td></tr>
+      ${r.holds ? `<tr><td>Card payments held by the bank <span class="help-tip" tabindex="0" title="Not settled yet, so not on the statement. Booked as pending entries (left out of the comparison above) so the app follows the bank's available balance; each settles when its statement line arrives.">?</span></td>
+        <td class="num">${r.holds.count != null ? `${r.holds.count} · ${bankSigned(r.holds.sum || 0)} · ${r.holds.booked} booked, ${r.holds.queued} to decide${r.holds.byHand ? `, ${r.holds.byHand} already entered` : ''}${r.holds.gone ? `, ${r.holds.gone} no longer held` : ''}` : ''}${r.holds.settled ? `${r.holds.count != null ? ' · ' : ''}${r.holds.settled} settled` : ''}</td></tr>` : ''}
       ${r.balanced ? '' : `<tr><td>Still unexplained <span class="help-tip" tabindex="0" title="Bank minus app, less the lines the app lacked, plus the entries the bank lacks. Usually an opening-balance difference or activity before the statement starts.">?</span></td>
         <td class="num ${Math.abs(r.unexplained) < 0.005 ? '' : 'neg'}">${Math.abs(r.unexplained) < 0.005 ? 'nothing' : fmt(r.unexplained)}</td></tr>`}
     </tbody></table>
@@ -8148,7 +8315,7 @@ function bankQueueRowHTML(q, showAccount) {
     ? `${conf} <strong>${esc(s.payee || '')}</strong>${env ? ` · ${esc(env.name)}` : ''}${s.tag ? ` · ${esc(s.tag)}` : ''}` : (conf || '<span class="muted">no guess</span>');
   return `<tr>
     <td data-label="Date" style="white-space:nowrap;">${fmtDate(q.date)}${showAccount && acc ? `<div class="micro">${esc(acc.name)}</div>` : ''}</td>
-    <td data-label="Bank description">${esc(q.desc || '—')}</td>
+    <td data-label="Bank description">${q.hold ? '<span class="badge due" title="A card payment the bank has held but not settled yet: it is booked as a pending entry, and settles when the statement line arrives">held</span> ' : ''}${esc(q.desc || '—')}</td>
     <td class="num" data-label="Amount" style="white-space:nowrap;">${bankSigned(q.amount)}</td>
     <td data-label="Best guess">${guess}${s.why ? `<div class="micro">${esc(s.why)}</div>` : ''}</td>
     <td class="actions" style="white-space:nowrap;">
@@ -8163,6 +8330,7 @@ function renderReconcile() {
   const open = queue.filter(q => q.status === 'open').sort((a, b) => b.date.localeCompare(a.date));
   const dismissed = queue.filter(q => q.status === 'dismissed').sort((a, b) => b.date.localeCompare(a.date));
   const openSum = bankRound(open.reduce((s, q) => s + q.amount, 0));
+  const goneHolds = data.transactions.filter(t => t.bankPending && t.bankHoldGone).sort((a, b) => b.date.localeCompare(a.date));
   return `
   <div class="page-heading"><div><h2>Reconcile with the bank</h2><p>Compare a bank statement with the app, add what is missing, and decide the rest.</p></div>
     <button class="btn primary" id="bankImportBtn">${icon('download')}Check a statement</button></div>
@@ -8181,7 +8349,8 @@ function renderReconcile() {
       return `<tr>
         <td><strong>${esc(a.name)}</strong><div class="micro">statement of ${fmtDate(s.asOf)}${s.ageDays > 7 ? ` · ${s.ageDays} days old` : ''}</div></td>
         <td class="num" data-label="In the app">${fmt(s.app)}</td>
-        <td class="num" data-label="At the bank"><strong>${fmt(s.bank)}</strong>${s.avail ? `<div class="micro" title="What the bank's own app shows as available: the ledger balance less money held for card payments${s.avail.at ? '. Read ' + esc(String(s.avail.at).slice(0, 16).replace('T', ' ')) : ''}. The comparison above uses the ledger balance, which is what the statements list.">available ${fmt(s.avail.amount)}${s.avail.holds ? ` · ${fmt(s.avail.holds)} on hold` : ''}</div>` : ''}</td>
+        <td class="num" data-label="At the bank"><strong>${fmt(s.bank)}</strong>${s.avail ? `<div class="micro" title="What the bank's own app shows as available: the ledger balance less money held for card payments${s.avail.at ? '. Read ' + esc(String(s.avail.at).slice(0, 16).replace('T', ' ')) : ''}. The comparison above uses the ledger balance, which is what the statements list.">available ${fmt(s.avail.amount)}${s.avail.holds ? ` · ${fmt(s.avail.holds)} on hold` : ''}</div>
+          <div class="micro">${Math.abs(s.availDiff) < 0.005 ? `the app today: ${fmt(s.appNow)} <span class="badge income">same</span>` : `the app today: ${fmt(s.appNow)} (${s.availDiff > 0 ? '+' : '−'}${fmt(Math.abs(s.availDiff))} to the bank)`}${s.pending ? ` · ${plural(s.pending, 'held payment')} pending` : ''}</div>` : ''}</td>
         <td class="num" data-label="Difference">${s.ok ? '<span class="badge income">matches</span>' : `<span class="${s.diff < 0 ? 'neg' : 'pos'}"><strong>${s.diff > 0 ? '+' : '−'}${fmt(Math.abs(s.diff))}</strong></span>`}</td>
         <td data-label="To decide">${s.open ? `${plural(s.open, 'line')} · ${bankSigned(s.openSum)}` : '—'}</td>
         <td class="actions"><button class="btn sm" data-bank-check="${a.id}">Check statement</button>
@@ -8196,6 +8365,16 @@ function renderReconcile() {
     <p class="micro" style="margin-top:6px;">Reconcile… opens the transaction form with the bank line filled in; use <em>Split across envelopes…</em> there to divide one payment between envelopes.</p>`
     : '<div class="card"><p style="margin:0;" class="muted">Nothing is waiting. Lines the app could not recognise with enough certainty will appear here.</p></div>'}
   ${tracked.some(a => a.bank.lastRun) ? `<h3 style="margin:22px 0 8px;">Last statement check</h3>${tracked.map(bankRunHTML).join('')}` : ''}
+  ${goneHolds.length ? `<h3 style="margin:22px 0 8px;">Held payments the bank no longer shows (${goneHolds.length})</h3>
+    <div class="card" style="padding:0;"><table class="bank-queue"><thead><tr><th>Date</th><th>Entry</th><th class="num">Amount</th><th>What to do</th><th></th></tr></thead><tbody>
+    ${goneHolds.map(t => `<tr>
+      <td data-label="Date" style="white-space:nowrap;">${fmtDate(t.date)}</td>
+      <td data-label="Entry">${esc(t.payee || t.bankDesc || '—')}${t.bankDesc && t.bankDesc !== t.payee ? `<div class="micro">${esc(t.bankDesc)}</div>` : ''}</td>
+      <td class="num" data-label="Amount">${bankSigned(t.type === 'expense' ? -t.amount : t.amount)}</td>
+      <td data-label="What to do" class="micro">The bank stopped holding it and no statement line settled it: it was released (delete it), or it settled for a different amount (delete it and book that line, which is waiting above).</td>
+      <td class="actions" style="white-space:nowrap;"><button class="btn sm" data-bank-hold-delete="${t.id}">Delete it</button>
+        <button class="btn sm ghost" data-bank-hold-keep="${t.id}" title="It did happen: keep it as an ordinary entry">Keep it</button></td></tr>`).join('')}
+    </tbody></table></div>` : ''}
   ${dismissed.length ? `<details class="archived-list" style="margin-top:18px;"><summary>${plural(dismissed.length, 'dismissed line')}</summary>
     <div class="card" style="padding:0;margin-top:8px;"><table><tbody>${dismissed.map(q => `<tr>
       <td style="white-space:nowrap;">${fmtDate(q.date)}</td><td>${esc(q.desc || '—')}${q.note ? ` <span class="micro">${esc(q.note)}</span>` : ''}</td>
@@ -8218,6 +8397,8 @@ function bindReconcile() {
   on('[data-bank-dismiss]', b => bankDismiss(b.dataset.bankDismiss));
   on('[data-bank-reopen]', b => bankReopen(b.dataset.bankReopen));
   on('[data-bank-edit]', b => editTransaction(b.dataset.bankEdit));
+  on('[data-bank-hold-delete]', b => bankHoldDelete(b.dataset.bankHoldDelete));
+  on('[data-bank-hold-keep]', b => bankHoldKeep(b.dataset.bankHoldKeep));
 }
 // "Bank … differs" links on the Accounts tab and the Dashboard strip.
 function wireBankLinks(root) {
@@ -8244,7 +8425,7 @@ function sanitizeBank(raw) {
   raw.bankQueue = list.filter(q => q && typeof q === 'object' && !Array.isArray(q) && SCENARIO_ID_RE.test(String(q.id)) && accIds.has(q.accountId) &&
     DATE.test(String(q.date)) && typeof q.amount === 'number' && isFinite(q.amount) && typeof q.ref === 'string' && q.ref).map(q => ({
     id: String(q.id), accountId: q.accountId, date: q.date, amount: bankRound(q.amount), desc: String(q.desc == null ? '' : q.desc).slice(0, 200),
-    ref: q.ref.slice(0, 300), status: q.status === 'dismissed' ? 'dismissed' : 'open',
+    ref: q.ref.slice(0, 300), status: q.status === 'dismissed' ? 'dismissed' : 'open', ...(q.hold === true ? { hold: true } : {}),
     ...(typeof q.note === 'string' ? { note: q.note.slice(0, 80) } : {}),
     ...(typeof q.bal === 'number' && isFinite(q.bal) ? { bal: q.bal } : {}),
     ...(q.sug && typeof q.sug === 'object' && !Array.isArray(q.sug) ? { sug: {

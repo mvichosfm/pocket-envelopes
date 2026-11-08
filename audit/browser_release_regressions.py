@@ -472,6 +472,55 @@ class ReleaseRegressions(unittest.TestCase):
         self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankDesc==='DENTIST CLINIC').map(t=>t.date)"), [today])
         self.assertEqual(p.evaluate(f"data.transactions.filter(t=>t.date>'{today}').length"), 0, 'nothing from the bank lands in the future')
 
+    def test_held_card_payments_are_pending_until_settled(self):
+        """Decision #78: held payments become pending entries (app follows the available balance), settle on their statement line, and released ones are flagged."""
+        p = self.page
+        today = p.evaluate("todayISO()")
+        p.evaluate("""() => {
+          data=emptyData();
+          data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:1000,includeInNetWorth:true}];
+          data.envelopes=[{id:'e0',name:'Groceries',budgetAmount:0,cadence:'monthly',rolloverPolicy:'rollover'}];
+          data.transactions=[['2024-01-04',41],['2024-01-18',55],['2024-02-02',47],['2024-02-16',36]]
+            .map((x,i)=>({id:'h'+i,date:x[0],type:'expense',amount:x[1],accountId:'eb',envelopeId:'e0',payee:'Corner Market',notes:''}));
+          activeView='reconcile';render();undoStack.length=0;redoStack.length=0;
+        }""")
+        # The statement agrees with the app (821); two card payments are held on top: the bank's available is 821 - 42 = 779.
+        csv = f"Date,Description,Amount,Balance\n{today},OPENING,0.01,821.01\n{today},OPENING BACK,-0.01,821.00\n"
+        def check(csv_text, holds, available):
+            p.evaluate(f"bankSetHolds('eb', {holds}); bankSetAvailable('eb', {available}, {821 - available})")
+            p.evaluate("bankImportStart('eb')")
+            p.locator('#bk_file').set_input_files({'name': 's.csv', 'mimeType': 'text/csv', 'buffer': csv_text.encode()})
+            p.wait_for_function('document.getElementById("bk_bal") && document.getElementById("bk_bal").value !== ""')
+            p.locator('#bk_go').click()
+            p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
+        holds1 = f"[{{date:'{today}',amount:-30,desc:'CORNER MARKET 12'}},{{date:'{today}',amount:-12,desc:'NEW KIOSK'}}]"
+        check(csv, holds1, 779)
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankPending).map(t=>[t.payee,t.amount,!!t.bankHoldRef,!!t.bankRef])"),
+                         [['Corner Market', 30, True, False]], 'the known one is booked as pending')
+        self.assertEqual(p.evaluate("data.bankQueue.filter(q=>q.status==='open').map(q=>[q.desc,!!q.hold])"), [['NEW KIOSK', True]])
+        self.assertTrue(p.evaluate("bankStatus(data.accounts[0]).ok"), 'pending entries stay out of the statement comparison')
+        # Decide the kiosk by hand: it is booked as pending too, and the app now equals the available balance.
+        p.evaluate("bankUseGuess(data.bankQueue.find(q=>q.desc==='NEW KIOSK').id)") if p.evaluate("!!(data.bankQueue.find(q=>q.desc==='NEW KIOSK').sug||{}).payee") else p.evaluate("""() => {
+          const q=data.bankQueue.find(q=>q.desc==='NEW KIOSK'); bankResolve(q.id); }""")
+        if p.evaluate("document.getElementById('modalBg').classList.contains('open')"):
+            p.locator('#t_save').click()
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankPending).length"), 2)
+        self.assertEqual(p.evaluate("bankStatus(data.accounts[0]).availDiff"), 0, 'the app today equals the bank\'s available balance')
+        self.assertIn('same', p.locator('#main').inner_text())
+        # Next run: the Corner Market payment settles (statement line), the kiosk hold disappears without a line.
+        csv2 = csv + f"{today},CORNER MARKET 12,-30.00,791.00\n"
+        check(csv2, "[]", 791)
+        settled = p.evaluate("data.transactions.find(t=>t.payee==='Corner Market'&&t.amount===30)")
+        self.assertTrue(settled.get('bankRef') and not settled.get('bankPending'), 'settled: an ordinary statement entry now')
+        self.assertTrue(p.evaluate("bankStatus(data.accounts[0]).ok"))
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankHoldGone).length"), 1, 'the kiosk hold is flagged, not deleted')
+        self.assertIn('no longer shows', p.locator('#main').inner_text())
+        p.locator('[data-bank-hold-delete]').click()
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankPending).length"), 0)
+        p.evaluate("performUndo()")
+        p.locator('[data-bank-hold-keep]').click()
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankHoldGone||t.bankPending).length"), 0, 'kept: an ordinary entry')
+
     def test_two_bank_files_make_one_app_account(self):
         """Decision #75: an app account that is the sum of two bank accounts takes two files, adds their balances, drops moves between them."""
         p = self.page

@@ -1246,7 +1246,7 @@ function bankApi() {
   const names = [
     "bankNormTokens", "bankDescKey", "bankDayDiff", "bankAddDays", "accountBalanceAsOf", "bankDecode", "bankSniffDelimiter",
     "bankGuessDateOrder", "bankHeaderKind", "bankDetectLayout", "bankGuessLayout", "bankParseStatement", "bankStatementEnd",
-    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements", "statementLinkOk", "bankTimeline", "bankBalanceAt", "bankStartPosition", "bankSuggestFrom", "bankBookingDate", "bankStatementNote",
+    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements", "statementLinkOk", "bankTimeline", "bankBalanceAt", "bankStartPosition", "bankSuggestFrom", "bankBookingDate", "bankStatementNote", "bankHoldRefs", "bankPendingNear", "bankPlanHolds",
     "txAccountDelta", "accountById", "envelopeById", "parseCSV", "parseImportAmount", "parseImportDate", "plural",
   ];
   const bundle = [
@@ -1510,6 +1510,40 @@ if (bank) {
     deepEq(empty.bankQueue, []);
   });
 
+  check("Held card payments: refs, pending entries left out of the comparison until settled, released and typed-in ones found", () => {
+    const refs = bank.bankHoldRefs([
+      { date: "2026-11-08", amount: -8.94, desc: "IOLIDA GP" }, { date: "2026-11-07", amount: -8.97, desc: "IOLIDA  GP" },
+      { date: "2026-11-07", amount: -8.97, desc: "IOLIDA GP" }, { date: "bad", amount: -1, desc: "x" }, { date: "2026-11-07", amount: 0, desc: "zero" },
+    ], "eb");
+    deepEq(refs.map((r) => r.date), ["2026-11-07", "2026-11-07", "2026-11-08"], "sorted, junk and zero amounts dropped");
+    assert.notEqual(refs[0].ref, refs[1].ref, "two identical held payments stay two");
+    assert.ok(refs.every((r) => r.ref.startsWith("hold|eb|")));
+    // A pending entry is not in the bank's ledger balance: left out of the comparison unless a statement line settles it.
+    seed([
+      ...history(5),
+      mkTx("p1", "2026-11-06", "expense", 20, "Shop A", "groc", { bankPending: true, bankHoldRef: "hold|eb|2026-11-06|-2000|shop a|0", bankDesc: "SHOP A" }),
+      mkTx("p2", "2026-11-05", "expense", 7, "Old hold", "groc", { bankPending: true, bankHoldRef: "hold|eb|2026-11-05|-700|old hold|0" }),
+      mkTx("p3", "2026-11-04", "expense", 50, "Hotel", "groc", { bankPending: true, bankHoldRef: "hold|eb|2026-11-04|-5000|hotel|0", bankDesc: "HOTEL ATHENS" }),
+      mkTx("hand", "2026-11-07", "expense", 9.5, "Bakery", "groc"),
+    ]);
+    const acc = bank.accountById("eb");
+    const base = 1000 - [40, 41, 42, 43, 44].reduce((a, b) => a + b, 0) - 9.5;
+    assert.equal(Math.round(bank.accountBalanceAsOf(acc, "2026-11-08") * 100) / 100, Math.round(base * 100) / 100, "pending entries left out");
+    const lines = stmt([["2026-11-07", "SHOP A", -20, null], ["2026-11-07", "HOTEL ATHENS", -55, null]]);
+    const plan = bank.bankPlan("eb", { skipped: 0, rows: lines }, 0, "2026-11-08", {
+      holds: [{ date: "2026-11-07", amount: -9.5, desc: "BAKERY" }, { date: "2026-11-08", amount: -45, desc: "POS SKLAVENITIS" }, { date: "2026-11-08", amount: -3, desc: "KIOSK" }] });
+    deepEq([...plan.settledIds], ["p1"], "the statement line settles the matching pending entry");
+    assert.equal(plan.appBal, Math.round((base - 20) * 100) / 100, "and the settled one counts in the comparison");
+    const hotel = plan.missing.find((x) => x.row.desc === "HOTEL ATHENS");
+    assert.equal(hotel.auto, false, "a held payment settling for a different amount is not booked on top of it");
+    assert.equal(hotel.sug.pendingId, "p3");
+    deepEq(plan.holds.fresh.map((x) => [x.hold.desc, x.auto]), [["POS SKLAVENITIS", true], ["KIOSK", false]], "known payee booked, unknown queued");
+    deepEq(plan.holds.typed.map((p) => p.tx.id), ["hand"], "a payment already typed in is not booked twice");
+    deepEq(plan.holds.released.map((t) => t.id).sort(), ["p2", "p3"], "pending entries the bank no longer holds and no line settled");
+    assert.equal(plan.holds.sum, -57.5);
+    assert.equal(bank.bankPendingNear({ date: "2026-11-07", amount: -80, desc: "HOTEL ATHENS" }, [bank.getData().transactions.find((t) => t.id === "p3")], "eb"), null, "more than 15% apart: not the same payment");
+  });
+
   check("A statement line dated after today is booked today, with the bank's date in the note", () => {
     assert.equal(bank.bankBookingDate("2026-11-09"), "2026-11-08", "tomorrow (the bank's next working day) becomes today");
     assert.equal(bank.bankBookingDate("2026-11-08"), "2026-11-08");
@@ -1544,7 +1578,7 @@ if (bank) {
   });
 
   check("The transaction form keeps a statement line's identity when it is edited", () => {
-    assert.match(mainInlineScript(app), /for \(const k of \['bankRef', 'bankDesc', 'source'\]\) if \(tx\[k\]\) out\[k\] = tx\[k\];/);
+    assert.match(mainInlineScript(app), /for \(const k of \['bankRef', 'bankDesc', 'source', 'bankPending', 'bankHoldRef', 'bankHoldGone'\]\) if \(tx\[k\]\) out\[k\] = tx\[k\];/);
     assert.match(mainInlineScript(app), /bankNoteDeleted\(\[tx\]\);\s*data\.transactions = data\.transactions\.filter/, "single delete remembers the line");
   });
 }

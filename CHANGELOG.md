@@ -40,6 +40,19 @@ because those are the ones worth re-checking your own figures after.
   (nothing from the request; header-guarded; one run at a time; a cooldown between runs), the task
   reports progress in a small status file, and the page follows it and loads the saved result.
   Off unless `FETCH_TASK` is set.
+  **Available balance and card holds.** A downloader can also hand over the bank's *available*
+  balance (ledger less card payments the bank holds but has not settled), shown next to the
+  statement balance, and the list of held payments itself (`bankSetHolds`). On Compare each
+  held payment becomes a **pending** entry (booked by the same 90% rule, otherwise waiting on the
+  Reconcile page marked *held*), so the app's balance today follows the bank's available balance,
+  while the statement comparison leaves pending entries out until the bank settles them. When the
+  statement line arrives for the same amount the pending entry becomes an ordinary one; a line that
+  settles for a different amount is never booked by itself but waits on the Reconcile page naming
+  the held entry it probably settles; a hold the bank drops without a line is listed under *Held payments the bank no longer
+  shows* with Delete and Keep. A pending entry typed by hand is found too, and a list that does not
+  arrive (or does not add up) leaves every pending entry as it was. Statement lines dated after
+  today (a bank dates weekend card payments to its next working day) are booked on today's date,
+  with the bank's date in the notes.
   Nothing leaves the machine. The fields are additive (`account.bank`, `data.bankQueue`, and
   `bankRef` / `bankDesc` / `bankAuto` / `source: 'statement'` on a transaction): no schema bump.
 - **Navigation and page-title icons.** Each view's tab, its phone-dock button and the
