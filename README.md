@@ -100,6 +100,7 @@ The in-app **Help** tab explains the concepts (accounts vs envelopes vs spendabl
 - **Reports**: cash flow by month, spending by envelope and by tag.
 - **Split transactions** across several envelopes.
 - **CSV import** of bank statements with a column-mapping wizard, saved profiles, duplicate detection and a review step.
+- **Reconcile with the bank.** Give the Reconcile tab a statement (a CSV file or a pasted table, Greek or English headers) and it reads the bank's closing balance and compares it with the app's balance on that date. If they differ it looks for the statement lines the app does not have: lines your earlier entries make at least 90% certain are added at once (one Ctrl+Z undoes the run), and the rest wait on the Reconcile page with their amounts, where you split each across envelopes and tags by hand. A line is never added twice, nothing changes while the balances agree, and the statement never leaves your machine.
 - **Net-worth history** with automatic daily snapshots and manual backfill; investment accounts with a value-update button.
 - **Undo** (Ctrl/Cmd-Z) and redo (Ctrl-Y) for every destructive action, an amount field that accepts arithmetic (`2380,50-100`), keyboard shortcuts, dark / light / auto theme.
 - **Finding things**: the Transactions tab filters by type, account, envelope, tag and date range, totals what it shows, and can bulk-tag, re-envelope or delete the rows you tick. Click any account or envelope name to jump to its transactions.

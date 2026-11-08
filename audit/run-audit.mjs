@@ -1236,6 +1236,232 @@ check("Manifest is fetched with credentials and offers the quick-add shortcuts",
   for (const u of urls) assert.ok(types[1].includes(`'${new URLSearchParams(u.slice(2)).get('add')}'`), `${u} names a type ?add= does not accept`);
 });
 
+// ------------------------------------------------ 4b. bank reconciliation (decision #75)
+
+function bankApi() {
+  const source = mainInlineScript(app);
+  const start = source.indexOf("const BANK_AUTO_CONF");
+  const end = source.indexOf("// Bank descriptions are noisy");
+  if (start < 0 || end < start) throw new Error("bank constants block not found");
+  const names = [
+    "bankNormTokens", "bankDescKey", "bankDayDiff", "bankAddDays", "accountBalanceAsOf", "bankDecode", "bankSniffDelimiter",
+    "bankGuessDateOrder", "bankHeaderKind", "bankDetectLayout", "bankGuessLayout", "bankParseStatement", "bankStatementEnd",
+    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank",
+    "txAccountDelta", "accountById", "envelopeById", "parseCSV", "parseImportAmount", "parseImportDate", "plural",
+  ];
+  const bundle = [
+    "var data = null; var __due = [];",
+    "const BOOKKEEPING_PAYEES = new Set(['Envelope refill', 'Close-out adjustment', 'Close-out sweep', 'Market adjustment', 'Move to reserve']);",
+    "const RETURN_PAYEE = 'Return to spendable';",
+    "const SCENARIO_ID_RE = /^[A-Za-z0-9_\\-]{1,80}$/;",
+    "const dueRecurringOccurrences = () => __due;",
+    source.slice(start, end),
+    ...names.map((name) => extractFunction(source, name)),
+    `globalThis.__bank = { ${names.join(",")}, setData(v) { data = v; }, getData() { return data; }, setDue(v) { __due = v; }, BANK_AUTO_CONF, BANK_MAX_AUTO };`,
+  ].join("\n\n");
+  const context = vm.createContext({ console, Date, Math, isFinite, isNaN, TextDecoder, Uint8Array, Set, Map });
+  vm.runInContext(bundle, context, { filename: "pocket-envelopes-bank.js" });
+  return context.__bank;
+}
+
+let bank;
+try { bank = bankApi(); pass("Bank harness loads the reconciliation functions"); }
+catch (error) { fail("Bank harness loads the reconciliation functions", error.message); }
+
+if (bank) {
+  // Objects built inside the vm context have another realm's prototypes; compare their JSON.
+  const deepEq = (a, b, msg) => assert.deepStrictEqual(JSON.parse(JSON.stringify(a)), b, msg);
+  const acct = { id: "eb", name: "eurobank", openingBalance: 1000, type: "checking" };
+  const mkTx = (id, date, type, amount, payee, envelopeId, extra = {}) =>
+    ({ id, date, type, amount, accountId: "eb", envelopeId, payee, notes: "", ...extra });
+  const seed = (txs) => bank.setData({ accounts: [acct, { id: "w", name: "wallet", openingBalance: 0 }],
+    envelopes: [{ id: "groc", name: "Groceries" }, { id: "fun", name: "Fun" }], transactions: txs, recurring: [], bankQueue: [] });
+  const stmt = (rows) => rows.map(([date, desc, amount, balance], i) => ({ date, desc, amount, balance: balance ?? null, ref: `eb|${date}|${Math.round(amount * 100)}|${bank.bankDescKey(desc)}|${i}` }));
+
+  check("Bank descriptions are compared by cleaned words: accents, digits, case and filler are ignored", () => {
+    assert.equal(bank.bankDescKey("POS 4821 ΣΚΛΑΒΕΝΊΤΗΣ ΑΘΗΝΑ 03/11"), bank.bankDescKey("Σκλαβενίτης αθηνα"));
+    assert.equal(bank.bankDescKey("CARD PURCHASE LIDL 1234"), "lidl");
+    assert.equal(bank.bankDescKey("12/11 5"), "");
+  });
+
+  check("A Greek semicolon export with a preamble, debit/credit and balance columns is detected and parsed", () => {
+    const text = [
+      "Λογαριασμός;GR1234567890;;;;", "Περίοδος;01/11/2026 - 05/11/2026;;;;",
+      "Ημερομηνία;Αιτιολογία;Χρέωση;Πίστωση;Υπόλοιπο",
+      "05/11/2026;ΜΙΣΘΟΔΟΣΙΑ;;1.500,00;2.480,00",
+      "03/11/2026;POS ΣΚΛΑΒΕΝΙΤΗΣ ΑΘΗΝΑ;45,30;;980,00",
+      "03/11/2026;POS ΣΚΛΑΒΕΝΙΤΗΣ ΑΘΗΝΑ;45,30;;1.025,30",
+      "Σύνολο;;90,60;1.500,00;",
+    ].join("\n");
+    assert.equal(bank.bankSniffDelimiter(text), ";");
+    const rows = bank.parseCSV(text, ";");
+    const layout = bank.bankDetectLayout(rows);
+    assert.equal(layout.headerIdx, 2);
+    assert.equal(layout.mode, "dc");
+    deepEq(layout.map, { date: 0, desc: 1, amount: -1, debit: 2, credit: 3, balance: 4 });
+    assert.equal(bank.bankGuessDateOrder(rows.slice(3).map((r) => r[0])), "dmy");
+    const parsed = bank.bankParseStatement(rows, layout, "dmy", "eb");
+    assert.equal(parsed.rows.length, 3, "the totals row has no date and is ignored");
+    assert.equal(parsed.skipped, 1);
+    deepEq(parsed.rows.map((r) => r.amount), [1500, -45.3, -45.3]);
+    assert.notEqual(parsed.rows[1].ref, parsed.rows[2].ref, "two identical lines on one day stay two lines");
+    const endBal = bank.bankStatementEnd(parsed.rows);
+    deepEq({ ...endBal }, { balance: 2480, asOf: "2026-11-05" }, "newest-first file: the first line of the latest day");
+  });
+
+  check("An English signed-amount export, oldest first, ends on its last line", () => {
+    const text = "Date,Description,Amount,Balance\n2026-11-01,Coffee,-3.50,996.50\n2026-11-02,Salary,2000.00,2996.50\n";
+    const rows = bank.parseCSV(text, bank.bankSniffDelimiter(text));
+    const layout = bank.bankDetectLayout(rows);
+    assert.equal(layout.mode, "single");
+    assert.equal(bank.bankGuessDateOrder(rows.slice(1).map((r) => r[0])), "ymd");
+    const parsed = bank.bankParseStatement(rows, layout, "ymd", "eb");
+    deepEq({ ...bank.bankStatementEnd(parsed.rows) }, { balance: 2996.5, asOf: "2026-11-02" });
+  });
+
+  check("Without a header row the columns are guessed from the cells", () => {
+    const text = "01/11/2026;Coffee shop;-3,50\n02/11/2026;Salary;2.000,00\n03/11/2026;Rent;-600,00\n04/11/2026;Gym;-30,00\n";
+    const rows = bank.parseCSV(text, ";");
+    assert.equal(bank.bankDetectLayout(rows), null);
+    const layout = bank.bankGuessLayout(rows);
+    assert.equal(layout.mode, "single");
+    assert.equal(layout.map.date, 0);
+    assert.equal(layout.map.amount, 2);
+    const parsed = bank.bankParseStatement(rows, layout, "dmy", "eb");
+    deepEq(parsed.rows.map((r) => r.amount), [-3.5, 2000, -600, -30]);
+  });
+
+  check("A Greek file saved as windows-1253 is decoded", () => {
+    const bytes = Uint8Array.from([0xC1, 0xE8, 0xDE, 0xED, 0xE1]);   // "Αθήνα" in windows-1253
+    assert.equal(bank.bankDecode(bytes.buffer), "Αθήνα");
+    assert.equal(bank.bankDecode(Uint8Array.from([0xEF, 0xBB, 0xBF, 0x41]).buffer), "A", "UTF-8 BOM is dropped");
+  });
+
+  check("Statement lines pair with app entries of the same effect: exact refs first, then amount within a few days", () => {
+    seed([
+      mkTx("t1", "2026-11-03", "expense", 45.3, "Sklavenitis", "groc"),
+      mkTx("t2", "2026-11-04", "income", 1500, "Salary", null),                       // booked a day before the bank
+      mkTx("t3", "2026-11-10", "expense", 9.99, "Netflix", "fun"),                    // far from any line
+      mkTx("t4", "2026-11-02", "expense", 20, "Known", "groc", { bankRef: "eb|2026-11-02|-2000|known|0" }),
+    ]);
+    const rows = stmt([["2026-11-03", "POS SKLAVENITIS", -45.3], ["2026-11-05", "MISTHODOSIA", 1500], ["2026-11-02", "Known", -20], ["2026-11-04", "NEW SHOP", -12.5]]);
+    rows[2].ref = "eb|2026-11-02|-2000|known|0";
+    const m = bank.bankMatchRows("eb", rows, "2026-11-05");
+    deepEq(m.matched.map((x) => [x.tx.id, x.by]).sort(), [["t1", "amount"], ["t2", "amount"], ["t4", "ref"]]);
+    deepEq(m.missing.map((r) => r.desc), ["NEW SHOP"]);
+    assert.equal(m.appOnly.length, 0, "t3 is dated after the statement window");
+  });
+
+  check("Two identical lines need two app entries; the closest date wins and an entry is used once", () => {
+    seed([mkTx("a", "2026-11-03", "expense", 5, "Coffee", "fun"), mkTx("b", "2026-11-04", "expense", 5, "Coffee", "fun")]);
+    const rows = stmt([["2026-11-04", "COFFEE", -5], ["2026-11-04", "COFFEE", -5], ["2026-11-04", "COFFEE", -5]]);
+    const m = bank.bankMatchRows("eb", rows, "2026-11-04");
+    assert.equal(m.matched.length, 2);
+    assert.equal(m.missing.length, 1);
+    assert.equal(m.matched.find((x) => x.tx.id === "b").row, rows[0], "the same-day entry pairs before the day-before one");
+  });
+
+  const history = (n, over = {}) => Array.from({ length: n }, (_, i) =>
+    mkTx("h" + i, `2026-0${1 + (i % 9)}-10`, "expense", 40 + i, "Sklavenitis", "groc", over));
+
+  check("Confidence: four consistent entries reach 90%; fewer, mixed, wrong-direction or machine-made history does not", () => {
+    const sug = (txs, row, due = []) => { seed(txs); return bank.bankSuggest(row, "eb", bank.bankHistoryIndex(), due); };
+    const line = stmt([["2026-11-03", "POS SKLAVENITIS ATHINA", -45]])[0];
+    const four = sug(history(4), line);
+    assert.ok(four.conf >= 0.9, `four consistent: ${four.conf}`);
+    assert.equal(four.envelopeId, "groc");
+    assert.equal(four.payee, "Sklavenitis");
+    assert.ok(sug(history(3), stmt([["2026-11-03", "SKLAVENITIS", -45]])[0]).conf >= 0.9, "three entries under the exact name: 0.96");
+    assert.ok(sug(history(3), line).conf < 0.9, "three entries under a similar name only: 0.86");
+    assert.ok(sug(history(2), line).conf < 0.9, "two entries are not enough");
+    const mixed = history(4); mixed[0].envelopeId = "fun"; mixed[1].envelopeId = "fun";
+    assert.ok(sug(mixed, line).conf < 0.9, "half agree");
+    assert.equal(sug(history(5), stmt([["2026-11-03", "SKLAVENITIS", 45]])[0]).conf, 0, "history is expense, the line is income");
+    assert.equal(sug(history(5, { bankAuto: true }), line).conf, 0, "lines the app booked by itself are not history");
+    assert.ok(sug(history(4), stmt([["2026-11-03", "SKLAVENITIS", -900]])[0]).conf < 0.9, "an unusual amount lowers it");
+    assert.equal(sug([], line).conf, 0);
+    const split = history(5); split.forEach((t) => { t.splits = [{ envelopeId: "groc", amount: 20 }, { envelopeId: "fun", amount: 20 }]; t.envelopeId = null; });
+    assert.ok(sug(split, line).conf < 0.9, "usually-split payees are never auto-booked");
+  });
+
+  check("A line that matches a due recurring entry is never auto-booked", () => {
+    seed(history(6));
+    const due = [{ rec: { type: "expense", name: "Gym", accountId: "eb" }, date: "2026-11-03", amount: 45 }];
+    const s = bank.bankSuggest(stmt([["2026-11-03", "SKLAVENITIS", -45]])[0], "eb", bank.bankHistoryIndex(), due);
+    assert.equal(s.rec, "Gym");
+    assert.ok(s.conf <= 0.5);
+  });
+
+  check("Plan: balanced books nothing; a gap splits sure lines from queued ones and the arithmetic closes", () => {
+    seed([
+      ...history(5),
+      mkTx("x1", "2026-11-02", "expense", 10, "Bakery", "groc"),
+      mkTx("x2", "2026-11-01", "expense", 7, "Matched", "groc"),
+      mkTx("y", "2026-11-04", "expense", 3, "AppOnlyThing", "fun"),
+    ]);
+    const parsed = { skipped: 0, rows: stmt([
+      ["2026-11-01", "MATCHED", -7], ["2026-11-02", "BAKERY", -10],
+      ["2026-11-03", "POS SKLAVENITIS", -50],          // known payee: auto
+      ["2026-11-04", "UNKNOWN KIOSK", -8.25],          // unknown: queue
+    ]) };
+    const appBal = bank.accountBalanceAsOf(bank.accountById("eb"), "2026-11-04");
+    const bankBal = appBal - 50 - 8.25 + 3;            // the bank lacks the 3.00 entry the app has
+    const plan = bank.bankPlan("eb", parsed, bankBal, "2026-11-04");
+    assert.equal(plan.balanced, false);
+    deepEq(plan.auto.map((x) => x.row.desc), ["POS SKLAVENITIS"]);
+    deepEq(plan.queue.map((x) => x.row.desc), ["UNKNOWN KIOSK"]);
+    assert.equal(plan.appOnly.length, 1);
+    assert.equal(plan.appOnlySum, -3);
+    assert.equal(plan.missingSum, -58.25);
+    assert.equal(plan.unexplained, 0, "gap = missing − appOnly leaves nothing unexplained");
+    assert.equal(plan.willAuto, true);
+    const flat = bank.bankPlan("eb", parsed, appBal, "2026-11-04");
+    assert.equal(flat.balanced, true);
+    assert.equal(flat.willAuto, false, "agreeing balances never auto-book");
+    const off = bank.bankPlan("eb", parsed, bankBal + 11, "2026-11-04");
+    assert.equal(off.unexplained, 11, "what no line explains stays visible");
+    // A line an earlier check queued or dismissed is not in the app and explains its share of the gap.
+    bank.getData().bankQueue.push({ id: "q", accountId: "eb", date: "2026-11-03", amount: -50, desc: "POS SKLAVENITIS", ref: parsed.rows[2].ref, status: "dismissed" });
+    const again = bank.bankPlan("eb", parsed, bankBal, "2026-11-04");
+    assert.equal(again.queuedAlready.length, 1);
+    assert.equal(again.missing.length, 1, "the dismissed line is not offered again");
+    assert.equal(again.unexplained, 0);
+  });
+
+  check("Plan: a statement that matches almost nothing is held, not booked", () => {
+    seed([...history(5)]);
+    const rows = Array.from({ length: 10 }, (_, i) => [`2026-11-0${(i % 8) + 1}`, "POS SKLAVENITIS", -(50 + i)]);
+    const plan = bank.bankPlan("eb", { skipped: 0, rows: stmt(rows) }, 5000, "2026-11-08");
+    assert.ok(plan.holdReason, "hold reason set");
+    assert.equal(plan.willAuto, false);
+  });
+
+  check("Loading a file keeps valid bank fields and drops unreadable ones", () => {
+    const raw = {
+      accounts: [{ id: "a", bank: { balance: 10, asOf: "2026-11-01", lastRun: { rows: 1 } } }, { id: "b", bank: { balance: "x", asOf: "2026-11-01" } }, { id: "c", bank: { balance: 1, asOf: "nope" } }],
+      bankQueue: [
+        { id: "q1", accountId: "a", date: "2026-11-01", amount: -5, desc: "ok", ref: "r1", status: "open", sug: { conf: 0.5, payee: "P" } },
+        { id: "q2", accountId: "ghost", date: "2026-11-01", amount: -5, ref: "r2" },
+        { id: "q3", accountId: "a", date: "11/01", amount: -5, ref: "r3" },
+        { id: "q4", accountId: "a", date: "2026-11-01", amount: "5", ref: "r4" },
+        { id: "bad id!", accountId: "a", date: "2026-11-01", amount: 5, ref: "r5" },
+        null,
+      ],
+    };
+    bank.sanitizeBank(raw);
+    assert.ok(raw.accounts[0].bank && !raw.accounts[1].bank && !raw.accounts[2].bank);
+    deepEq(raw.bankQueue.map((q) => q.id), ["q1"]);
+    assert.equal(raw.bankQueue[0].status, "open");
+    const empty = { accounts: [] }; bank.sanitizeBank(empty);
+    deepEq(empty.bankQueue, []);
+  });
+
+  check("The transaction form keeps a statement line's identity when it is edited", () => {
+    assert.match(mainInlineScript(app), /for \(const k of \['bankRef', 'bankDesc', 'source'\]\) if \(tx\[k\]\) out\[k\] = tx\[k\];/);
+    assert.match(mainInlineScript(app), /bankNoteDeleted\(\[tx\]\);\s*data\.transactions = data\.transactions\.filter/, "single delete remembers the line");
+  });
+}
+
 // ---------------------------------------------------------- 5. serve.py
 
 {

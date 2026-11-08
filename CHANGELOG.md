@@ -7,6 +7,25 @@ because those are the ones worth re-checking your own figures after.
 
 ## Unreleased
 
+- **Reconcile with the bank.** A new **Reconcile** tab compares an account with a bank statement.
+  *Check a statement* takes a CSV file or a pasted table (headers found in English or Greek,
+  `;` / tab / `,` separators, European decimals, windows-1253 files, a preamble above the header,
+  debit/credit or signed-amount columns), reads the closing balance from its running-balance column
+  (or asks for it), and compares it with the app's balance **as of the statement date**. The bank's
+  balance then shows on the Accounts tab, the Dashboard's pinned strip and a Needs-attention row.
+  When the balances differ, every statement line the app cannot pair with an entry (same signed
+  effect on the account, closest date within four days) is classified from your own history:
+  lines at least 90% certain are booked automatically in one undo step, the others wait on the
+  Reconcile page with their amount, a best guess and the reason, and *Reconcile…* opens the normal
+  transaction form with the bank line filled in (so *Split across envelopes…* is there). Safeguards:
+  nothing is booked while the balances agree; a line that matches a due recurring entry is never
+  auto-booked; a statement that matches almost nothing already in the app is held for a decision;
+  a line is never offered twice (each booked or queued line keeps its identity, and deleting a
+  statement-booked entry remembers it as dismissed). The 90% rule, run leave-one-out over the
+  history of one real account, would have booked about a fifth of its entries, nine in ten
+  of them with the right envelope and tag.
+  Nothing leaves the machine. The fields are additive (`account.bank`, `data.bankQueue`, and
+  `bankRef` / `bankDesc` / `bankAuto` / `source: 'statement'` on a transaction): no schema bump.
 - **Navigation and page-title icons.** Each view's tab, its phone-dock button and the
   heading on its page now carry a small ink icon that follows the theme's text colour.
   The icons are inlined in the page, so there are no new files or requests. They are

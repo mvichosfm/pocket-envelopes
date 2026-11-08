@@ -1109,6 +1109,30 @@
   main[data-view] .page-heading h2 { display: flex; align-items: center; gap: .32em; }
   main[data-view] .page-heading h2::before { width: .9em; height: .9em; }
   @media (max-width: 1180px) { nav.tabs button[data-view]::before { display: none; } }
+
+  /* Bank reconciliation (decision #75). Reuses the app's tokens and badge classes. */
+  [data-view="reconcile"] { --view-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M8 12.5l2.8 2.8 5.4-5.8'/%3E%3C/svg%3E"); }
+  .bank-line { margin-top: 3px; line-height: 1.7; }
+  .bank-line a { margin-left: 6px; }
+  .bank-conf { margin-right: 6px; font-variant-numeric: tabular-nums; }
+  .bank-sum { width: 100%; }
+  .bank-sum td { padding: 5px 0; border-bottom: 1px solid var(--border); }
+  .bank-sum tr:last-child td { border-bottom: 0; }
+  .bank-list { margin: 8px 0 0; padding-left: 18px; line-height: 1.8; }
+  .bank-run + .bank-run { margin-top: 14px; }
+  .bank-queue td { vertical-align: top; }
+  /* A phone cannot fit five columns: restack each row as a labelled block (same approach as the close-out table). */
+  @media (max-width: 720px) {
+    .bank-queue thead { display: none; }
+    .bank-queue, .bank-queue tbody, .bank-queue tr, .bank-queue td { display: block; width: 100%; }
+    .bank-queue tr { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .bank-queue tr:last-child { border-bottom: 0; }
+    .bank-queue td { padding: 3px 0; border: 0; text-align: left !important; white-space: normal !important; }
+    .bank-queue td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; color: var(--text-dim); }
+    .bank-queue td.num { font-variant-numeric: tabular-nums; }
+    .bank-queue .actions { margin-top: 8px; }
+    .bank-queue .actions .btn { margin: 2px 6px 2px 0; }
+  }
 </style>
 </head>
 <body>
@@ -1149,6 +1173,7 @@
       <button data-view="envelopes">Envelopes</button>
       <button data-view="transactions">Transactions</button>
       <button data-view="accounts">Accounts</button>
+      <button data-view="reconcile">Reconcile</button>
       <button data-view="recurring">Recurring</button>
     </div>
     <div class="nav-group" role="group" aria-label="Analysis">
@@ -1256,6 +1281,7 @@ function emptyData() {
     forecastProfiles: [],  // [{id, name, accountIds, days, chartLines, includeAllowances, assumeRefill?, showSpendable}]
     importProfiles: [],    // [{id, name, delimiter, hasHeader, dateOrder, amountMode, map:{date,desc,amount,debit,credit}, accountId}] — CSV import
     scenarios: [],         // [{id, name, active, appliedOn?, envSkips:[{id, envelopeId, from, months, pause}], recSkips:[{id, recId, from, months}]}] — Scenarios page (decision #66)
+    bankQueue: [],         // [{id, accountId, date, amount (signed), desc, ref, status:'open'|'dismissed', sug?, note?}] — statement lines awaiting a decision (decision #75)
     defaultForecastProfileId: null,  // id of the profile auto-applied on session start; null = no default
     lastClosedMonth: null  // "YYYY-MM" of the most recent month the user has closed-out via the review flow; null = never closed
   };
@@ -1331,7 +1357,7 @@ async function loadFromServer() {
 function validateData(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return ['not a Pocket Envelopes data object'];
   const problems = [];
-  const arrayKeys = ['accounts', 'envelopes', 'transactions', 'recurring', 'netWorthSnapshots', 'forecastProfiles', 'importProfiles', 'scenarios'];
+  const arrayKeys = ['accounts', 'envelopes', 'transactions', 'recurring', 'netWorthSnapshots', 'forecastProfiles', 'importProfiles', 'scenarios', 'bankQueue'];
   for (const k of arrayKeys) if (raw[k] !== undefined && !Array.isArray(raw[k])) problems.push(`"${k}" is not a list`);
   if (raw.settings !== undefined && (typeof raw.settings !== 'object' || raw.settings === null || Array.isArray(raw.settings))) problems.push('"settings" is not an object');
   if (raw.settings && raw.settings.tags !== undefined && !Array.isArray(raw.settings.tags)) problems.push('"settings.tags" is not a list');
@@ -1500,6 +1526,7 @@ function migrate(raw) {
     delete p.onlyTotal;
   }
   sanitizeScenarios(raw);
+  sanitizeBank(raw);   // decision #75: account.bank and the statement queue
   return raw;
 }
 
@@ -3694,6 +3721,7 @@ function render() {
     switch (activeView) {
       case "dashboard": main.innerHTML = renderDashboard(); bindDashboard(); break;
       case "accounts": main.innerHTML = renderAccounts(); bindAccounts(); break;
+      case "reconcile": main.innerHTML = renderReconcile(); bindReconcile(); break;
       case "envelopes": main.innerHTML = renderEnvelopes(); bindEnvelopes(); break;
       case "transactions": main.innerHTML = renderTransactions(); bindTransactions(); break;
       case "recurring": main.innerHTML = renderRecurring(); bindRecurring(); break;
@@ -3917,6 +3945,7 @@ function renderDashboard() {
   const dueTotal = due.reduce((s, u) =>
     s + (u.rec.type === 'expense' ? -u.amount : (u.rec.type === 'income' ? u.amount : 0)), 0);
 
+  const bankAttn = bankAttention();   // accounts whose bank balance differs from the app, or with lines to decide (decision #75)
   const closeYM = closeOutDue();
   const closeMonthLabel = closeYM ? (() => {
     const [y, m] = closeYM.split('-').map(Number);
@@ -3942,8 +3971,10 @@ function renderDashboard() {
     <p class="hero-note">The projection includes due entries still to be recorded${forecastOpts().includeAllowances && forecastOpts().assumeRefill ? ' and assumes Fund the month refills every budgeted envelope on the 1st, so money set aside stays set aside' : ' and assumes no new envelope funding'}. Fund the month previews a funding proposal${dashReserve && !dashReserve.archived ? `; Fund reserve sets the projected low aside in ${esc(dashReserve.name)}` : ''}.</p>`
       : '<p class="muted">Select accounts in Forecast to see your available cash and projection.</p>'}
   </section>
-  ${(closeYM || due.length) ? `<section class="card attention-panel" aria-label="Needs attention">
-    <div class="section-heading"><h3>Needs attention</h3><span class="muted">${(closeYM ? 1 : 0) + (due.length ? 1 : 0)} to review</span></div>
+  ${(closeYM || due.length || bankAttn.length) ? `<section class="card attention-panel" aria-label="Needs attention">
+    <div class="section-heading"><h3>Needs attention</h3><span class="muted">${(closeYM ? 1 : 0) + (due.length ? 1 : 0) + (bankAttn.length ? 1 : 0)} to review</span></div>
+    ${bankAttn.length ? `<div class="attention-row"><span class="status-label due">Bank</span><div class="attention-copy"><strong>${bankAttn.map(({ a, s }) => `${esc(a.name)} ${s.ok ? 'matches the bank' : 'is ' + fmt(Math.abs(s.diff)) + (s.diff > 0 ? ' below' : ' above') + ' the bank'}`).join('; ')}</strong>
+      <span>${(() => { const n = bankAttn.reduce((t, x) => t + x.s.open, 0); return n ? `${plural(n, 'statement line')} to decide` : 'Check a newer statement to find what is missing'; })()}</span></div><button class="btn" id="bankReview">Reconcile</button></div>` : ''}
     ${closeYM ? `<div class="attention-row"><span class="status-label">Month end</span><div class="attention-copy"><strong>Close out ${esc(closeMonthLabel)}</strong><span>Review leftovers and each envelope's rollover, reset or sweep policy.</span></div><button class="btn" id="closeOutBtn">Review ${esc(closeMonthLabel)}</button></div>` : ''}
     ${due.length ? `<div class="attention-row"><span class="status-label due">Due</span><div class="attention-copy"><strong>${plural(due.length, 'recurring entry', 'recurring entries')} to record</strong>
       <span>${due.slice(0, 3).map(u => esc(u.rec.name)).join(', ')}${due.length > 3 ? ` and ${due.length - 3} more` : ''}${dueTotal ? ` · net ${fmt(dueTotal)}` : ''}
@@ -3991,7 +4022,7 @@ function renderDashboard() {
             <a href="#" class="drill" data-tx-acc="${a.id}" title="Show this account's transactions">${esc(a.name)}</a>
             ${a.type ? `<span style="color:var(--text-dim);font-size:.85em;margin-left:6px;">${esc(a.type)}</span>` : ''}
           </td>
-          <td class="num ${accountBalanceClass(a, b)}">${accountLimitTag(a, b)}<strong>${fmt(b)}</strong></td>
+          <td class="num ${accountBalanceClass(a, b)}">${accountLimitTag(a, b)}<strong>${fmt(b)}</strong>${bankStatusLine(a)}</td>
         </tr>`).join('')}</tbody>
       </table>
     </div>` : ''}
@@ -4040,6 +4071,9 @@ function bindDashboard() {
     if (n > 0) toast(`Applied ${n} recurring ${n === 1 ? 'entry' : 'entries'}`, 5000, 'success', { label: 'Undo', onClick: performUndo });
     render();
   };
+  const bankBtn = document.getElementById("bankReview");
+  if (bankBtn) bankBtn.onclick = () => navigateToView('reconcile');
+  wireBankLinks(document.getElementById('main'));
   const review = document.getElementById("dueReview");
   if (review) review.onclick = () => showDueReview();
   const closeBtn = document.getElementById("closeOutBtn");
@@ -4375,7 +4409,7 @@ function renderAccounts() {
           <td>${esc(a.type || '')}</td>
           <td>${esc(a.owner || '')}</td>
           <td class="num">${fmt(a.openingBalance || 0)}</td>
-          <td class="num ${accountBalanceClass(a, b)}">${accountLimitTag(a, b)}<strong>${fmt(b)}</strong>${Math.abs(sched) >= 0.005 ? `<div class="micro" title="Net of transactions dated after today, which the balance excludes">${sched > 0 ? '+' : ''}${fmt(sched)} scheduled</div>` : ''}</td>
+          <td class="num ${accountBalanceClass(a, b)}">${accountLimitTag(a, b)}<strong>${fmt(b)}</strong>${Math.abs(sched) >= 0.005 ? `<div class="micro" title="Net of transactions dated after today, which the balance excludes">${sched > 0 ? '+' : ''}${fmt(sched)} scheduled</div>` : ''}${bankStatusLine(a)}</td>
           <td class="actions">
             <button class="btn sm" data-edit="${a.id}">Edit</button>
             ${a.isInvestment ? `<button class="btn sm" data-update="${a.id}">Update value</button>` : ''}
@@ -4417,6 +4451,7 @@ function bindAccounts() {
   document.querySelectorAll("[data-archive]").forEach(b => b.onclick = () => archiveAccount(b.dataset.archive));
   document.querySelectorAll("[data-unarchive]").forEach(b => b.onclick = () => unarchiveAccount(b.dataset.unarchive));
   wireDrillLinks();
+  wireBankLinks();
   wireAccountDragReorder();
 }
 
@@ -6463,6 +6498,7 @@ function bindTransactions() {
     if (!confirm(`Delete ${plural(ids.size, 'transaction')}? Ctrl+Z restores them.`)) return;
     pushUndo(`Delete ${plural(ids.size, 'transaction')}`);
     const n = ids.size;
+    bankNoteDeleted(data.transactions.filter(t => ids.has(t.id)));
     data.transactions = data.transactions.filter(t => !ids.has(t.id));
     saveDirty(); render();
     toast(`Deleted ${plural(n, 'transaction')}`, 5000, 'success', { label: 'Undo', onClick: performUndo });
@@ -7052,6 +7088,11 @@ function txFormModal(tx, isNew, opts) {
     // has no UI for this field — without this line it would silently disappear
     // every time a recurring-sourced transaction is edited.
     if (tx.fromRecurringId) out.fromRecurringId = tx.fromRecurringId;
+    // Same for the bank-statement link (decision #75): the line's identity must
+    // survive an edit, or the next statement would offer the line again. Saving
+    // drops `bankAuto` on purpose — a line the user has looked at is theirs, and
+    // from then on it counts as history for the guesses.
+    for (const k of ['bankRef', 'bankDesc', 'source']) if (tx[k]) out[k] = tx[k];
     // Snapshot before mutating. This handler backs Add Tx, Edit Tx and the
     // recurring-instance-now flow — the highest-frequency mutation in the app.
     // Without it, Ctrl-Z would pop an older snapshot and revert an unrelated
@@ -7077,9 +7118,850 @@ function deleteTransaction(id) {
   const who = tx.payee ? ` "${tx.payee}"` : '';
   if (!confirm(`Delete ${typeLabel}${who} of ${fmt(tx.amount)} on ${fmtDate(tx.date)}?`)) return;
   pushUndo(`Delete ${typeLabel}${who}`);
+  bankNoteDeleted([tx]);
   data.transactions = data.transactions.filter(t => t.id !== id);
   saveDirty(); render();
   toast(`Deleted ${typeLabel}${who}`, 5000, 'success', { label: 'Undo', onClick: performUndo });
+}
+
+//=============================================================================
+// BANK RECONCILIATION (decision #75)
+//=============================================================================
+// Compare the app with a bank statement the user hands over (a CSV file or a
+// pasted table — the app makes no network calls). An account carries the bank's
+// own balance (`account.bank = {balance, asOf, lastRun?}`). When the app's
+// balance AS OF THE STATEMENT DATE differs from the bank's, every statement line
+// the app cannot find is a "missing" line: those the history makes at least 90%
+// certain are booked at once (one undo step, flagged `bankAuto`), the rest go to
+// `data.bankQueue` for the Reconcile page, where the user splits them across
+// envelopes and categories by hand. Nothing is booked while the balances agree.
+// Pure helpers (no DOM) come first so the audit can run them by name.
+const BANK_AUTO_CONF = 0.9;        // confidence at or above which a missing line is booked without asking
+const BANK_DATE_WINDOW = 4;        // days a bank booking date may differ from the date the user entered
+const BANK_MAX_AUTO = 60;          // more automatic lines than this in one run → hold for a human look
+const BANK_NOISE = new Set(['pos', 'card', 'visa', 'mastercard', 'maestro', 'debit', 'purchase', 'payment',
+  'www', 'com', 'gr', 'sa', 'ae', 'ltd', 'eur', 'ref', 'trn', 'αγορα', 'καρτας', 'καρτα', 'αε']);
+const bankRound = n => Math.round(n * 100) / 100;
+const bankCents = n => Math.round(n * 100);
+
+// Bank descriptions are noisy ("POS 4821 LIDL ATHINA 03/11"). Lower-case, strip
+// accents and digits and punctuation, drop filler words; what is left is the
+// comparable key. Greek and Latin letters both survive.
+function bankNormTokens(s) {
+  const t = String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[0-9]+/g, ' ').replace(/[^a-z\u0370-\u03ff]+/g, ' ');
+  return t.split(' ').filter(w => w.length >= 2 && !BANK_NOISE.has(w));
+}
+function bankDescKey(s) { return bankNormTokens(s).join(' '); }
+
+function bankDayDiff(a, b) {
+  const pa = String(a).split('-').map(Number), pb = String(b).split('-').map(Number);
+  return Math.round((Date.UTC(pa[0], pa[1] - 1, pa[2]) - Date.UTC(pb[0], pb[1] - 1, pb[2])) / 86400000);
+}
+function bankAddDays(iso, n) {
+  const p = String(iso).split('-').map(Number);
+  return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10);
+}
+// The account's balance as the bank would have shown it at the end of `iso`.
+function accountBalanceAsOf(account, iso) {
+  let bal = account.openingBalance || 0;
+  for (const tx of data.transactions) if (tx.date <= iso) bal += txAccountDelta(tx, account.id);
+  return bal;
+}
+
+// ---- reading a statement ----------------------------------------------------
+// Greek e-banking CSVs are often windows-1253 and Excel's "Unicode text" is
+// UTF-16; try the likely encodings in order.
+function bankDecode(buf) {
+  const u8 = new Uint8Array(buf);
+  if (u8.length >= 2 && u8[0] === 0xFF && u8[1] === 0xFE) return new TextDecoder('utf-16le').decode(u8);
+  if (u8.length >= 2 && u8[0] === 0xFE && u8[1] === 0xFF) return new TextDecoder('utf-16be').decode(u8);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(u8).replace(/^\uFEFF/, ''); }
+  catch (e) { return new TextDecoder('windows-1253').decode(u8); }
+}
+// The delimiter that gives the most lines of three or more fields. Ties go to
+// ; and tab over comma, because a decimal comma would otherwise look like one.
+function bankSniffDelimiter(text) {
+  const lines = String(text).split(/\r?\n/).filter(l => l.trim()).slice(0, 60);
+  let best = ',', bestScore = -1;
+  for (const d of [';', '\t', ',']) {
+    let score = 0;
+    for (const l of lines) if (l.split(d).length >= 3) score++;
+    if (score > bestScore) { best = d; bestScore = score; }
+  }
+  return best;
+}
+function bankGuessDateOrder(samples) {
+  let dmy = true, mdy = true, ymd = false;
+  for (const s of samples) {
+    const m = String(s == null ? '' : s).trim().match(/(\d{1,4})[\/\-.](\d{1,2})[\/\-.](\d{1,4})/);
+    if (!m) continue;
+    if (m[1].length === 4) { ymd = true; continue; }
+    if (+m[1] > 12) mdy = false;
+    if (+m[2] > 12) dmy = false;
+  }
+  if (ymd) return 'ymd';
+  return (!dmy && mdy) ? 'mdy' : 'dmy';
+}
+// What a header cell calls itself (English and Greek, accents ignored).
+function bankHeaderKind(cell) {
+  const t = String(cell == null ? '' : cell).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  if (!t) return null;
+  if (/(balance|υπολοιπ)/.test(t)) return 'balance';
+  if (/(debit|withdraw|χρεωσ|εξοδ)/.test(t)) return 'debit';
+  if (/(credit|deposit|πιστωσ|εσοδ)/.test(t)) return 'credit';
+  if (/(date|ημερομην|ημ\/νι|ημ\.νι|ημνια)/.test(t)) return /(value|αξιας|valeur)/.test(t) ? 'valuedate' : 'date';
+  if (/(descr|detail|αιτιολογ|περιγραφ|narrat|κινηση|particular|merchant|παραστατ|counterpart|δικαιουχ)/.test(t)) return 'desc';
+  if (/(amount|ποσο)/.test(t)) return 'amount';
+  return null;
+}
+// Find the header row (statements often start with account number and period
+// lines) and the columns it names. null when no row looks like a header.
+function bankDetectLayout(rows) {
+  const lim = Math.min(rows.length, 40);
+  for (let i = 0; i < lim; i++) {
+    const kinds = rows[i].map(bankHeaderKind);
+    const at = k => kinds.indexOf(k);
+    const dateCol = at('date') >= 0 ? at('date') : at('valuedate');
+    if (dateCol < 0 || !(at('amount') >= 0 || at('debit') >= 0 || at('credit') >= 0)) continue;
+    const map = { date: dateCol, desc: at('desc'), amount: at('amount'), debit: at('debit'), credit: at('credit'), balance: at('balance') };
+    const mode = (map.debit >= 0 || map.credit >= 0) && !(map.amount >= 0 && map.debit < 0 && map.credit < 0) ? 'dc' : 'single';
+    if (map.desc < 0) {   // no named description column: the widest remaining text column
+      const used = new Set([map.date, map.amount, map.debit, map.credit, map.balance]);
+      let bestW = 0;
+      for (let c = 0; c < rows[i].length; c++) {
+        if (used.has(c)) continue;
+        const w = rows.slice(i + 1, i + 21).reduce((s, r) => s + String(r[c] || '').length, 0);
+        if (w > bestW) { bestW = w; map.desc = c; }
+      }
+    }
+    return { headerIdx: i, mode, map, labels: rows[i] };
+  }
+  return null;
+}
+// No header found: guess from what the cells look like.
+function bankGuessLayout(rows) {
+  const sample = rows.slice(0, 40);
+  const width = Math.max(0, ...sample.map(r => r.length));
+  const isDate = s => /^\s*\d{1,4}[\/\-.]\d{1,2}[\/\-.]\d{1,4}/.test(s);
+  const isNum = s => /^[\s€$£+\-]*\d[\d.,]*\s*[-€$£]*$/.test(s);
+  const frac = (c, f) => {
+    let ok = 0, n = 0;
+    for (const r of sample) { const v = r[c] == null ? '' : String(r[c]).trim(); if (!v) continue; n++; if (f(v)) ok++; }
+    return n >= 3 ? ok / n : 0;
+  };
+  let dateCol = -1, best = 0;
+  for (let c = 0; c < width; c++) { const f = frac(c, isDate); if (f >= 0.7 && f > best) { best = f; dateCol = c; } }
+  if (dateCol < 0) return null;
+  const nums = [];
+  for (let c = 0; c < width; c++) if (c !== dateCol && frac(c, isNum) >= 0.7) nums.push(c);
+  if (!nums.length) return null;
+  let descCol = -1, bestW = 0;
+  for (let c = 0; c < width; c++) {
+    if (c === dateCol || nums.includes(c)) continue;
+    const w = sample.reduce((s, r) => s + String(r[c] || '').length, 0);
+    if (w > bestW) { bestW = w; descCol = c; }
+  }
+  const first = sample.findIndex(r => isDate(String(r[dateCol] || '')));
+  const map = { date: dateCol, desc: descCol, amount: -1, debit: -1, credit: -1, balance: -1 };
+  let mode = 'single';
+  if (nums.length >= 3) { mode = 'dc'; map.debit = nums[0]; map.credit = nums[1]; map.balance = nums[nums.length - 1]; }
+  else { map.amount = nums[0]; if (nums.length === 2) map.balance = nums[1]; }
+  return { headerIdx: first - 1, mode, map, labels: first > 0 ? sample[first - 1] : [] };
+}
+// Rows → statement lines {date, amount (signed: money in is +), desc, balance|null, ref}.
+// `ref` is the line's identity across files — date, amount, cleaned description
+// and an occurrence counter, so two identical coffees on one day stay two lines.
+function bankParseStatement(rows, layout, dateOrder, accountId) {
+  const m = layout.map, out = [];
+  let skipped = 0;
+  const cell = (r, c) => (c == null || c < 0 || r[c] == null) ? '' : String(r[c]).trim();
+  for (let i = layout.headerIdx + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const date = parseImportDate(cell(r, m.date), dateOrder);
+    let amt;
+    if (layout.mode === 'single') amt = parseImportAmount(cell(r, m.amount));
+    else {
+      const dr = m.debit >= 0 ? parseImportAmount(cell(r, m.debit)) : NaN;
+      const cr = m.credit >= 0 ? parseImportAmount(cell(r, m.credit)) : NaN;
+      amt = (!isNaN(cr) && cr) ? Math.abs(cr) : ((!isNaN(dr) && dr) ? -Math.abs(dr) : NaN);
+    }
+    if (date === null || isNaN(amt) || bankCents(amt) === 0) { skipped++; continue; }
+    const bal = m.balance >= 0 ? parseImportAmount(cell(r, m.balance)) : NaN;
+    out.push({ date, amount: bankRound(amt), desc: cell(r, m.desc).replace(/\s+/g, ' '), balance: isNaN(bal) ? null : bal });
+  }
+  const seen = new Map();
+  for (const x of out) {
+    const base = `${accountId || ''}|${x.date}|${bankCents(x.amount)}|${bankDescKey(x.desc)}`;
+    const k = seen.get(base) || 0;
+    seen.set(base, k + 1);
+    x.ref = base + '|' + k;
+  }
+  return { rows: out, skipped };
+}
+// The closing balance a statement states: the running balance on its latest
+// line (the first such line when the file is newest-first, the last otherwise).
+function bankStatementEnd(rows) {
+  const withBal = rows.filter(r => r.balance != null);
+  if (!withBal.length) return null;
+  const newestFirst = rows[0].date > rows[rows.length - 1].date;
+  const maxDate = withBal.reduce((mx, r) => r.date > mx ? r.date : mx, '');
+  const last = withBal.filter(r => r.date === maxDate);
+  const pick = newestFirst ? last[0] : last[last.length - 1];
+  return { balance: pick.balance, asOf: pick.date };
+}
+
+// ---- matching the statement against the app ----------------------------------
+// Pair each statement line with at most one app transaction of the same signed
+// effect on the account, preferring the closest date and the most similar
+// words. A transaction created from a statement line carries `bankRef`, which
+// settles that line for good. Returns the lines the app already has (`matched`),
+// the lines already waiting in the queue (`queued`), the lines it lacks
+// (`missing`) and the app entries within the statement's span with no line
+// (`appOnly`).
+function bankMatchRows(accountId, rows, asOf) {
+  const txs = data.transactions;
+  const byRef = new Map();
+  for (const t of txs) if (t.bankRef) byRef.set(t.bankRef, t);
+  const queueRefs = new Set((data.bankQueue || []).map(q => q.ref));
+  const matched = [], queued = [], rest = [];
+  for (const r of rows) {
+    if (byRef.has(r.ref)) matched.push({ row: r, tx: byRef.get(r.ref), by: 'ref' });
+    else if (queueRefs.has(r.ref)) queued.push(r);
+    else rest.push(r);
+  }
+  const dates = rows.map(r => r.date).sort();
+  const minDate = dates[0] || asOf, maxDate = dates[dates.length - 1] || asOf;
+  const lo = bankAddDays(minDate, -BANK_DATE_WINDOW), hi = bankAddDays(maxDate, BANK_DATE_WINDOW);
+  const cand = [];
+  for (const t of txs) {
+    if (t.bankRef || t.date < lo || t.date > hi) continue;
+    const d = txAccountDelta(t, accountId);
+    if (!d) continue;
+    cand.push({ tx: t, cents: bankCents(d), delta: bankRound(d), used: false });
+  }
+  const words = s => new Set(bankNormTokens(s));
+  const score = (row, c) => {
+    const a = words(row.desc), b = words((c.tx.payee || '') + ' ' + (c.tx.bankDesc || '') + ' ' + (c.tx.notes || ''));
+    let n = 0;
+    for (const w of a) if (b.has(w)) n++;
+    return n;
+  };
+  const unmatched = new Set(rest);
+  for (let dd = 0; dd <= BANK_DATE_WINDOW; dd++) {
+    for (const row of rest) {
+      if (!unmatched.has(row)) continue;
+      const rc = bankCents(row.amount);
+      let best = null, bestScore = -1;
+      for (const c of cand) {
+        if (c.used || c.cents !== rc || Math.abs(bankDayDiff(row.date, c.tx.date)) !== dd) continue;
+        const sc = score(row, c);
+        if (sc > bestScore) { best = c; bestScore = sc; }
+      }
+      if (best) { best.used = true; unmatched.delete(row); matched.push({ row, tx: best.tx, by: 'amount' }); }
+    }
+  }
+  const missing = rest.filter(r => unmatched.has(r));
+  const appOnly = cand.filter(c => !c.used && c.tx.date >= minDate && c.tx.date <= asOf)
+    .map(c => ({ tx: c.tx, delta: c.delta, maybePending: bankDayDiff(asOf, c.tx.date) <= BANK_DATE_WINDOW }));
+  return { matched, queued, missing, appOnly };
+}
+
+// ---- how sure are we what a missing line is? ---------------------------------
+// History index: normalised payee / bank description → the user's own earlier
+// entries. Lines the app booked from a statement by itself (`bankAuto`) are
+// left out until the user touches them — otherwise one wrong guess would
+// vouch for the next. Bookkeeping rows and one-sided envelope rows are no use.
+function bankHistoryIndex() {
+  const map = new Map();
+  const add = (key, tx) => {
+    if (key.length < 3) return;
+    let e = map.get(key);
+    if (!e) { e = { key, tokens: new Set(key.split(' ')), txs: [], seen: new Set() }; map.set(key, e); }
+    if (!e.seen.has(tx.id)) { e.seen.add(tx.id); e.txs.push(tx); }
+  };
+  for (const t of data.transactions) {
+    if ((t.type !== 'expense' && t.type !== 'income') || t.accountId == null || t.bankAuto) continue;
+    const p = (t.payee || '').trim();
+    if (BOOKKEEPING_PAYEES.has(p) || p === RETURN_PAYEE) continue;
+    add(bankDescKey(p), t);
+    if (t.bankDesc) add(bankDescKey(t.bankDesc), t);
+  }
+  return [...map.values()];
+}
+// Confidence that a missing line is "like" the entries the user has made for
+// the same payee. It is a product of five plain facts, each shown to the user:
+//   consistency — share of the earlier entries that agree on envelope + tag
+//   support     — 4+ entries 1.0, 3 → 0.96, 2 → 0.85, 1 → 0.7
+//   name match  — the same cleaned name 1.0, a name that contains/is contained 0.9
+//   amount      — within half to double the earlier amounts 1.0, else 0.8
+//   account     — the user has used this payee on this account before 1.0, else 0.92
+// A line that matches a due recurring entry is never booked by itself (it would
+// be booked twice once the entry is applied): it is capped and told to use
+// Review recurring.
+function bankSuggest(row, accountId, hist, dueList) {
+  const key = bankDescKey(row.desc);
+  const dir = row.amount < 0 ? 'expense' : 'income';
+  let recName = '';
+  for (const u of dueList || []) {
+    const rt = u.rec.type;
+    let delta = 0;
+    if (rt === 'expense' && u.rec.accountId === accountId) delta = -u.amount;
+    else if (rt === 'income' && u.rec.accountId === accountId) delta = u.amount;
+    else if (rt === 'transfer-account') delta = u.rec.fromAccountId === accountId ? -u.amount : (u.rec.toAccountId === accountId ? u.amount : 0);
+    if (delta && bankCents(delta) === bankCents(row.amount) && Math.abs(bankDayDiff(u.date, row.date)) <= 3) { recName = u.rec.name; break; }
+  }
+  const out = { conf: 0, why: '', payee: '', envelopeId: '', tag: '', kind: 'none', n: 0, rec: recName };
+  if (key.length < 3) { out.why = 'The bank description is too short to recognise.'; return out; }
+  let entry = null, exact = false;
+  const kt = new Set(key.split(' '));
+  for (const e of hist) {
+    if (e.key === key) { entry = e; exact = true; break; }
+    const eSmall = e.tokens.size <= kt.size;
+    const small = eSmall ? e.tokens : kt, big = eSmall ? kt : e.tokens;
+    if ((eSmall ? e.key : key).length < 4) continue;
+    let ok = true;
+    for (const t of small) if (!big.has(t)) { ok = false; break; }
+    if (ok && (!entry || e.key.length > entry.key.length)) entry = e;
+  }
+  if (!entry) { out.why = 'No earlier entry with this name.'; return finish(out); }
+  const H = entry.txs.filter(t => t.type === dir);
+  if (!H.length) { out.why = 'Seen before, but only as ' + (dir === 'expense' ? 'income' : 'an expense') + '.'; return finish(out); }
+  const sigOf = t => (t.splits && t.splits.length) ? 'split' : ((t.envelopeId || '') + '|' + (t.tag || ''));
+  const counts = new Map();
+  for (const t of H) counts.set(sigOf(t), (counts.get(sigOf(t)) || 0) + 1);
+  let topSig = '', topN = 0;
+  for (const [s, c] of counts) if (c > topN) { topSig = s; topN = c; }
+  const n = H.length, consistency = topN / n;
+  const topTx = H.find(t => sigOf(t) === topSig);
+  const support = n >= 4 ? 1 : (n === 3 ? 0.96 : (n === 2 ? 0.85 : 0.7));
+  const amts = H.map(t => Math.abs(t.amount || 0));
+  const lo = Math.min(...amts), hi = Math.max(...amts), a = Math.abs(row.amount);
+  const plaus = (a >= lo * 0.5 - 1e-9 && a <= hi * 2 + 1e-9) ? 1 : 0.8;
+  const acct = H.some(t => t.accountId === accountId) ? 1 : 0.92;
+  let conf = consistency * support * (exact ? 1 : 0.9) * plaus * acct;
+  const pc = new Map();
+  for (const t of H) { const p = (t.payee || '').trim(); if (p) pc.set(p, (pc.get(p) || 0) + 1); }
+  let payee = '', pn = 0;
+  for (const [p, c] of pc) if (c > pn) { payee = p; pn = c; }
+  const splitUsual = topSig === 'split';
+  if (splitUsual) conf = Math.min(conf, 0.6);
+  const env = !splitUsual && topTx.envelopeId ? envelopeById(topTx.envelopeId) : null;
+  out.conf = Math.round(conf * 1000) / 1000;
+  out.payee = payee;
+  out.envelopeId = splitUsual ? '' : (topTx.envelopeId || '');
+  out.tag = splitUsual ? '' : (topTx.tag || '');
+  out.kind = exact ? 'exact' : 'partial';
+  out.n = n;
+  out.why = `${plural(n, 'earlier entry', 'earlier entries')} for “${payee || entry.key}”${exact ? '' : ' (similar name)'}: ` +
+    (splitUsual ? 'usually split across envelopes' : `${Math.round(consistency * 100)}% in ${env ? env.name : 'no envelope'}`) +
+    (plaus < 1 ? ' · unusual amount' : '') + (acct < 1 ? ' · not used on this account before' : '');
+  return finish(out);
+  function finish(o) {
+    if (o.rec) { o.conf = Math.min(o.conf, 0.5); o.why = `Matches the due recurring entry “${o.rec}” — apply it from Review recurring instead.` + (o.why ? ' ' + o.why : ''); }
+    return o;
+  }
+}
+
+// ---- the plan ---------------------------------------------------------------
+// Everything a statement run would do, computed without touching the data.
+function bankPlan(accountId, parsed, bankBalance, asOf) {
+  const acc = accountById(accountId);
+  const rows = parsed.rows.filter(r => r.date <= asOf);
+  const appBal = bankRound(accountBalanceAsOf(acc, asOf));
+  const gap = bankRound(bankBalance - appBal);
+  const m = bankMatchRows(accountId, rows, asOf);
+  const hist = bankHistoryIndex(), due = dueRecurringOccurrences();
+  const missing = m.missing.map(row => {
+    const sug = bankSuggest(row, accountId, hist, due);
+    return { row, sug, auto: sug.conf >= BANK_AUTO_CONF - 1e-9 && !sug.rec };
+  });
+  const sumRows = arr => bankRound(arr.reduce((s, x) => s + x.row.amount, 0));
+  const auto = missing.filter(x => x.auto), queue = missing.filter(x => !x.auto);
+  const appOnlySum = bankRound(m.appOnly.reduce((s, x) => s + x.delta, 0));
+  const missingSum = sumRows(missing);
+  // Lines an earlier check already queued (waiting or dismissed) are not in the app either, and they explain part of the gap.
+  const earlierSum = bankRound(m.queued.reduce((s, r) => s + r.amount, 0));
+  const balanced = Math.abs(gap) < 0.005;
+  let holdReason = '';
+  if (!balanced && rows.length >= 8 && m.matched.length < rows.length * 0.2)
+    holdReason = 'Fewer than one statement line in five matches anything already in the app. This may be the wrong account, or the first statement you check for it.';
+  else if (!balanced && auto.length > BANK_MAX_AUTO)
+    holdReason = `${auto.length} lines would be added automatically, more than the ${BANK_MAX_AUTO} that are booked without a look.`;
+  return {
+    accountId, asOf, bankBalance: bankRound(bankBalance), appBal, gap, rows, skipped: parsed.skipped,
+    matched: m.matched, queuedAlready: m.queued, missing, auto, queue, appOnly: m.appOnly,
+    missingSum, autoSum: sumRows(auto), queueSum: sumRows(queue), appOnlySum,
+    // bank − app = (lines the app lacks) − (entries the bank lacks) + unexplained
+    unexplained: bankRound(gap - missingSum - earlierSum + appOnlySum), earlierSum,
+    balanced, holdReason, willAuto: !balanced && !holdReason
+  };
+}
+
+// Write the plan into the data. `autoOn` false sends every missing line to the
+// queue (a held run the user chose not to auto-book). One undo step.
+function bankApplyPlan(plan, autoOn) {
+  const acc = accountById(plan.accountId);
+  pushUndo('Reconcile ' + acc.name + ' with the bank');
+  data.bankQueue = data.bankQueue || [];
+  const autoIds = [];
+  const doAuto = autoOn && !plan.balanced;
+  const toQueue = [];
+  for (const it of plan.missing) {
+    if (plan.balanced) continue;                       // balances agree: touch nothing
+    if (doAuto && it.auto) {
+      const tx = {
+        id: uid(), date: it.row.date, type: it.row.amount < 0 ? 'expense' : 'income', amount: Math.abs(it.row.amount),
+        accountId: plan.accountId, envelopeId: it.sug.envelopeId || null, payee: it.sug.payee || it.row.desc,
+        notes: 'Added from the bank statement', source: 'statement', bankRef: it.row.ref, bankDesc: it.row.desc, bankAuto: true
+      };
+      if (it.sug.tag) tx.tag = it.sug.tag;
+      data.transactions.push(tx);
+      autoIds.push(tx.id);
+    } else toQueue.push(it);
+  }
+  for (const it of toQueue) {
+    data.bankQueue.push({
+      id: uid(), accountId: plan.accountId, date: it.row.date, amount: it.row.amount, desc: it.row.desc, ref: it.row.ref,
+      status: 'open', ...(it.row.balance != null ? { bal: it.row.balance } : {}),
+      sug: { conf: it.sug.conf, payee: it.sug.payee, envelopeId: it.sug.envelopeId, tag: it.sug.tag, why: it.sug.why, rec: it.sug.rec || '' }
+    });
+  }
+  const autoSum = bankRound(autoIds.length ? plan.auto.reduce((s, x) => s + x.row.amount, 0) : 0);
+  const queuedItems = plan.balanced ? [] : (doAuto ? plan.queue : plan.missing);
+  acc.bank = {
+    balance: plan.bankBalance, asOf: plan.asOf,
+    lastRun: {
+      at: new Date().toISOString(), asOf: plan.asOf, bankBalance: plan.bankBalance, appBefore: plan.appBal, gapBefore: plan.gap,
+      rows: plan.rows.length, matched: plan.matched.length, skipped: plan.skipped || 0, balanced: plan.balanced, hold: plan.holdReason,
+      autoIds, autoSum, queuedCount: queuedItems.length, queuedSum: bankRound(queuedItems.reduce((s, x) => s + x.row.amount, 0)),
+      appOnly: plan.appOnly.slice(0, 40).map(x => ({ id: x.tx.id, date: x.tx.date, payee: String(x.tx.payee || '').slice(0, 80), delta: x.delta, pending: !!x.maybePending })),
+      appOnlyCount: plan.appOnly.length, appOnlySum: plan.appOnlySum, unexplained: plan.unexplained,
+      earlierCount: plan.queuedAlready.length, earlierSum: plan.earlierSum
+    }
+  };
+  saveDirty();
+  return { autoIds, queued: queuedItems.length };
+}
+
+// What the bank says against what the app says, for one account.
+function bankStatus(a) {
+  const b = a && a.bank;
+  if (!b || !Number.isFinite(b.balance) || !b.asOf) return null;
+  const app = bankRound(accountBalanceAsOf(a, b.asOf));
+  const diff = bankRound(b.balance - app);
+  const open = (data.bankQueue || []).filter(q => q.accountId === a.id && q.status === 'open');
+  return {
+    bank: b.balance, asOf: b.asOf, app, diff, ok: Math.abs(diff) < 0.005,
+    open: open.length, openSum: bankRound(open.reduce((s, q) => s + q.amount, 0)),
+    ageDays: Math.max(0, bankDayDiff(todayISO(), b.asOf))
+  };
+}
+function bankStatusLine(a) {
+  const s = bankStatus(a);
+  if (!s) return '';
+  return `<div class="micro bank-line" title="The balance on the last bank statement you checked, against the app's balance on that date">
+    Bank ${fmt(s.bank)} · ${fmtDate(s.asOf)}
+    ${s.ok ? '<span class="badge income">matches</span>' : `<span class="badge due">differs by ${fmt(Math.abs(s.diff))}</span>`}
+    ${s.open ? `<a href="#" data-go-reconcile>${plural(s.open, 'line')} to decide</a>` : ''}</div>`;
+}
+// Tracked accounts that need a look: the app and the bank disagree, or lines are waiting.
+function bankAttention() {
+  return activeAccounts().map(a => ({ a, s: bankStatus(a) })).filter(x => x.s && (!x.s.ok || x.s.open));
+}
+function bankNoteDeleted(removed) {
+  // A statement-sourced entry the user deletes must not come back at the next
+  // import: remember its line as dismissed.
+  data.bankQueue = data.bankQueue || [];
+  for (const t of removed) {
+    if (!t.bankRef || (t.type !== 'expense' && t.type !== 'income') || !t.accountId) continue;
+    if (data.bankQueue.some(q => q.ref === t.bankRef)) continue;
+    data.bankQueue.push({ id: uid(), accountId: t.accountId, date: t.date, amount: t.type === 'expense' ? -Math.abs(t.amount) : Math.abs(t.amount),
+      desc: t.bankDesc || t.payee || '', ref: t.bankRef, status: 'dismissed', note: 'Deleted from the app' });
+  }
+}
+function bankCandidateAccounts() { return activeAccounts().filter(a => !a.isInvestment && a.type !== 'investment' && a.type !== 'loan'); }
+const bankSigned = n => `<span class="${n < 0 ? 'neg' : 'pos'}">${n < 0 ? '−' : '+'}${fmt(Math.abs(n))}</span>`;
+
+// ---- the statement dialog ---------------------------------------------------
+let _bankImp = null;
+function bankImportStart(accountId) {
+  if (!data) { toast('Open or create a file first', 3000, 'error'); return; }
+  const accs = bankCandidateAccounts();
+  if (!accs.length) { toast('Add a bank account first', 3500, 'error'); return; }
+  const tracked = accs.find(a => a.bank);
+  _bankImp = { accountId: accountId || (tracked || accs[0]).id, text: '', filename: '', pasted: '', layout: null, dateOrder: 'dmy', rows: null,
+    parsed: null, balanceText: '', asOf: '', balEdited: false, error: '' };
+  bankImportDraw();
+}
+// Re-derive everything from the text and the chosen columns.
+function bankImportParse(resetLayout) {
+  const s = _bankImp;
+  if (!s.text.trim()) { s.rows = null; s.parsed = null; return; }
+  const delim = bankSniffDelimiter(s.text);
+  s.rows = parseCSV(s.text, delim);
+  if (resetLayout || !s.layout) {
+    s.layout = bankDetectLayout(s.rows) || bankGuessLayout(s.rows);
+    s.detected = !!s.layout;
+    if (s.layout) {
+      const col = s.layout.map.date;
+      s.dateOrder = bankGuessDateOrder(s.rows.slice(s.layout.headerIdx + 1, s.layout.headerIdx + 200).map(r => r[col]));
+    }
+  }
+  if (!s.layout) { s.parsed = null; s.error = 'Could not tell which columns hold the date and the amount. Check the file is the transactions table.'; return; }
+  s.error = '';
+  s.parsed = bankParseStatement(s.rows, s.layout, s.dateOrder, s.accountId);
+  if (!s.parsed.rows.length) { s.error = 'No statement lines could be read with these columns.'; return; }
+  const end = bankStatementEnd(s.parsed.rows);
+  const dates = s.parsed.rows.map(r => r.date).sort();
+  if (!s.balEdited) {
+    s.balanceText = end ? end.balance.toFixed(2) : '';
+    s.asOf = end ? end.asOf : dates[dates.length - 1];
+  } else if (!s.asOf) s.asOf = dates[dates.length - 1];
+}
+function bankImportDraw() {
+  const s = _bankImp;
+  const accs = bankCandidateAccounts();
+  const acc = accountById(s.accountId);
+  const L = s.layout, p = s.parsed;
+  const width = s.rows ? Math.max(1, ...s.rows.slice(0, 40).map(r => r.length)) : 0;
+  const colOpts = (sel, withNone) => (withNone ? `<option value="-1" ${sel < 0 ? 'selected' : ''}>— none —</option>` : '') +
+    Array.from({ length: width }, (_, i) => {
+      const lab = L && L.labels && L.labels[i] ? `${i + 1}: ${String(L.labels[i]).trim().slice(0, 26)}` : `Column ${i + 1}`;
+      return `<option value="${i}" ${sel === i ? 'selected' : ''}>${esc(lab)}</option>`;
+    }).join('');
+  const dates = p ? p.rows.map(r => r.date).sort() : [];
+  const end = p ? bankStatementEnd(p.rows) : null;
+  const mapping = L ? `
+    <details ${s.detected && !s.mapOpen && !s.error ? '' : 'open'} style="margin:8px 0;"><summary>Columns ${s.detected ? 'found' : 'guessed — please check'}</summary>
+      <div class="field-row">
+        <div class="field"><label>Date</label><select id="bk_c_date">${colOpts(L.map.date)}</select></div>
+        <div class="field"><label>Description</label><select id="bk_c_desc">${colOpts(L.map.desc, true)}</select></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Date format</label><select id="bk_dorder">
+          ${[['dmy', 'DD/MM/YYYY'], ['mdy', 'MM/DD/YYYY'], ['ymd', 'YYYY-MM-DD']].map(([v, t]) => `<option value="${v}" ${s.dateOrder === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label>Amounts</label><select id="bk_mode">
+          <option value="single" ${L.mode === 'single' ? 'selected' : ''}>One signed column</option>
+          <option value="dc" ${L.mode === 'dc' ? 'selected' : ''}>Debit and credit columns</option></select></div>
+      </div>
+      ${L.mode === 'single'
+        ? `<div class="field"><label>Amount</label><select id="bk_c_amount">${colOpts(L.map.amount)}</select></div>`
+        : `<div class="field-row"><div class="field"><label>Debit (money out)</label><select id="bk_c_debit">${colOpts(L.map.debit, true)}</select></div>
+           <div class="field"><label>Credit (money in)</label><select id="bk_c_credit">${colOpts(L.map.credit, true)}</select></div></div>`}
+      <div class="field"><label>Running balance (optional)</label><select id="bk_c_bal">${colOpts(L.map.balance, true)}</select></div>
+    </details>` : '';
+  const preview = p && p.rows.length ? `
+    <div class="field" style="background:var(--bg-3);padding:10px 12px;border-radius:6px;border:1px solid var(--border);">
+      <div style="color:var(--text-dim);font-size:13px;margin-bottom:6px;">${plural(p.rows.length, 'statement line')} · ${fmtDate(dates[0])} to ${fmtDate(dates[dates.length - 1])}${p.skipped ? ` · ${plural(p.skipped, 'row')} ignored` : ''}</div>
+      ${p.rows.slice(0, 3).map(x => `<div style="font-variant-numeric:tabular-nums;font-size:13px;line-height:1.6;">${x.date} · ${esc(x.desc || '—')} · ${bankSigned(x.amount)}</div>`).join('')}
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Bank balance ${end ? '<span class="muted">from the statement</span>' : '<span class="muted">type it from your bank</span>'}</label>
+        <input type="text" inputmode="decimal" autocomplete="off" id="bk_bal" value="${esc(s.balanceText)}" placeholder="e.g. 1234,56"></div>
+      <div class="field"><label>…as of</label><input type="date" id="bk_asof" value="${esc(s.asOf)}"></div>
+    </div>` : '';
+  openModal(`
+    <h2>Check a bank statement</h2>
+    <p style="color:var(--text-dim);margin-top:0;">Pick the account and give the statement as a CSV file (in Excel: Save as CSV) or paste its table.
+      If the app's balance differs from the bank's, missing lines the history makes ${Math.round(BANK_AUTO_CONF * 100)}%+ certain are added at once; the rest wait on the Reconcile page.</p>
+    <div class="field"><label>Account</label><select id="bk_acc">${accs.map(a => `<option value="${a.id}" ${a.id === s.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Statement file</label><input type="file" id="bk_file" accept=".csv,.tsv,.txt,text/csv,text/plain">
+      ${s.filename ? `<div class="micro">${esc(s.filename)}</div>` : ''}</div>
+    <details ${s.text && !s.filename ? 'open' : ''}><summary>…or paste the statement table</summary>
+      <textarea id="bk_paste" rows="5" placeholder="Date, description, amount…" style="width:100%;">${esc(s.pasted)}</textarea>
+      <button class="btn sm" id="bk_usepaste" type="button" style="margin-top:6px;">Use pasted text</button></details>
+    ${s.error ? `<div class="field-error" role="alert">${esc(s.error)}</div>` : ''}
+    ${mapping}${preview}
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" id="bk_go" ${p && p.rows.length ? '' : 'disabled'}>Compare and reconcile</button>
+    </div>`, { className: 'wide' });
+  const redraw = () => { s.mapOpen = true; bankImportReadFields(); bankImportParse(false); bankImportDraw(); };
+  document.getElementById('bk_acc').onchange = () => { bankImportReadFields(); bankImportParse(false); bankImportDraw(); };
+  document.getElementById('bk_file').onchange = ev => {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    f.arrayBuffer().then(buf => {
+      s.text = bankDecode(buf); s.filename = f.name; s.balEdited = false; s.layout = null;
+      bankImportParse(true); bankImportDraw();
+    }, () => toast('Could not read the file', 3000, 'error'));
+  };
+  document.getElementById('bk_usepaste').onclick = () => {
+    s.pasted = document.getElementById('bk_paste').value; s.text = s.pasted; s.filename = ''; s.balEdited = false; s.layout = null;
+    bankImportParse(true); bankImportDraw();
+  };
+  ['bk_c_date', 'bk_c_desc', 'bk_dorder', 'bk_mode', 'bk_c_amount', 'bk_c_debit', 'bk_c_credit', 'bk_c_bal'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.onchange = redraw;
+  });
+  const go = document.getElementById('bk_go');
+  if (go) go.onclick = () => { bankImportReadFields(); bankImportRun(); };
+}
+function bankImportReadFields() {
+  const s = _bankImp, v = id => { const el = document.getElementById(id); return el ? el.value : null; };
+  const acc = v('bk_acc'); if (acc) s.accountId = acc;
+  const pasteEl = document.getElementById('bk_paste'); if (pasteEl) s.pasted = pasteEl.value;
+  if (s.layout) {
+    const n = id => { const x = v(id); return x === null ? null : +x; };
+    const L = s.layout, m = L.map;
+    if (n('bk_c_date') !== null) m.date = n('bk_c_date');
+    if (n('bk_c_desc') !== null) m.desc = n('bk_c_desc');
+    if (v('bk_mode')) L.mode = v('bk_mode');
+    if (n('bk_c_amount') !== null) m.amount = n('bk_c_amount');
+    if (n('bk_c_debit') !== null) m.debit = n('bk_c_debit');
+    if (n('bk_c_credit') !== null) m.credit = n('bk_c_credit');
+    if (n('bk_c_bal') !== null) m.balance = n('bk_c_bal');
+    if (v('bk_dorder')) s.dateOrder = v('bk_dorder');
+    if (L.mode === 'single' && m.amount < 0) m.amount = Math.max(0, [m.debit, m.credit].find(x => x >= 0) ?? 0);
+  }
+  const bal = v('bk_bal'); if (bal !== null && bal !== s.balanceText) { s.balanceText = bal; s.balEdited = true; }
+  const asOf = v('bk_asof'); if (asOf !== null) s.asOf = asOf;
+}
+function bankImportRun() {
+  const s = _bankImp;
+  const bal = evalAmount(String(s.balanceText || '').trim());
+  if (!Number.isFinite(bal)) { toast('Type the bank balance (as on the statement)', 3500, 'error'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s.asOf || '')) { toast('Choose the date the balance is as of', 3500, 'error'); return; }
+  if (!s.parsed || !s.parsed.rows.length) return;
+  const plan = bankPlan(s.accountId, s.parsed, bal, s.asOf);
+  if (plan.holdReason && plan.missing.length) { bankHoldDialog(plan); return; }
+  bankFinish(plan, true);
+}
+function bankHoldDialog(plan) {
+  const acc = accountById(plan.accountId);
+  openModal(`
+    <h2>Nothing booked yet</h2>
+    <p>${esc(plan.holdReason)}</p>
+    <p style="color:var(--text-dim);">${plural(plan.missing.length, 'statement line')} for <strong>${esc(acc.name)}</strong> would be added: ${plural(plan.auto.length, 'line')} the history is sure about (${bankSigned(plan.autoSum)}) and ${plural(plan.queue.length, 'line')} to decide by hand (${bankSigned(plan.queueSum)}).</p>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn" id="bk_hold_queue">Send all to the Reconcile page</button>
+      ${plan.auto.length ? `<button class="btn primary" id="bk_hold_auto">Add the ${plan.auto.length} sure lines now</button>` : ''}
+    </div>`);
+  document.getElementById('bk_hold_queue').onclick = () => bankFinish(plan, false);
+  const a = document.getElementById('bk_hold_auto'); if (a) a.onclick = () => bankFinish(plan, true);
+}
+function bankFinish(plan, autoOn) {
+  const res = bankApplyPlan(plan, autoOn);
+  closeModal();
+  activeView = 'reconcile';
+  render();
+  window.scrollTo({ top: 0 });
+  const acc = accountById(plan.accountId);
+  toast(plan.balanced
+    ? `${acc.name}: the app already matches the bank (${fmt(plan.bankBalance)})`
+    : `${acc.name}: ${plural(res.autoIds.length, 'line')} added automatically · ${plural(res.queued, 'line')} for you to decide`,
+    7000, 'success', plan.balanced ? undefined : { label: 'Undo', onClick: performUndo });
+}
+
+function bankSetBalanceDialog(accountId) {
+  const accs = bankCandidateAccounts();
+  if (!accs.length) { toast('Add a bank account first', 3500, 'error'); return; }
+  const a = accountById(accountId) || accs.find(x => x.bank) || accs[0];
+  openModal(`
+    <h2>Set the bank balance</h2>
+    <p style="color:var(--text-dim);margin-top:0;">What your bank shows, and the date it showed it. The app compares it with its own balance on that date.</p>
+    <div class="field"><label>Account</label><select id="bk_sb_acc">${accs.map(x => `<option value="${x.id}" ${x.id === a.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+    <div class="field-row">
+      <div class="field"><label>Bank balance</label><input type="text" inputmode="decimal" autocomplete="off" id="bk_sb_bal" value="${a.bank ? a.bank.balance.toFixed(2) : ''}"></div>
+      <div class="field"><label>As of</label><input type="date" id="bk_sb_date" value="${a.bank ? a.bank.asOf : todayISO()}"></div>
+    </div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" id="bk_sb_save">Save</button></div>`);
+  document.getElementById('bk_sb_save').onclick = () => {
+    const acc = accountById(document.getElementById('bk_sb_acc').value);
+    const bal = evalAmount(document.getElementById('bk_sb_bal').value.trim());
+    const d = document.getElementById('bk_sb_date').value;
+    if (!acc) return;
+    if (!Number.isFinite(bal)) { toast('Type the bank balance', 3000, 'error'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { toast('Choose a date', 3000, 'error'); return; }
+    pushUndo('Set bank balance');
+    acc.bank = { ...(acc.bank || {}), balance: bankRound(bal), asOf: d };
+    saveDirty(); closeModal(); activeView = 'reconcile'; render();
+  };
+}
+
+// ---- resolving the queue ----------------------------------------------------
+function bankQueueItem(id) { return (data.bankQueue || []).find(q => q.id === id); }
+function bankResolve(id) {
+  const q = bankQueueItem(id); if (!q) return;
+  const s = q.sug || {};
+  const prefill = {
+    id: uid(), date: q.date, type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
+    envelopeId: s.envelopeId && envelopeById(s.envelopeId) ? s.envelopeId : null, payee: s.payee || q.desc, notes: '',
+    ...(s.tag ? { tag: s.tag } : {}), source: 'statement', bankRef: q.ref, bankDesc: q.desc
+  };
+  txFormModal(prefill, true, {
+    banner: `Bank line: <strong>${esc(q.desc || '—')}</strong> · ${fmtDate(q.date)} · ${bankSigned(q.amount)}. Split it across envelopes with “Split across envelopes…”.`,
+    afterSave: () => { data.bankQueue = (data.bankQueue || []).filter(x => x.id !== id); }
+  });
+}
+function bankUseGuess(id) {
+  const q = bankQueueItem(id); if (!q) return;
+  const s = q.sug || {};
+  pushUndo('Book bank line');
+  data.transactions.push({
+    id: uid(), date: q.date, type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
+    envelopeId: s.envelopeId && envelopeById(s.envelopeId) ? s.envelopeId : null, payee: s.payee || q.desc,
+    notes: 'Added from the bank statement', source: 'statement', bankRef: q.ref, bankDesc: q.desc, ...(s.tag ? { tag: s.tag } : {})
+  });
+  data.bankQueue = data.bankQueue.filter(x => x.id !== id);
+  saveDirty(); render();
+  toast('Booked', 4000, 'success', { label: 'Undo', onClick: performUndo });
+}
+function bankDismiss(id) {
+  const q = bankQueueItem(id); if (!q) return;
+  if (!confirm(`Leave “${q.desc || 'this line'}” (${fmt(Math.abs(q.amount))}) out of the app?\n\nThe bank balance will keep differing from the app's by this amount. You can reopen it from the dismissed list.`)) return;
+  pushUndo('Dismiss bank line');
+  q.status = 'dismissed';
+  saveDirty(); render();
+  toast('Dismissed', 4000, 'success', { label: 'Undo', onClick: performUndo });
+}
+function bankReopen(id) {
+  const q = bankQueueItem(id); if (!q) return;
+  pushUndo('Reopen bank line');
+  q.status = 'open'; delete q.note;
+  saveDirty(); render();
+}
+function bankStopTracking(id) {
+  const a = accountById(id); if (!a || !a.bank) return;
+  if (!confirm(`Stop comparing “${a.name}” with the bank? Lines still waiting for you stay on this page.`)) return;
+  pushUndo('Stop bank tracking');
+  delete a.bank;
+  saveDirty(); render();
+}
+
+// ---- the Reconcile page -------------------------------------------------------
+function bankRunHTML(a) {
+  const r = a.bank && a.bank.lastRun;
+  if (!r) return '';
+  const autoTxs = (r.autoIds || []).map(id => data.transactions.find(t => t.id === id)).filter(Boolean);
+  const envName = id => (envelopeById(id) || {}).name || 'no envelope';
+  const list = rows => `<ul class="bank-list">${rows.join('')}</ul>`;
+  return `<section class="card bank-run" aria-label="Last statement check for ${esc(a.name)}">
+    <div class="section-heading"><h3>${esc(a.name)} — statement of ${fmtDate(r.asOf)}</h3><span class="muted">checked ${esc(String(r.at || '').slice(0, 10))}</span></div>
+    ${r.hold ? `<p class="muted">${esc(r.hold)}</p>` : ''}
+    <table class="bank-sum"><tbody>
+      <tr><td>Bank balance</td><td class="num">${fmt(r.bankBalance)}</td></tr>
+      <tr><td>The app, same date, before the check</td><td class="num">${fmt(r.appBefore)}</td></tr>
+      <tr><td><strong>Difference</strong></td><td class="num ${r.balanced ? '' : 'neg'}"><strong>${r.balanced ? 'none — balances match' : fmt(r.gapBefore)}</strong></td></tr>
+      <tr><td>Statement lines read</td><td class="num">${r.rows} · ${r.matched} already in the app${r.skipped ? ` · ${r.skipped} rows ignored` : ''}</td></tr>
+      <tr><td>Added automatically (${Math.round(BANK_AUTO_CONF * 100)}%+ sure)</td><td class="num">${autoTxs.length} · ${bankSigned(r.autoSum || 0)}</td></tr>
+      <tr><td>Waiting for your decision</td><td class="num">${r.queuedCount} · ${bankSigned(r.queuedSum || 0)}</td></tr>
+      ${r.earlierCount ? `<tr><td>Already known from earlier checks <span class="help-tip" tabindex="0" title="Statement lines an earlier check put on this page, waiting or dismissed. They are not in the app and explain part of the difference.">?</span></td><td class="num">${r.earlierCount} · ${bankSigned(r.earlierSum || 0)}</td></tr>` : ''}
+      <tr><td>In the app but not on the statement</td><td class="num">${r.appOnlyCount || 0}${r.appOnlyCount ? ' · ' + bankSigned(r.appOnlySum) : ''}</td></tr>
+      ${r.balanced ? '' : `<tr><td>Still unexplained <span class="help-tip" tabindex="0" title="Bank minus app, less the lines the app lacked, plus the entries the bank lacks. Usually an opening-balance difference or activity before the statement starts.">?</span></td>
+        <td class="num ${Math.abs(r.unexplained) < 0.005 ? '' : 'neg'}">${Math.abs(r.unexplained) < 0.005 ? 'nothing' : fmt(r.unexplained)}</td></tr>`}
+    </tbody></table>
+    ${autoTxs.length ? `<details style="margin-top:10px;"><summary>${plural(autoTxs.length, 'line')} added automatically — check them</summary>
+      ${list(autoTxs.map(t => `<li><span class="micro">${fmtDate(t.date)}</span> ${esc(t.payee || t.bankDesc || '')} ${bankSigned(t.type === 'expense' ? -t.amount : t.amount)}
+        <span class="micro">${esc(envName(t.envelopeId))}</span> <button class="btn sm ghost" data-bank-edit="${t.id}">Edit</button></li>`))}</details>` : ''}
+    ${(r.appOnly || []).length ? `<details style="margin-top:6px;"><summary>${plural(r.appOnlyCount, 'entry', 'entries')} in the app, not on the statement</summary>
+      ${list(r.appOnly.map(x => {
+        const live = data.transactions.find(t => t.id === x.id);
+        return `<li><span class="micro">${fmtDate(x.date)}</span> ${esc(x.payee)} ${bankSigned(x.delta)}${x.pending ? ' <span class="badge due" title="Within a few days of the statement date — the bank may not have booked it yet">may be pending</span>' : ''}${live ? ` <button class="btn sm ghost" data-bank-edit="${x.id}">Edit</button>` : ' <span class="micro">(since removed)</span>'}</li>`;
+      }))}</details>` : ''}
+  </section>`;
+}
+function bankQueueRowHTML(q, showAccount) {
+  const s = q.sug || {};
+  const env = s.envelopeId ? envelopeById(s.envelopeId) : null;
+  const acc = accountById(q.accountId);
+  const conf = s.conf > 0 ? `<span class="bank-conf badge">${Math.round(s.conf * 100)}% sure</span>` : '';
+  const guess = s.payee || env || s.tag
+    ? `${conf} <strong>${esc(s.payee || '')}</strong>${env ? ` · ${esc(env.name)}` : ''}${s.tag ? ` · ${esc(s.tag)}` : ''}` : (conf || '<span class="muted">no guess</span>');
+  return `<tr>
+    <td data-label="Date" style="white-space:nowrap;">${fmtDate(q.date)}${showAccount && acc ? `<div class="micro">${esc(acc.name)}</div>` : ''}</td>
+    <td data-label="Bank description">${esc(q.desc || '—')}</td>
+    <td class="num" data-label="Amount" style="white-space:nowrap;">${bankSigned(q.amount)}</td>
+    <td data-label="Best guess">${guess}${s.why ? `<div class="micro">${esc(s.why)}</div>` : ''}</td>
+    <td class="actions" style="white-space:nowrap;">
+      <button class="btn sm primary" data-bank-resolve="${q.id}">Reconcile…</button>
+      ${s.payee || env ? `<button class="btn sm" data-bank-guess="${q.id}" title="Book it exactly as guessed">Use guess</button>` : ''}
+      <button class="btn sm ghost" data-bank-dismiss="${q.id}" title="Leave this line out of the app">Dismiss</button>
+    </td></tr>`;
+}
+function renderReconcile() {
+  const tracked = activeAccounts().filter(a => a.bank);
+  const queue = (data.bankQueue || []).filter(q => accountById(q.accountId));
+  const open = queue.filter(q => q.status === 'open').sort((a, b) => b.date.localeCompare(a.date));
+  const dismissed = queue.filter(q => q.status === 'dismissed').sort((a, b) => b.date.localeCompare(a.date));
+  const openSum = bankRound(open.reduce((s, q) => s + q.amount, 0));
+  return `
+  <div class="page-heading"><div><h2>Reconcile with the bank</h2><p>Compare a bank statement with the app, add what is missing, and decide the rest.</p></div>
+    <button class="btn primary" id="bankImportBtn">${icon('download')}Check a statement</button></div>
+  <div class="toolbar">
+    <button class="btn" id="bankSetBtn">Set a bank balance by hand</button>
+    <div class="spacer"></div>
+    ${open.length ? `<div class="toolbar-stat"><span class="stat-label">Waiting for you</span><strong>${plural(open.length, 'line')} · ${bankSigned(openSum)}</strong></div>` : ''}
+  </div>
+  ${tracked.length ? `<div class="card" style="padding:0;"><table class="bank-queue bank-tracked">
+    <thead><tr><th>Account</th><th class="num">In the app</th><th class="num">At the bank</th><th class="num">Difference</th><th>To decide</th><th></th></tr></thead>
+    <tbody>${tracked.map(a => {
+      const s = bankStatus(a);
+      return `<tr>
+        <td><strong>${esc(a.name)}</strong><div class="micro">statement of ${fmtDate(s.asOf)}${s.ageDays > 7 ? ` · ${s.ageDays} days old` : ''}</div></td>
+        <td class="num" data-label="In the app">${fmt(s.app)}</td>
+        <td class="num" data-label="At the bank"><strong>${fmt(s.bank)}</strong></td>
+        <td class="num" data-label="Difference">${s.ok ? '<span class="badge income">matches</span>' : `<span class="${s.diff < 0 ? 'neg' : 'pos'}"><strong>${s.diff > 0 ? '+' : '−'}${fmt(Math.abs(s.diff))}</strong></span>`}</td>
+        <td data-label="To decide">${s.open ? `${plural(s.open, 'line')} · ${bankSigned(s.openSum)}` : '—'}</td>
+        <td class="actions"><button class="btn sm" data-bank-check="${a.id}">Check statement</button>
+          <button class="btn sm ghost" data-bank-set="${a.id}">Edit balance</button>
+          <button class="btn sm ghost" data-bank-stop="${a.id}" aria-label="Stop comparing ${esc(a.name)}" title="Stop comparing this account with the bank">${icon('x')}</button></td></tr>`;
+    }).join('')}</tbody></table></div>`
+    : `<div class="card"><p style="margin:0;">No account is compared with a bank yet. Press <strong>Check a statement</strong>, choose the account, and give the statement as a CSV file or pasted table. The app reads the bank's balance from it, compares it with its own, and adds what it can recognise.</p></div>`}
+  <h3 style="margin:22px 0 8px;">Needs your decision${open.length ? ` (${open.length})` : ''}</h3>
+  ${open.length ? `<div class="card" style="padding:0;"><table class="bank-queue">
+    <thead><tr><th>Date</th><th>Bank description</th><th class="num">Amount</th><th>Best guess</th><th></th></tr></thead>
+    <tbody>${open.map(q => bankQueueRowHTML(q, tracked.length > 1)).join('')}</tbody></table></div>
+    <p class="micro" style="margin-top:6px;">Reconcile… opens the transaction form with the bank line filled in; use <em>Split across envelopes…</em> there to divide one payment between envelopes.</p>`
+    : '<div class="card"><p style="margin:0;" class="muted">Nothing is waiting. Lines the app could not recognise with enough certainty will appear here.</p></div>'}
+  ${tracked.some(a => a.bank.lastRun) ? `<h3 style="margin:22px 0 8px;">Last statement check</h3>${tracked.map(bankRunHTML).join('')}` : ''}
+  ${dismissed.length ? `<details class="archived-list" style="margin-top:18px;"><summary>${plural(dismissed.length, 'dismissed line')}</summary>
+    <div class="card" style="padding:0;margin-top:8px;"><table><tbody>${dismissed.map(q => `<tr>
+      <td style="white-space:nowrap;">${fmtDate(q.date)}</td><td>${esc(q.desc || '—')}${q.note ? ` <span class="micro">${esc(q.note)}</span>` : ''}</td>
+      <td class="num">${bankSigned(q.amount)}</td><td class="actions"><button class="btn sm" data-bank-reopen="${q.id}">Reopen</button></td></tr>`).join('')}</tbody></table></div></details>` : ''}`;
+}
+function bindReconcile() {
+  const main = document.getElementById('main');
+  const on = (sel, fn) => main.querySelectorAll(sel).forEach(b => b.onclick = ev => { ev.preventDefault(); fn(b); });
+  document.getElementById('bankImportBtn').onclick = () => bankImportStart();
+  document.getElementById('bankSetBtn').onclick = () => bankSetBalanceDialog();
+  on('[data-bank-check]', b => bankImportStart(b.dataset.bankCheck));
+  on('[data-bank-set]', b => bankSetBalanceDialog(b.dataset.bankSet));
+  on('[data-bank-stop]', b => bankStopTracking(b.dataset.bankStop));
+  on('[data-bank-resolve]', b => bankResolve(b.dataset.bankResolve));
+  on('[data-bank-guess]', b => bankUseGuess(b.dataset.bankGuess));
+  on('[data-bank-dismiss]', b => bankDismiss(b.dataset.bankDismiss));
+  on('[data-bank-reopen]', b => bankReopen(b.dataset.bankReopen));
+  on('[data-bank-edit]', b => editTransaction(b.dataset.bankEdit));
+}
+// "Bank … differs" links on the Accounts tab and the Dashboard strip.
+function wireBankLinks(root) {
+  (root || document).querySelectorAll('[data-go-reconcile]').forEach(a => a.onclick = ev => { ev.preventDefault(); navigateToView('reconcile'); });
+}
+
+// Clean the bank fields of a loaded file: additive, no schema bump (decision #75).
+function sanitizeBank(raw) {
+  const DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const accIds = new Set((raw.accounts || []).map(a => a && a.id));
+  for (const a of raw.accounts || []) {
+    if (!a || typeof a !== 'object' || a.bank === undefined) continue;
+    const b = a.bank;
+    if (!b || typeof b !== 'object' || Array.isArray(b) || !(typeof b.balance === 'number' && isFinite(b.balance)) || !DATE.test(String(b.asOf))) { delete a.bank; continue; }
+    if (b.lastRun !== undefined && (!b.lastRun || typeof b.lastRun !== 'object' || Array.isArray(b.lastRun))) delete b.lastRun;
+  }
+  const list = Array.isArray(raw.bankQueue) ? raw.bankQueue : [];
+  raw.bankQueue = list.filter(q => q && typeof q === 'object' && !Array.isArray(q) && SCENARIO_ID_RE.test(String(q.id)) && accIds.has(q.accountId) &&
+    DATE.test(String(q.date)) && typeof q.amount === 'number' && isFinite(q.amount) && typeof q.ref === 'string' && q.ref).map(q => ({
+    id: String(q.id), accountId: q.accountId, date: q.date, amount: bankRound(q.amount), desc: String(q.desc == null ? '' : q.desc).slice(0, 200),
+    ref: q.ref.slice(0, 300), status: q.status === 'dismissed' ? 'dismissed' : 'open',
+    ...(typeof q.note === 'string' ? { note: q.note.slice(0, 80) } : {}),
+    ...(typeof q.bal === 'number' && isFinite(q.bal) ? { bal: q.bal } : {}),
+    ...(q.sug && typeof q.sug === 'object' && !Array.isArray(q.sug) ? { sug: {
+      conf: typeof q.sug.conf === 'number' && isFinite(q.sug.conf) ? q.sug.conf : 0, payee: String(q.sug.payee || '').slice(0, 120),
+      envelopeId: typeof q.sug.envelopeId === 'string' ? q.sug.envelopeId : '', tag: String(q.sug.tag || '').slice(0, 60),
+      why: String(q.sug.why || '').slice(0, 300), rec: String(q.sug.rec || '').slice(0, 80) } } : {})
+  }));
 }
 
 //=============================================================================
@@ -9339,6 +10221,8 @@ function renderHelp() {
       <dd>A forecasting smoothing option: subtract each envelope's monthly equivalent from accounts daily over the first 28 days of each month, simulating the intent to spend the budget evenly over time. Toggled on the Forecast tab.</dd>
       <dt>Headroom / "lowest in period"</dt>
       <dd>The lowest projected spendable balance over your selected horizon, including due entries still to be recorded. It assumes nothing more is funded this month; by default it assumes <strong>Fund the month</strong> refills every budgeted envelope on the 1st of each future month (a toggle on the Forecast tab). Fund the month recalculates the projection for the specific envelopes and amounts you propose; the low is not a single maximum safe funding amount.</dd>
+      <dt>Reconciling with the bank</dt>
+      <dd>On the <strong>Reconcile</strong> tab, <strong>Check a statement</strong> reads a CSV export (or a pasted table) from your bank, takes its closing balance, and compares it with the app's balance on that date. If they agree, nothing changes. If they differ, each statement line the app cannot find is matched to your earlier entries for the same payee: lines that are at least 90% certain (several earlier entries, nearly all in the same envelope, a usual amount) are added at once and can be undone with one Ctrl+Z; every other line waits under <strong>Needs your decision</strong> with the missing amount, where <em>Reconcile…</em> opens the transaction form with the bank line filled in and a <em>Split across envelopes…</em> button. A statement line is never added twice, and lines that match a due recurring entry are left for <strong>Review recurring</strong>. The statement stays on your machine; nothing is sent anywhere.</dd>
       <dt>Scheduled transaction</dt>
       <dd>A transaction dated after today. It carries a <em>scheduled</em> badge and is left out of every balance until its date arrives; the Accounts tab shows each account's net scheduled amount under its balance. The forecast projects it on its date.</dd>
       <dt>Amounts are a calculator</dt>
@@ -9558,7 +10442,7 @@ function navigateToView(view) {
 }
 document.getElementById('mobileMore').onclick = () => {
   const groups = [
-    ['Everyday', [['accounts', 'Accounts'], ['recurring', 'Recurring']]],
+    ['Everyday', [['accounts', 'Accounts'], ['reconcile', 'Reconcile'], ['recurring', 'Recurring']]],
     ['Explore', [['scenarios', 'Scenarios'], ['networth', 'Net Worth'], ['reports', 'Reports']]],
     ['Manage', [['settings', 'Settings'], ['help', 'Help']]]
   ];
@@ -9672,7 +10556,7 @@ function _cmdMatch(c, query) {
 }
 function _buildCommands() {
   const go = v => () => { activeView = v; render(); };
-  const nav = [['Dashboard', 'dashboard'], ['Accounts', 'accounts'], ['Envelopes', 'envelopes'], ['Transactions', 'transactions'], ['Recurring', 'recurring'], ['Forecast', 'forecast'], ['Scenarios', 'scenarios'], ['Net Worth', 'networth'], ['Reports', 'reports'], ['Settings', 'settings'], ['Help', 'help']]
+  const nav = [['Dashboard', 'dashboard'], ['Accounts', 'accounts'], ['Reconcile with the bank', 'reconcile'], ['Envelopes', 'envelopes'], ['Transactions', 'transactions'], ['Recurring', 'recurring'], ['Forecast', 'forecast'], ['Scenarios', 'scenarios'], ['Net Worth', 'networth'], ['Reports', 'reports'], ['Settings', 'settings'], ['Help', 'help']]
     .map(([label, v]) => ({ label: 'Go to ' + label, hint: 'tab', keywords: 'navigate view ' + label, run: go(v) }));
   const actions = [
     { label: 'Add transaction', hint: 'n', keywords: 'new expense income', run: () => editTransaction() },
@@ -9680,6 +10564,7 @@ function _buildCommands() {
     { label: 'Move funds between envelopes', keywords: 'envelope transfer reallocate', run: () => transferEnvelopes() },
     { label: 'Move envelopes to the reserve', keywords: 'envelope reserve catch-all emergency sweep transfer empty', run: () => moveToReserve() },
     { label: 'Import CSV…', keywords: 'bank statement import', run: () => csvImportStart() },
+    { label: 'Check a bank statement…', keywords: 'reconcile bank statement balance missing eurobank compare', run: () => bankImportStart() },
     { label: 'Add account', keywords: 'new account', run: () => editAccount() },
     { label: 'Add envelope', keywords: 'new envelope budget category', run: () => editEnvelope() },
     { label: 'Manage tags', keywords: 'tags tag label categorise settings', run: () => { activeView = 'settings'; render(); document.getElementById('btnAddTag')?.scrollIntoView({ block: 'center' }); } },

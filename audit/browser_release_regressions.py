@@ -250,6 +250,62 @@ class ReleaseRegressions(unittest.TestCase):
         p.goto(BASE+'/?demo=1&add=bogus');p.wait_for_function('data !== null')
         self.assertFalse(p.evaluate('document.getElementById("modalBg").classList.contains("open")'))
 
+    def test_bank_statement_reconciles_auto_logs_and_queues(self):
+        """Decision #75: a statement with a different closing balance books the sure line, queues the rest, and never repeats."""
+        p = self.page
+        p.evaluate("""() => {
+          data=emptyData();
+          data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:1000,includeInNetWorth:true}];
+          data.envelopes=['Groceries','Health','Cash'].map((n,i)=>({id:'e'+i,name:n,budgetAmount:0,cadence:'monthly',rolloverPolicy:'rollover'}));
+          data.transactions=[['2024-01-04',41],['2024-01-18',55],['2024-02-02',47],['2024-02-16',36],['2024-03-01',20]]
+            .map((x,i)=>({id:'h'+i,date:x[0],type:'expense',amount:x[1],accountId:'eb',envelopeId:'e0',payee:'Corner Market',notes:''}));
+          activeView='reconcile';render();undoStack.length=0;redoStack.length=0;
+        }""")
+        csv = ("Date,Description,Amount,Balance\n2024-03-01,CORNER MARKET 12,-20.00,801.00\n"
+               "2024-03-04,CORNER MARKET 12,-30.00,771.00\n2024-03-06,DENTIST CLINIC,-120.00,651.00\n")
+        def check_statement():
+            p.evaluate("bankImportStart('eb')")
+            p.locator('#bk_file').set_input_files({'name': 's.csv', 'mimeType': 'text/csv', 'buffer': csv.encode()})
+            p.wait_for_function('document.getElementById("bk_bal") && document.getElementById("bk_bal").value==="651.00"')
+            self.assertEqual(p.locator('#bk_asof').input_value(), '2024-03-06')
+            p.locator('#bk_go').click()
+            p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
+        check_statement()
+        # The 30.00 line is a Corner Market the history is sure about: booked, flagged, tied to its line; the dentist waits.
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankAuto).map(t=>[t.amount,t.envelopeId,t.payee,t.source])"), [[30, 'e0', 'Corner Market', 'statement']])
+        self.assertEqual(p.evaluate("data.bankQueue.map(q=>[q.status,q.amount,q.desc])"), [['open', -120, 'DENTIST CLINIC']])
+        self.assertEqual(p.evaluate("bankStatus(data.accounts[0]).diff"), -120)
+        self.assertEqual(p.evaluate('undoStack.length'), 1, 'one undo step for the whole run')
+        self.assertIn('DENTIST CLINIC', p.locator('#main').inner_text())
+        # Reconcile by hand, splitting the payment over two envelopes.
+        p.locator('[data-bank-resolve]').click()
+        p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+        self.assertEqual(p.locator('#t_amt').input_value(), '120')
+        p.locator('#t_split_on').click()
+        rows = p.locator('#t_split_rows [data-split-row]')
+        rows.nth(0).locator('.t-split-env').select_option('e1'); rows.nth(0).locator('.t-split-amt').fill('90')
+        rows.nth(1).locator('.t-split-env').select_option('e2'); rows.nth(1).locator('.t-split-amt').fill('30')
+        p.locator('#t_save').click()
+        self.assertEqual(p.evaluate("data.bankQueue.length"), 0)
+        self.assertEqual(p.evaluate("(()=>{const t=data.transactions.find(x=>x.bankDesc==='DENTIST CLINIC');return [t.splits.map(s=>s.amount),!!t.bankRef,!!t.bankAuto]})()"), [[90, 30], True, False])
+        self.assertTrue(p.evaluate("bankStatus(data.accounts[0]).ok"), 'the app now matches the bank to the cent')
+        # The same statement again changes nothing; deleting an auto-booked line does not bring it back.
+        count = p.evaluate('data.transactions.length')
+        check_statement()
+        self.assertEqual(p.evaluate('data.transactions.length'), count)
+        self.assertTrue(p.evaluate("data.accounts[0].bank.lastRun.balanced"))
+        p.evaluate("confirm=()=>true;deleteTransaction(data.transactions.find(t=>t.bankAuto).id)")
+        check_statement()
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankAuto).length"), 0)
+        self.assertEqual(p.evaluate("data.bankQueue.map(q=>q.status)"), ['dismissed'])
+        # Undo walks back through the steps without leaving a half-applied state.
+        p.evaluate("performUndo();performUndo();performUndo()")        # the third check, the delete, the second check
+        self.assertEqual(p.evaluate("[data.transactions.filter(t=>t.bankAuto).length,data.bankQueue.length,bankStatus(data.accounts[0]).ok]"), [1, 0, True])
+        p.evaluate("performUndo()")                                      # the hand reconciliation
+        self.assertEqual(p.evaluate("[data.bankQueue.map(q=>q.status),bankStatus(data.accounts[0]).diff]"), [['open'], -120])
+        p.evaluate("performUndo()")                                      # the first check
+        self.assertEqual(p.evaluate("[data.transactions.filter(t=>t.bankAuto).length,data.bankQueue.length,data.accounts[0].bank===undefined]"), [0, 0, True])
+
     def test_scenarios_compare_apply_and_undo(self):
         p=self.page
         nxt="monthKeyAdd(monthKeyOf(todayISO()),1)"
