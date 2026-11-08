@@ -1246,7 +1246,7 @@ function bankApi() {
   const names = [
     "bankNormTokens", "bankDescKey", "bankDayDiff", "bankAddDays", "accountBalanceAsOf", "bankDecode", "bankSniffDelimiter",
     "bankGuessDateOrder", "bankHeaderKind", "bankDetectLayout", "bankGuessLayout", "bankParseStatement", "bankStatementEnd",
-    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank",
+    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements",
     "txAccountDelta", "accountById", "envelopeById", "parseCSV", "parseImportAmount", "parseImportDate", "plural",
   ];
   const bundle = [
@@ -1329,6 +1329,28 @@ if (bank) {
     assert.equal(layout.map.amount, 2);
     const parsed = bank.bankParseStatement(rows, layout, "dmy", "eb");
     deepEq(parsed.rows.map((r) => r.amount), [-3.5, 2000, -600, -30]);
+  });
+
+  check("Several statement files of one app account merge: moves between them cancel, refs do not depend on file order", () => {
+    const parse = (text) => {
+      const rows = bank.parseCSV(text, ";");
+      return bank.bankParseStatement(rows, bank.bankDetectLayout(rows), "dmy", "");
+    };
+    const a = parse("Date;Description;Amount;Balance\n09/11/2026;COFFEE;-3,50;96,50\n08/11/2026;TO OTHER;-50,00;100,00\n05/11/2026;SALARY;150,00;150,00");
+    const b = parse("Date;Description;Amount;Balance\n09/11/2026;COFFEE;-3,50;46,50\n08/11/2026;FROM OTHER;50,00;50,00");
+    const m1 = bank.bankMergeStatements([a, b], "eb", true);
+    deepEq(m1.rows.map((r) => [r.date, r.amount]), [["2026-11-05", 150], ["2026-11-09", -3.5], ["2026-11-09", -3.5]], "the 50.00 move is left out of both files");
+    assert.equal(m1.internalLeftOut, 1);
+    assert.equal(m1.leftOut.length, 2);
+    assert.equal(new Set(m1.rows.map((r) => r.ref)).size, 3, "two identical coffees in two files stay two lines");
+    const m2 = bank.bankMergeStatements([b, a], "eb", true);
+    deepEq(m2.rows.map((r) => r.ref), [...m1.rows.map((r) => r.ref)], "same refs whichever file comes first");
+    const kept = bank.bankMergeStatements([a, b], "eb", false);
+    assert.equal(kept.rows.length, 5, "unticked: nothing is left out");
+    assert.equal(kept.internal.length, 1, "but the move is still reported");
+    const one = bank.bankMergeStatements([a], "eb", true);
+    deepEq(one.rows.map((r) => r.ref), [...a.rows].sort((x, y) => x.date < y.date ? -1 : 1).map((r) => r.ref.replace(/^\|/, "eb|")), "one file keeps the refs it always had");
+    assert.equal(bank.bankStatementEnd(a.rows).balance + bank.bankStatementEnd(b.rows).balance, 143, "the closing balances add up");
   });
 
   check("A Greek file saved as windows-1253 is decoded", () => {

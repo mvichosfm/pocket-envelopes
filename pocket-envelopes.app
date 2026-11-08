@@ -7311,6 +7311,43 @@ function bankStatementEnd(rows) {
   return { balance: pick.balance, asOf: pick.date };
 }
 
+// Combine the lines of several statement files that together make ONE app account.
+// Moves between those bank accounts (the same amount leaving one file and arriving
+// in another within a day) net to zero in the total, so the app has no entry for
+// them; they are paired one-to-one and, with `dropInternal`, left out of the
+// comparison. Every line's `ref` is recomputed over the merged list: identical
+// lines are interchangeable, so the refs do not depend on the order the files were
+// given in, and a single file gets the same refs as it always did.
+function bankMergeStatements(list, accountId, dropInternal) {
+  let rows = [], skipped = 0;
+  list.forEach((p, si) => { skipped += p.skipped || 0; for (const r of p.rows) rows.push({ ...r, src: si }); });
+  const internal = [], gone = new Set();
+  if (list.length > 1) {
+    for (let i = 0; i < rows.length; i++) {
+      if (gone.has(i)) continue;
+      let best = -1, bestDd = 99;
+      for (let j = 0; j < rows.length; j++) {
+        if (j === i || gone.has(j) || rows[j].src === rows[i].src) continue;
+        if (bankCents(rows[j].amount) !== -bankCents(rows[i].amount)) continue;
+        const dd = Math.abs(bankDayDiff(rows[i].date, rows[j].date));
+        if (dd <= 1 && dd < bestDd) { best = j; bestDd = dd; }
+      }
+      if (best >= 0) { gone.add(i); gone.add(best); internal.push({ date: rows[i].date < rows[best].date ? rows[i].date : rows[best].date, amount: Math.abs(rows[i].amount), a: i, b: best }); }
+    }
+  }
+  const leftOut = dropInternal ? rows.filter((_, i) => gone.has(i)) : [];
+  if (dropInternal) rows = rows.filter((_, i) => !gone.has(i));
+  rows.sort((x, y) => x.date < y.date ? -1 : (x.date > y.date ? 1 : 0));
+  const seen = new Map();
+  for (const x of rows) {
+    const base = `${accountId || ''}|${x.date}|${bankCents(x.amount)}|${bankDescKey(x.desc)}`;
+    const k = seen.get(base) || 0;
+    seen.set(base, k + 1);
+    x.ref = base + '|' + k;
+  }
+  return { rows, skipped, internal: internal.map(p => ({ date: p.date, amount: p.amount })), leftOut, internalLeftOut: dropInternal ? internal.length : 0 };
+}
+
 // ---- matching the statement against the app ----------------------------------
 // Pair each statement line with at most one app transaction of the same signed
 // effect on the account, preferring the closest date and the most similar
@@ -7494,7 +7531,7 @@ function bankPlan(accountId, parsed, bankBalance, asOf) {
     missingSum, autoSum: sumRows(auto), queueSum: sumRows(queue), appOnlySum,
     // bank − app = (lines the app lacks) − (entries the bank lacks) + unexplained
     unexplained: bankRound(gap - missingSum - earlierSum + appOnlySum), earlierSum,
-    balanced, holdReason, willAuto: !balanced && !holdReason
+    balanced, holdReason, willAuto: !balanced && !holdReason, internalLeftOut: parsed.internalLeftOut || 0
   };
 }
 
@@ -7537,7 +7574,7 @@ function bankApplyPlan(plan, autoOn) {
       autoIds, autoSum, queuedCount: queuedItems.length, queuedSum: bankRound(queuedItems.reduce((s, x) => s + x.row.amount, 0)),
       appOnly: plan.appOnly.slice(0, 40).map(x => ({ id: x.tx.id, date: x.tx.date, payee: String(x.tx.payee || '').slice(0, 80), delta: x.delta, pending: !!x.maybePending })),
       appOnlyCount: plan.appOnly.length, appOnlySum: plan.appOnlySum, unexplained: plan.unexplained,
-      earlierCount: plan.queuedAlready.length, earlierSum: plan.earlierSum
+      earlierCount: plan.queuedAlready.length, earlierSum: plan.earlierSum, internalCount: plan.internalLeftOut
     }
   };
   saveDirty();
@@ -7584,116 +7621,153 @@ function bankCandidateAccounts() { return activeAccounts().filter(a => !a.isInve
 const bankSigned = n => `<span class="${n < 0 ? 'neg' : 'pos'}">${n < 0 ? '−' : '+'}${fmt(Math.abs(n))}</span>`;
 
 // ---- the statement dialog ---------------------------------------------------
+// One app account can be several bank accounts (the user's "main account" is the
+// sum of two): the dialog takes any number of statement files, each read on its own,
+// and compares the SUM of their closing balances with the app account.
 let _bankImp = null;
 function bankImportStart(accountId) {
   if (!data) { toast('Open or create a file first', 3000, 'error'); return; }
   const accs = bankCandidateAccounts();
   if (!accs.length) { toast('Add a bank account first', 3500, 'error'); return; }
   const tracked = accs.find(a => a.bank);
-  _bankImp = { accountId: accountId || (tracked || accs[0]).id, text: '', filename: '', pasted: '', layout: null, dateOrder: 'dmy', rows: null,
-    parsed: null, balanceText: '', asOf: '', balEdited: false, error: '' };
+  _bankImp = { accountId: accountId || (tracked || accs[0]).id, sources: [], dropInternal: true, pasted: '', merged: null,
+    balanceText: '', asOf: '', balEdited: false };
   bankImportDraw();
 }
-// Re-derive everything from the text and the chosen columns.
-function bankImportParse(resetLayout) {
-  const s = _bankImp;
-  if (!s.text.trim()) { s.rows = null; s.parsed = null; return; }
-  const delim = bankSniffDelimiter(s.text);
-  s.rows = parseCSV(s.text, delim);
-  if (resetLayout || !s.layout) {
-    s.layout = bankDetectLayout(s.rows) || bankGuessLayout(s.rows);
-    s.detected = !!s.layout;
-    if (s.layout) {
-      const col = s.layout.map.date;
-      s.dateOrder = bankGuessDateOrder(s.rows.slice(s.layout.headerIdx + 1, s.layout.headerIdx + 200).map(r => r[col]));
+function bankSourceNew(name, text) {
+  return { name, text, rows: null, layout: null, detected: false, dateOrder: 'dmy', parsed: null, end: null, error: '', mapOpen: false };
+}
+// Read one source's text with its current column choices.
+function bankSourceParse(src, resetLayout) {
+  src.end = null; src.parsed = null;
+  if (!src.text.trim()) { src.error = 'This file is empty.'; return; }
+  src.rows = parseCSV(src.text, bankSniffDelimiter(src.text));
+  if (resetLayout || !src.layout) {
+    src.layout = bankDetectLayout(src.rows) || bankGuessLayout(src.rows);
+    src.detected = !!src.layout && !!bankDetectLayout(src.rows);
+    if (src.layout) {
+      const col = src.layout.map.date;
+      src.dateOrder = bankGuessDateOrder(src.rows.slice(src.layout.headerIdx + 1, src.layout.headerIdx + 200).map(r => r[col]));
     }
   }
-  if (!s.layout) { s.parsed = null; s.error = 'Could not tell which columns hold the date and the amount. Check the file is the transactions table.'; return; }
-  s.error = '';
-  s.parsed = bankParseStatement(s.rows, s.layout, s.dateOrder, s.accountId);
-  if (!s.parsed.rows.length) { s.error = 'No statement lines could be read with these columns.'; return; }
-  const end = bankStatementEnd(s.parsed.rows);
-  const dates = s.parsed.rows.map(r => r.date).sort();
+  if (!src.layout) { src.error = 'Could not tell which columns hold the date and the amount. Check it is the transactions table.'; return; }
+  src.error = '';
+  src.parsed = bankParseStatement(src.rows, src.layout, src.dateOrder, '');
+  if (!src.parsed.rows.length) { src.error = 'No statement lines could be read with these columns.'; src.parsed = null; return; }
+  src.end = bankStatementEnd(src.parsed.rows);
+}
+// Merge the readable sources and derive the balance and date the user is shown.
+function bankImportRebuild() {
+  const s = _bankImp;
+  const ok = s.sources.filter(x => x.parsed);
+  s.merged = ok.length ? bankMergeStatements(ok.map(x => x.parsed), s.accountId, s.dropInternal) : null;
+  if (!s.merged) return;
+  const dates = s.merged.rows.concat(s.merged.leftOut || []).map(r => r.date).sort();
+  const allEnds = ok.every(x => x.end);
   if (!s.balEdited) {
-    s.balanceText = end ? end.balance.toFixed(2) : '';
-    s.asOf = end ? end.asOf : dates[dates.length - 1];
+    s.balanceText = allEnds ? bankRound(ok.reduce((t, x) => t + x.end.balance, 0)).toFixed(2) : '';
+    s.asOf = allEnds ? ok.map(x => x.end.asOf).sort().pop() : dates[dates.length - 1];
   } else if (!s.asOf) s.asOf = dates[dates.length - 1];
 }
 function bankImportDraw() {
   const s = _bankImp;
   const accs = bankCandidateAccounts();
-  const acc = accountById(s.accountId);
-  const L = s.layout, p = s.parsed;
-  const width = s.rows ? Math.max(1, ...s.rows.slice(0, 40).map(r => r.length)) : 0;
-  const colOpts = (sel, withNone) => (withNone ? `<option value="-1" ${sel < 0 ? 'selected' : ''}>— none —</option>` : '') +
-    Array.from({ length: width }, (_, i) => {
-      const lab = L && L.labels && L.labels[i] ? `${i + 1}: ${String(L.labels[i]).trim().slice(0, 26)}` : `Column ${i + 1}`;
-      return `<option value="${i}" ${sel === i ? 'selected' : ''}>${esc(lab)}</option>`;
-    }).join('');
-  const dates = p ? p.rows.map(r => r.date).sort() : [];
-  const end = p ? bankStatementEnd(p.rows) : null;
-  const mapping = L ? `
-    <details ${s.detected && !s.mapOpen && !s.error ? '' : 'open'} style="margin:8px 0;"><summary>Columns ${s.detected ? 'found' : 'guessed — please check'}</summary>
-      <div class="field-row">
-        <div class="field"><label>Date</label><select id="bk_c_date">${colOpts(L.map.date)}</select></div>
-        <div class="field"><label>Description</label><select id="bk_c_desc">${colOpts(L.map.desc, true)}</select></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label>Date format</label><select id="bk_dorder">
-          ${[['dmy', 'DD/MM/YYYY'], ['mdy', 'MM/DD/YYYY'], ['ymd', 'YYYY-MM-DD']].map(([v, t]) => `<option value="${v}" ${s.dateOrder === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
-        <div class="field"><label>Amounts</label><select id="bk_mode">
-          <option value="single" ${L.mode === 'single' ? 'selected' : ''}>One signed column</option>
-          <option value="dc" ${L.mode === 'dc' ? 'selected' : ''}>Debit and credit columns</option></select></div>
-      </div>
-      ${L.mode === 'single'
-        ? `<div class="field"><label>Amount</label><select id="bk_c_amount">${colOpts(L.map.amount)}</select></div>`
-        : `<div class="field-row"><div class="field"><label>Debit (money out)</label><select id="bk_c_debit">${colOpts(L.map.debit, true)}</select></div>
-           <div class="field"><label>Credit (money in)</label><select id="bk_c_credit">${colOpts(L.map.credit, true)}</select></div></div>`}
-      <div class="field"><label>Running balance (optional)</label><select id="bk_c_bal">${colOpts(L.map.balance, true)}</select></div>
-    </details>` : '';
-  const preview = p && p.rows.length ? `
+  const m = s.merged;
+  const srcHTML = (src, i) => {
+    const L = src.layout;
+    const width = src.rows ? Math.max(1, ...src.rows.slice(0, 40).map(r => r.length)) : 0;
+    const colOpts = (sel, withNone) => (withNone ? `<option value="-1" ${sel < 0 ? 'selected' : ''}>— none —</option>` : '') +
+      Array.from({ length: width }, (_, c) => {
+        const lab = L && L.labels && L.labels[c] ? `${c + 1}: ${String(L.labels[c]).trim().slice(0, 26)}` : `Column ${c + 1}`;
+        return `<option value="${c}" ${sel === c ? 'selected' : ''}>${esc(lab)}</option>`;
+      }).join('');
+    const d = src.parsed ? src.parsed.rows.map(r => r.date).sort() : [];
+    const mapping = L ? `
+      <details ${src.detected && !src.mapOpen && !src.error ? '' : 'open'} style="margin:6px 0 0;"><summary>Columns ${src.detected ? 'found' : 'guessed — please check'}</summary>
+        <div class="field-row">
+          <div class="field"><label>Date</label><select id="bk_c_date_${i}">${colOpts(L.map.date)}</select></div>
+          <div class="field"><label>Description</label><select id="bk_c_desc_${i}">${colOpts(L.map.desc, true)}</select></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Date format</label><select id="bk_dorder_${i}">
+            ${[['dmy', 'DD/MM/YYYY'], ['mdy', 'MM/DD/YYYY'], ['ymd', 'YYYY-MM-DD']].map(([v, t]) => `<option value="${v}" ${src.dateOrder === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+          <div class="field"><label>Amounts</label><select id="bk_mode_${i}">
+            <option value="single" ${L.mode === 'single' ? 'selected' : ''}>One signed column</option>
+            <option value="dc" ${L.mode === 'dc' ? 'selected' : ''}>Debit and credit columns</option></select></div>
+        </div>
+        ${L.mode === 'single'
+          ? `<div class="field"><label>Amount</label><select id="bk_c_amount_${i}">${colOpts(L.map.amount)}</select></div>`
+          : `<div class="field-row"><div class="field"><label>Debit (money out)</label><select id="bk_c_debit_${i}">${colOpts(L.map.debit, true)}</select></div>
+             <div class="field"><label>Credit (money in)</label><select id="bk_c_credit_${i}">${colOpts(L.map.credit, true)}</select></div></div>`}
+        <div class="field"><label>Running balance (optional)</label><select id="bk_c_bal_${i}">${colOpts(L.map.balance, true)}</select></div>
+      </details>` : '';
+    return `<div class="bank-src" style="border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin:8px 0;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;"><strong>${esc(src.name)}</strong>
+        <button class="btn sm ghost" type="button" data-bk-remove="${i}">Remove</button></div>
+      ${src.error ? `<div class="field-error" role="alert">${esc(src.error)}</div>`
+        : `<div class="micro">${plural(src.parsed.rows.length, 'line')} · ${fmtDate(d[0])} to ${fmtDate(d[d.length - 1])}${src.parsed.skipped ? ` · ${plural(src.parsed.skipped, 'row')} ignored` : ''}${src.end ? ` · closing balance ${fmt(src.end.balance)}` : ' · no running balance'}</div>`}
+      ${mapping}</div>`;
+  };
+  const internal = m && m.internal.length ? `
+    <div class="field check"><label><input type="checkbox" id="bk_internal" ${s.dropInternal ? 'checked' : ''}>
+      Leave out ${plural(m.internal.length, 'move')} between these accounts <span class="micro">(${m.internal.slice(0, 4).map(p => `${fmtDate(p.date)} ${fmt(Math.abs(p.amount))}`).join(', ')}${m.internal.length > 4 ? '…' : ''})</span></label>
+      <div class="micro">The same amount leaving one file and arriving in another on the same day. It cancels out in the total, so the app has no entry for it.</div></div>` : '';
+  const preview = m ? `
     <div class="field" style="background:var(--bg-3);padding:10px 12px;border-radius:6px;border:1px solid var(--border);">
-      <div style="color:var(--text-dim);font-size:13px;margin-bottom:6px;">${plural(p.rows.length, 'statement line')} · ${fmtDate(dates[0])} to ${fmtDate(dates[dates.length - 1])}${p.skipped ? ` · ${plural(p.skipped, 'row')} ignored` : ''}</div>
-      ${p.rows.slice(0, 3).map(x => `<div style="font-variant-numeric:tabular-nums;font-size:13px;line-height:1.6;">${x.date} · ${esc(x.desc || '—')} · ${bankSigned(x.amount)}</div>`).join('')}
+      <div style="color:var(--text-dim);font-size:13px;margin-bottom:6px;">${plural(m.rows.length, 'statement line')} to compare${s.sources.length > 1 ? ` from ${s.sources.length} files` : ''}</div>
+      ${m.rows.slice(0, 3).map(x => `<div style="font-variant-numeric:tabular-nums;font-size:13px;line-height:1.6;">${x.date} · ${esc(x.desc || '—')} · ${bankSigned(x.amount)}</div>`).join('')}
     </div>
     <div class="field-row">
-      <div class="field"><label>Bank balance ${end ? '<span class="muted">from the statement</span>' : '<span class="muted">type it from your bank</span>'}</label>
+      <div class="field"><label>${s.sources.length > 1 ? 'Total bank balance' : 'Bank balance'} ${s.balanceText && !s.balEdited ? '<span class="muted">from the statement' + (s.sources.length > 1 ? 's, added up' : '') + '</span>' : '<span class="muted">type it from your bank</span>'}</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="bk_bal" value="${esc(s.balanceText)}" placeholder="e.g. 1234,56"></div>
       <div class="field"><label>…as of</label><input type="date" id="bk_asof" value="${esc(s.asOf)}"></div>
     </div>` : '';
   openModal(`
     <h2>Check a bank statement</h2>
     <p style="color:var(--text-dim);margin-top:0;">Pick the account and give the statement as a CSV file (in Excel: Save as CSV) or paste its table.
+      If the app account is made of several bank accounts, add one file for each: their balances are added up.
       If the app's balance differs from the bank's, missing lines the history makes ${Math.round(BANK_AUTO_CONF * 100)}%+ certain are added at once; the rest wait on the Reconcile page.</p>
-    <div class="field"><label>Account</label><select id="bk_acc">${accs.map(a => `<option value="${a.id}" ${a.id === s.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>Statement file</label><input type="file" id="bk_file" accept=".csv,.tsv,.txt,text/csv,text/plain">
-      ${s.filename ? `<div class="micro">${esc(s.filename)}</div>` : ''}</div>
-    <details ${s.text && !s.filename ? 'open' : ''}><summary>…or paste the statement table</summary>
-      <textarea id="bk_paste" rows="5" placeholder="Date, description, amount…" style="width:100%;">${esc(s.pasted)}</textarea>
-      <button class="btn sm" id="bk_usepaste" type="button" style="margin-top:6px;">Use pasted text</button></details>
-    ${s.error ? `<div class="field-error" role="alert">${esc(s.error)}</div>` : ''}
-    ${mapping}${preview}
+    <div class="field"><label>Account in the app</label><select id="bk_acc">${accs.map(a => `<option value="${a.id}" ${a.id === s.accountId ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Statement file${s.sources.length ? 's' : ''}</label><input type="file" id="bk_file" multiple accept=".csv,.tsv,.txt,text/csv,text/plain"></div>
+    ${s.sources.map(srcHTML).join('')}
+    <details ${s.sources.length ? '' : 'open'}><summary>…or paste a statement table</summary>
+      <textarea id="bk_paste" rows="4" placeholder="Date, description, amount…" style="width:100%;">${esc(s.pasted)}</textarea>
+      <button class="btn sm" id="bk_usepaste" type="button" style="margin-top:6px;">Add pasted text</button></details>
+    ${internal}${preview}
     <div class="modal-actions">
       <button class="btn" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" id="bk_go" ${p && p.rows.length ? '' : 'disabled'}>Compare and reconcile</button>
+      <button class="btn primary" id="bk_go" ${m ? '' : 'disabled'}>Compare and reconcile</button>
     </div>`, { className: 'wide' });
-  const redraw = () => { s.mapOpen = true; bankImportReadFields(); bankImportParse(false); bankImportDraw(); };
-  document.getElementById('bk_acc').onchange = () => { bankImportReadFields(); bankImportParse(false); bankImportDraw(); };
+  const refresh = () => { bankImportRebuild(); bankImportDraw(); };
+  document.getElementById('bk_acc').onchange = () => { bankImportReadFields(); s.sources.forEach(x => bankSourceParse(x, false)); refresh(); };
   document.getElementById('bk_file').onchange = ev => {
-    const f = ev.target.files && ev.target.files[0];
-    if (!f) return;
-    f.arrayBuffer().then(buf => {
-      s.text = bankDecode(buf); s.filename = f.name; s.balEdited = false; s.layout = null;
-      bankImportParse(true); bankImportDraw();
+    const files = [...(ev.target.files || [])];
+    if (!files.length) return;
+    Promise.all(files.map(f => f.arrayBuffer().then(buf => ({ name: f.name, text: bankDecode(buf) })))).then(list => {
+      bankImportReadFields();
+      for (const it of list) {
+        if (s.sources.some(x => x.name === it.name && x.text === it.text)) continue;   // the same file twice would double every line
+        const src = bankSourceNew(it.name, it.text); bankSourceParse(src, true); s.sources.push(src);
+      }
+      s.balEdited = false; refresh();
     }, () => toast('Could not read the file', 3000, 'error'));
   };
   document.getElementById('bk_usepaste').onclick = () => {
-    s.pasted = document.getElementById('bk_paste').value; s.text = s.pasted; s.filename = ''; s.balEdited = false; s.layout = null;
-    bankImportParse(true); bankImportDraw();
+    const text = document.getElementById('bk_paste').value;
+    if (!text.trim()) return;
+    bankImportReadFields();
+    const src = bankSourceNew('Pasted table', text); bankSourceParse(src, true); s.sources.push(src);
+    s.pasted = ''; s.balEdited = false; refresh();
   };
-  ['bk_c_date', 'bk_c_desc', 'bk_dorder', 'bk_mode', 'bk_c_amount', 'bk_c_debit', 'bk_c_credit', 'bk_c_bal'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.onchange = redraw;
+  document.querySelectorAll('[data-bk-remove]').forEach(b => b.onclick = () => {
+    bankImportReadFields(); s.sources.splice(+b.dataset.bkRemove, 1); s.balEdited = false; refresh();
   });
+  const internalBox = document.getElementById('bk_internal');
+  if (internalBox) internalBox.onchange = () => { bankImportReadFields(); s.dropInternal = internalBox.checked; refresh(); };
+  s.sources.forEach((src, i) => ['c_date', 'c_desc', 'dorder', 'mode', 'c_amount', 'c_debit', 'c_credit', 'c_bal'].forEach(k => {
+    const el = document.getElementById(`bk_${k}_${i}`);
+    if (el) el.onchange = () => { src.mapOpen = true; bankImportReadFields(); bankSourceParse(src, false); refresh(); };
+  }));
   const go = document.getElementById('bk_go');
   if (go) go.onclick = () => { bankImportReadFields(); bankImportRun(); };
 }
@@ -7701,19 +7775,20 @@ function bankImportReadFields() {
   const s = _bankImp, v = id => { const el = document.getElementById(id); return el ? el.value : null; };
   const acc = v('bk_acc'); if (acc) s.accountId = acc;
   const pasteEl = document.getElementById('bk_paste'); if (pasteEl) s.pasted = pasteEl.value;
-  if (s.layout) {
-    const n = id => { const x = v(id); return x === null ? null : +x; };
-    const L = s.layout, m = L.map;
-    if (n('bk_c_date') !== null) m.date = n('bk_c_date');
-    if (n('bk_c_desc') !== null) m.desc = n('bk_c_desc');
-    if (v('bk_mode')) L.mode = v('bk_mode');
-    if (n('bk_c_amount') !== null) m.amount = n('bk_c_amount');
-    if (n('bk_c_debit') !== null) m.debit = n('bk_c_debit');
-    if (n('bk_c_credit') !== null) m.credit = n('bk_c_credit');
-    if (n('bk_c_bal') !== null) m.balance = n('bk_c_bal');
-    if (v('bk_dorder')) s.dateOrder = v('bk_dorder');
+  s.sources.forEach((src, i) => {
+    const L = src.layout; if (!L) return;
+    const n = k => { const x = v(`bk_${k}_${i}`); return x === null ? null : +x; };
+    const m = L.map;
+    if (n('c_date') !== null) m.date = n('c_date');
+    if (n('c_desc') !== null) m.desc = n('c_desc');
+    if (v(`bk_mode_${i}`)) L.mode = v(`bk_mode_${i}`);
+    if (n('c_amount') !== null) m.amount = n('c_amount');
+    if (n('c_debit') !== null) m.debit = n('c_debit');
+    if (n('c_credit') !== null) m.credit = n('c_credit');
+    if (n('c_bal') !== null) m.balance = n('c_bal');
+    if (v(`bk_dorder_${i}`)) src.dateOrder = v(`bk_dorder_${i}`);
     if (L.mode === 'single' && m.amount < 0) m.amount = Math.max(0, [m.debit, m.credit].find(x => x >= 0) ?? 0);
-  }
+  });
   const bal = v('bk_bal'); if (bal !== null && bal !== s.balanceText) { s.balanceText = bal; s.balEdited = true; }
   const asOf = v('bk_asof'); if (asOf !== null) s.asOf = asOf;
 }
@@ -7722,8 +7797,8 @@ function bankImportRun() {
   const bal = evalAmount(String(s.balanceText || '').trim());
   if (!Number.isFinite(bal)) { toast('Type the bank balance (as on the statement)', 3500, 'error'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.asOf || '')) { toast('Choose the date the balance is as of', 3500, 'error'); return; }
-  if (!s.parsed || !s.parsed.rows.length) return;
-  const plan = bankPlan(s.accountId, s.parsed, bal, s.asOf);
+  if (!s.merged || !s.merged.rows.length) return;
+  const plan = bankPlan(s.accountId, s.merged, bal, s.asOf);
   if (plan.holdReason && plan.missing.length) { bankHoldDialog(plan); return; }
   bankFinish(plan, true);
 }
@@ -7848,6 +7923,7 @@ function bankRunHTML(a) {
       <tr><td>Added automatically (${Math.round(BANK_AUTO_CONF * 100)}%+ sure)</td><td class="num">${autoTxs.length} · ${bankSigned(r.autoSum || 0)}</td></tr>
       <tr><td>Waiting for your decision</td><td class="num">${r.queuedCount} · ${bankSigned(r.queuedSum || 0)}</td></tr>
       ${r.earlierCount ? `<tr><td>Already known from earlier checks <span class="help-tip" tabindex="0" title="Statement lines an earlier check put on this page, waiting or dismissed. They are not in the app and explain part of the difference.">?</span></td><td class="num">${r.earlierCount} · ${bankSigned(r.earlierSum || 0)}</td></tr>` : ''}
+      ${r.internalCount ? `<tr><td>Moves between your own bank accounts, left out</td><td class="num">${r.internalCount}</td></tr>` : ''}
       <tr><td>In the app but not on the statement</td><td class="num">${r.appOnlyCount || 0}${r.appOnlyCount ? ' · ' + bankSigned(r.appOnlySum) : ''}</td></tr>
       ${r.balanced ? '' : `<tr><td>Still unexplained <span class="help-tip" tabindex="0" title="Bank minus app, less the lines the app lacked, plus the entries the bank lacks. Usually an opening-balance difference or activity before the statement starts.">?</span></td>
         <td class="num ${Math.abs(r.unexplained) < 0.005 ? '' : 'neg'}">${Math.abs(r.unexplained) < 0.005 ? 'nothing' : fmt(r.unexplained)}</td></tr>`}

@@ -306,6 +306,40 @@ class ReleaseRegressions(unittest.TestCase):
         p.evaluate("performUndo()")                                      # the first check
         self.assertEqual(p.evaluate("[data.transactions.filter(t=>t.bankAuto).length,data.bankQueue.length,data.accounts[0].bank===undefined]"), [0, 0, True])
 
+    def test_two_bank_files_make_one_app_account(self):
+        """Decision #75: an app account that is the sum of two bank accounts takes two files, adds their balances, drops moves between them."""
+        p = self.page
+        p.evaluate("""() => {
+          data=emptyData();
+          data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:1000,includeInNetWorth:true}];
+          data.envelopes=[{id:'e0',name:'Groceries',budgetAmount:0,cadence:'monthly',rolloverPolicy:'rollover'}];
+          data.transactions=[['2024-01-04',41],['2024-01-18',55],['2024-02-02',47],['2024-02-16',36],['2024-03-01',20]]
+            .map((x,i)=>({id:'h'+i,date:x[0],type:'expense',amount:x[1],accountId:'eb',envelopeId:'e0',payee:'Corner Market',notes:''}));
+          activeView='reconcile';render();undoStack.length=0;redoStack.length=0;
+        }""")
+        main_csv = ("Date,Description,Amount,Balance\n2024-03-01,CORNER MARKET 12,-20.00,801.00\n"
+                    "2024-03-04,CORNER MARKET 12,-30.00,771.00\n2024-03-05,TRANSFER TO SAVINGS,-100.00,671.00\n")
+        second_csv = "Date,Description,Amount,Balance\n2024-03-05,FROM MAIN,100.00,100.00\n2024-03-06,DENTIST CLINIC,-40.00,60.00\n"
+        p.evaluate("bankImportStart('eb')")
+        p.locator('#bk_file').set_input_files([
+            {'name': 'main.csv', 'mimeType': 'text/csv', 'buffer': main_csv.encode()},
+            {'name': 'second.csv', 'mimeType': 'text/csv', 'buffer': second_csv.encode()}])
+        p.wait_for_function('document.getElementById("bk_bal") && document.getElementById("bk_bal").value==="731.00"')
+        self.assertEqual(p.locator('#bk_asof').input_value(), '2024-03-06')
+        self.assertEqual(p.locator('.bank-src').count(), 2)
+        self.assertIn('1 move between these accounts', p.locator('.modal').inner_text())
+        self.assertTrue(p.locator('#bk_internal').is_checked())
+        # Adding the same file again must not double its lines.
+        p.locator('#bk_file').set_input_files({'name': 'main.csv', 'mimeType': 'text/csv', 'buffer': main_csv.encode()})
+        p.wait_for_timeout(300)
+        self.assertEqual(p.locator('.bank-src').count(), 2)
+        p.locator('#bk_go').click()
+        p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankAuto).map(t=>[t.amount,t.payee])"), [[30, 'Corner Market']])
+        self.assertEqual(p.evaluate("data.bankQueue.map(q=>[q.amount,q.desc])"), [[-40, 'DENTIST CLINIC']])
+        self.assertEqual(p.evaluate("data.accounts[0].bank.lastRun.internalCount"), 1)
+        self.assertEqual(p.evaluate("bankStatus(data.accounts[0]).diff"), -40)
+
     def test_scenarios_compare_apply_and_undo(self):
         p=self.page
         nxt="monthKeyAdd(monthKeyOf(todayISO()),1)"

@@ -24,6 +24,9 @@ because those are the ones worth re-checking your own figures after.
   statement-booked entry remembers it as dismissed). The 90% rule, run leave-one-out over the
   history of one real account, would have booked about a fifth of its entries, nine in ten
   of them with the right envelope and tag.
+  One app account may be several bank accounts: the dialog takes any number of statement
+  files, adds their closing balances, and leaves out moves between them (the same amount
+  leaving one file and arriving in another within a day), which cancel in the total.
   Nothing leaves the machine. The fields are additive (`account.bank`, `data.bankQueue`, and
   `bankRef` / `bankDesc` / `bankAuto` / `source: 'statement'` on a transaction): no schema bump.
 - **Navigation and page-title icons.** Each view's tab, its phone-dock button and the
