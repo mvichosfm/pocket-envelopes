@@ -1246,7 +1246,7 @@ function bankApi() {
   const names = [
     "bankNormTokens", "bankDescKey", "bankDayDiff", "bankAddDays", "accountBalanceAsOf", "bankDecode", "bankSniffDelimiter",
     "bankGuessDateOrder", "bankHeaderKind", "bankDetectLayout", "bankGuessLayout", "bankParseStatement", "bankStatementEnd",
-    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements", "statementLinkOk",
+    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements", "statementLinkOk", "bankTimeline", "bankBalanceAt", "bankStartPosition", "bankSuggestFrom",
     "txAccountDelta", "accountById", "envelopeById", "parseCSV", "parseImportAmount", "parseImportDate", "plural",
   ];
   const bundle = [
@@ -1353,6 +1353,37 @@ if (bank) {
     assert.equal(bank.bankStatementEnd(a.rows).balance + bank.bankStatementEnd(b.rows).balance, 143, "the closing balances add up");
   });
 
+  check("A comparison window ignores older lines, starts from the day before, and the arithmetic still closes", () => {
+    // Bank: 10-01 −90 (the app booked −100: an old disagreement of 10), 11-03 −10, 11-04 −20 (missing in the app),
+    // 11-06 −7 (the app has it on 11-02, before the window). The app also has a 11-05 −3 the bank lacks.
+    seed([
+      mkTx("o", "2026-10-01", "expense", 100, "Old", "groc"), mkTx("m", "2026-11-03", "expense", 10, "Matched", "groc"),
+      mkTx("e", "2026-11-02", "expense", 7, "Edge", "groc"), mkTx("a", "2026-11-05", "expense", 3, "AppOnlyThing", "fun"),
+    ]);
+    const lines = stmt([["2026-10-01", "OLD", -90, 910], ["2026-11-03", "MATCHED", -10, 900], ["2026-11-04", "NEW LINE", -20, 880], ["2026-11-06", "EDGE", -7, 873]]);
+    const plan = bank.bankPlan("eb", { skipped: 0, rows: lines }, 873, "2026-11-06", { from: "2026-11-04", startBank: 900 });
+    deepEq(plan.rows.map((r) => r.desc), ["NEW LINE", "EDGE"], "only the window's lines count; the older one is ignored");
+    deepEq(plan.missing.map((x) => x.row.desc), ["NEW LINE"]);
+    assert.equal(plan.startGap, 17, "bank 900 against app 883 the day before");
+    assert.equal(plan.gap, -7);
+    assert.equal(plan.appOnlySum, -3);
+    assert.equal(plan.unexplained, 0, "the change in the gap is fully explained, boundary pair included");
+    assert.equal(bank.bankPlan("eb", { skipped: 0, rows: lines }, 873, "2026-11-06").rows.length, 4, "no window: every line, as before");
+    // balances at a day, from a newest-first or an oldest-first file, and before the first line
+    const asc = lines, desc = [...lines].reverse();
+    for (const f of [asc, desc]) {
+      assert.equal(bank.bankBalanceAt(f, "2026-11-03"), 900);
+      assert.equal(bank.bankBalanceAt(f, "2026-11-05"), 880);
+      assert.equal(bank.bankBalanceAt(f, "2026-09-30"), 1000, "before the first line: the balance that line started from");
+    }
+    assert.equal(bank.bankBalanceAt([{ date: "2026-11-01", amount: 1, balance: null }], "2026-11-01"), null);
+    deepEq(bank.bankStartPosition([{ parsed: { rows: lines } }], "eb", "2026-11-04"), { day: "2026-11-03", app: 883, bank: 900, gap: 17 });
+    assert.equal(bank.bankStartPosition([{ parsed: { rows: lines } }], "eb", "nope"), null);
+    assert.equal(bank.bankSuggestFrom([{ parsed: { rows: lines } }], "eb", "2026-11-06"), "2026-11-02", "the best-agreeing recent day wins");
+    const noBal = lines.map((r) => ({ ...r, balance: null }));
+    assert.equal(bank.bankSuggestFrom([{ parsed: { rows: noBal } }], "eb", "2026-11-06"), "2026-10-23", "no running balance: two weeks back");
+  });
+
   check("A Greek file saved as windows-1253 is decoded", () => {
     const bytes = Uint8Array.from([0xC1, 0xE8, 0xDE, 0xED, 0xE1]);   // "Αθήνα" in windows-1253
     assert.equal(bank.bankDecode(bytes.buffer), "Αθήνα");
@@ -1452,7 +1483,7 @@ if (bank) {
 
   check("Plan: a statement that matches almost nothing is held, not booked", () => {
     seed([...history(5)]);
-    const rows = Array.from({ length: 10 }, (_, i) => [`2026-11-0${(i % 8) + 1}`, "POS SKLAVENITIS", -(50 + i)]);
+    const rows = Array.from({ length: 24 }, (_, i) => [`2026-11-0${(i % 8) + 1}`, "POS SKLAVENITIS", -(50 + i)]);
     const plan = bank.bankPlan("eb", { skipped: 0, rows: stmt(rows) }, 5000, "2026-11-08");
     assert.ok(plan.holdReason, "hold reason set");
     assert.equal(plan.willAuto, false);

@@ -7138,7 +7138,8 @@ function deleteTransaction(id) {
 // Pure helpers (no DOM) come first so the audit can run them by name.
 const BANK_AUTO_CONF = 0.9;        // confidence at or above which a missing line is booked without asking
 const BANK_DATE_WINDOW = 4;        // days a bank booking date may differ from the date the user entered
-const BANK_MAX_AUTO = 60;          // more automatic lines than this in one run → hold for a human look
+const BANK_HOLD_MIN_LINES = 20;    // a window with fewer lines is too short to judge "matches almost nothing" by
+const BANK_MAX_AUTO = 60;         // more automatic lines than this in one run → hold for a human look
 const BANK_NOISE = new Set(['pos', 'card', 'visa', 'mastercard', 'maestro', 'debit', 'purchase', 'payment',
   'www', 'com', 'gr', 'sa', 'ae', 'ltd', 'eur', 'ref', 'trn', 'αγορα', 'καρτας', 'καρτα', 'αε']);
 const bankRound = n => Math.round(n * 100) / 100;
@@ -7298,6 +7299,19 @@ function bankParseStatement(rows, layout, dateOrder, accountId) {
     x.ref = base + '|' + k;
   }
   return { rows: out, skipped };
+}
+// A file's lines in time order (a newest-first file is reversed).
+function bankTimeline(rows) {
+  return rows.length > 1 && rows[0].date > rows[rows.length - 1].date ? [...rows].reverse() : rows;
+}
+// One file's balance at the end of `date`: the running balance on its last line on or before that day, or, before its
+// first line, the balance that line started from. null when the file has no balance column.
+function bankBalanceAt(rows, date) {
+  const asc = bankTimeline(rows);
+  if (!asc.length || asc.some(r => r.balance == null)) return null;
+  let last = null;
+  for (const r of asc) { if (r.date <= date) last = r; else break; }
+  return last ? last.balance : bankRound(asc[0].balance - asc[0].amount);
 }
 // The closing balance a statement states: the running balance on its latest
 // line (the first such line when the file is newest-first, the last otherwise).
@@ -7502,12 +7516,32 @@ function bankSuggest(row, accountId, hist, dueList) {
 
 // ---- the plan ---------------------------------------------------------------
 // Everything a statement run would do, computed without touching the data.
-function bankPlan(accountId, parsed, bankBalance, asOf) {
+function bankPlan(accountId, parsed, bankBalance, asOf, opts) {
+  opts = opts || {};
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(opts.from || '') ? opts.from : '';   // first day compared; '' = every line of the statement
   const acc = accountById(accountId);
-  const rows = parsed.rows.filter(r => r.date <= asOf);
+  const inWin = d => (!from || d >= from) && d <= asOf;
+  // Lines before `from` are kept for one purpose only: to pair with app entries just inside the window.
+  const pool = parsed.rows.filter(r => r.date <= asOf && (!from || r.date >= bankAddDays(from, -BANK_DATE_WINDOW)));
   const appBal = bankRound(accountBalanceAsOf(acc, asOf));
   const gap = bankRound(bankBalance - appBal);
-  const m = bankMatchRows(accountId, rows, asOf);
+  const m = bankMatchRows(accountId, pool, asOf);
+  const rows = pool.filter(r => inWin(r.date));
+  const matchedWin = m.matched.filter(x => inWin(x.row.date));
+  m.missing = m.missing.filter(r => inWin(r.date));
+  m.queued = m.queued.filter(r => inWin(r.date));
+  m.appOnly = m.appOnly.filter(x => !from || x.tx.date >= from);
+  // Where the two stood the day before the window: drift older than the window is not this check's business.
+  const startApp = from ? bankRound(accountBalanceAsOf(acc, bankAddDays(from, -1))) : null;
+  const startBank = from && Number.isFinite(opts.startBank) ? bankRound(opts.startBank) : null;
+  const startGap = startBank === null ? null : bankRound(startBank - startApp);
+  // A pair that straddles the window's first day counts on one side only.
+  let boundary = 0;
+  if (from) for (const x of m.matched) {
+    const rowIn = inWin(x.row.date), txIn = x.tx.date >= from && x.tx.date <= asOf;
+    if (rowIn && !txIn) boundary += x.row.amount;
+    else if (!rowIn && txIn) boundary -= txAccountDelta(x.tx, accountId);
+  }
   const hist = bankHistoryIndex(), due = dueRecurringOccurrences();
   const missing = m.missing.map(row => {
     const sug = bankSuggest(row, accountId, hist, due);
@@ -7521,16 +7555,16 @@ function bankPlan(accountId, parsed, bankBalance, asOf) {
   const earlierSum = bankRound(m.queued.reduce((s, r) => s + r.amount, 0));
   const balanced = Math.abs(gap) < 0.005;
   let holdReason = '';
-  if (!balanced && rows.length >= 8 && m.matched.length < rows.length * 0.2)
+  if (!balanced && rows.length >= BANK_HOLD_MIN_LINES && matchedWin.length < rows.length * 0.2)
     holdReason = 'Fewer than one statement line in five matches anything already in the app. This may be the wrong account, or the first statement you check for it.';
   else if (!balanced && auto.length > BANK_MAX_AUTO)
     holdReason = `${auto.length} lines would be added automatically, more than the ${BANK_MAX_AUTO} that are booked without a look.`;
   return {
-    accountId, asOf, bankBalance: bankRound(bankBalance), appBal, gap, rows, skipped: parsed.skipped,
-    matched: m.matched, queuedAlready: m.queued, missing, auto, queue, appOnly: m.appOnly,
+    accountId, asOf, from, startBank, startApp, startGap, bankBalance: bankRound(bankBalance), appBal, gap, rows, skipped: parsed.skipped,
+    matched: matchedWin, queuedAlready: m.queued, missing, auto, queue, appOnly: m.appOnly,
     missingSum, autoSum: sumRows(auto), queueSum: sumRows(queue), appOnlySum,
-    // bank − app = (lines the app lacks) − (entries the bank lacks) + unexplained
-    unexplained: bankRound(gap - missingSum - earlierSum + appOnlySum), earlierSum,
+    // (bank − app) now, less the same on the day before the window = lines the app lacks − entries the bank lacks + boundary + unexplained
+    unexplained: bankRound(gap - (startGap || 0) - missingSum - earlierSum + appOnlySum - boundary), earlierSum,
     balanced, holdReason, willAuto: !balanced && !holdReason, internalLeftOut: parsed.internalLeftOut || 0
   };
 }
@@ -7574,7 +7608,8 @@ function bankApplyPlan(plan, autoOn) {
       autoIds, autoSum, queuedCount: queuedItems.length, queuedSum: bankRound(queuedItems.reduce((s, x) => s + x.row.amount, 0)),
       appOnly: plan.appOnly.slice(0, 40).map(x => ({ id: x.tx.id, date: x.tx.date, payee: String(x.tx.payee || '').slice(0, 80), delta: x.delta, pending: !!x.maybePending })),
       appOnlyCount: plan.appOnly.length, appOnlySum: plan.appOnlySum, unexplained: plan.unexplained,
-      earlierCount: plan.queuedAlready.length, earlierSum: plan.earlierSum, internalCount: plan.internalLeftOut
+      earlierCount: plan.queuedAlready.length, earlierSum: plan.earlierSum, internalCount: plan.internalLeftOut,
+      from: plan.from, startBank: plan.startBank, startApp: plan.startApp, startGap: plan.startGap
     }
   };
   saveDirty();
@@ -7684,6 +7719,8 @@ function bankImportRebuild() {
     s.balanceText = allEnds ? bankRound(ok.reduce((t, x) => t + x.end.balance, 0)).toFixed(2) : '';
     s.asOf = allEnds ? ok.map(x => x.end.asOf).sort().pop() : dates[dates.length - 1];
   } else if (!s.asOf) s.asOf = dates[dates.length - 1];
+  // Compare only the recent lines by default: a statement reaches back further than the two sides agree.
+  if (!s.fromEdited && /^\d{4}-\d{2}-\d{2}$/.test(s.asOf || '')) s.from = bankSuggestFrom(ok, s.accountId, s.asOf);
 }
 function bankImportDraw() {
   const s = _bankImp;
@@ -7728,16 +7765,24 @@ function bankImportDraw() {
     <div class="field check"><label><input type="checkbox" id="bk_internal" ${s.dropInternal ? 'checked' : ''}>
       Leave out ${plural(m.internal.length, 'move')} between these accounts <span class="micro">(${m.internal.slice(0, 4).map(p => `${fmtDate(p.date)} ${fmt(Math.abs(p.amount))}`).join(', ')}${m.internal.length > 4 ? '…' : ''})</span></label>
       <div class="micro">The same amount leaving one file and arriving in another on the same day. It cancels out in the total, so the app has no entry for it.</div></div>` : '';
+  const winRows = m ? m.rows.filter(x => !s.from || x.date >= s.from) : [];
+  const start = m ? bankStartPosition(s.sources, s.accountId, s.from) : null;
   const preview = m ? `
     <div class="field" style="background:var(--bg-3);padding:10px 12px;border-radius:6px;border:1px solid var(--border);">
-      <div style="color:var(--text-dim);font-size:13px;margin-bottom:6px;">${plural(m.rows.length, 'statement line')} to compare${s.sources.length > 1 ? ` from ${s.sources.length} files` : ''}</div>
-      ${m.rows.slice(0, 3).map(x => `<div style="font-variant-numeric:tabular-nums;font-size:13px;line-height:1.6;">${x.date} · ${esc(x.desc || '—')} · ${bankSigned(x.amount)}</div>`).join('')}
+      <div style="color:var(--text-dim);font-size:13px;margin-bottom:6px;">${plural(winRows.length, 'statement line')} to compare${s.from ? ` from ${fmtDate(s.from)}` : ''} (of ${m.rows.length} in the file${s.sources.length > 1 ? 's' : ''})</div>
+      ${winRows.slice(0, 3).map(x => `<div style="font-variant-numeric:tabular-nums;font-size:13px;line-height:1.6;">${x.date} · ${esc(x.desc || '—')} · ${bankSigned(x.amount)}</div>`).join('')}
     </div>
     <div class="field-row">
       <div class="field"><label>${s.sources.length > 1 ? 'Total bank balance' : 'Bank balance'} ${s.balanceText && !s.balEdited ? '<span class="muted">from the statement' + (s.sources.length > 1 ? 's, added up' : '') + '</span>' : '<span class="muted">type it from your bank</span>'}</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="bk_bal" value="${esc(s.balanceText)}" placeholder="e.g. 1234,56"></div>
       <div class="field"><label>…as of</label><input type="date" id="bk_asof" value="${esc(s.asOf)}"></div>
-    </div>` : '';
+    </div>
+    <div class="field"><label>Compare lines from <span class="muted">older lines are left out</span></label>
+      <input type="date" id="bk_from" value="${esc(s.from || '')}">
+      <div class="micro" style="margin-top:4px;">${start ? (start.gap === null
+        ? `On ${fmtDate(start.day)} the app showed ${fmt(start.app)}; this statement has no running balance, so the bank's figure that day is unknown.`
+        : `The day before (${fmtDate(start.day)}): bank ${fmt(start.bank)}, app ${fmt(start.app)}, ${Math.abs(start.gap) < 0.005 ? 'they agreed' : `difference ${fmt(start.gap)}, which this check leaves alone`}.`)
+        : 'Every line of the statement is compared.'}</div></div>` : '';
   openModal(`
     <h2>Check a bank statement</h2>
     <p style="color:var(--text-dim);margin-top:0;">Pick the account and give the statement as a CSV file (in Excel: Save as CSV) or paste its table.
@@ -7780,6 +7825,9 @@ function bankImportDraw() {
   });
   const internalBox = document.getElementById('bk_internal');
   if (internalBox) internalBox.onchange = () => { bankImportReadFields(); s.dropInternal = internalBox.checked; refresh(); };
+  const fromBox = document.getElementById('bk_from'), asOfBox = document.getElementById('bk_asof');
+  if (fromBox) fromBox.onchange = () => { bankImportReadFields(); refresh(); };               // the preview and the starting position follow the date
+  if (asOfBox) asOfBox.onchange = () => { bankImportReadFields(); s.balEdited = true; refresh(); };   // the user has taken over the balance and its date
   s.sources.forEach((src, i) => ['c_date', 'c_desc', 'dorder', 'mode', 'c_amount', 'c_debit', 'c_credit', 'c_bal'].forEach(k => {
     const el = document.getElementById(`bk_${k}_${i}`);
     if (el) el.onchange = () => { src.mapOpen = true; bankImportReadFields(); bankSourceParse(src, false); refresh(); };
@@ -7807,6 +7855,31 @@ function bankImportReadFields() {
   });
   const bal = v('bk_bal'); if (bal !== null && bal !== s.balanceText) { s.balanceText = bal; s.balEdited = true; }
   const asOf = v('bk_asof'); if (asOf !== null) s.asOf = asOf;
+  const from = v('bk_from');
+  if (from !== null && from !== s.from) { s.from = from; s.fromEdited = true; }
+}
+// Where the comparison window should begin: the day after the day, within the last month (but at least three days
+// back), on which the bank and the app agreed best, later days winning ties. Without running balances, two weeks back.
+function bankSuggestFrom(sources, accountId, asOf) {
+  const fallback = bankAddDays(asOf, -14);
+  let bestGap = null, bestFrom = fallback;
+  for (let back = 3; back <= 30; back++) {
+    const from = bankAddDays(asOf, -back + 1);
+    const pos = bankStartPosition(sources, accountId, from);
+    if (!pos || pos.gap === null) return fallback;
+    if (bestGap === null || Math.abs(pos.gap) < bestGap - 1e-9) { bestGap = Math.abs(pos.gap); bestFrom = from; }
+  }
+  return bestFrom;
+}
+// Bank total and app balance on the day before the comparison window. bank is null when a file has no running balance.
+function bankStartPosition(sources, accountId, from) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '')) return null;
+  const day = bankAddDays(from, -1);
+  const app = bankRound(accountBalanceAsOf(accountById(accountId), day));
+  const parts = sources.filter(x => x.parsed).map(x => bankBalanceAt(x.parsed.rows, day));
+  if (!parts.length || parts.some(p => p === null)) return { day, app, bank: null, gap: null };
+  const bank = bankRound(parts.reduce((t, p) => t + p, 0));
+  return { day, app, bank, gap: bankRound(bank - app) };
 }
 function bankImportRun() {
   const s = _bankImp;
@@ -7814,7 +7887,10 @@ function bankImportRun() {
   if (!Number.isFinite(bal)) { toast('Type the bank balance (as on the statement)', 3500, 'error'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.asOf || '')) { toast('Choose the date the balance is as of', 3500, 'error'); return; }
   if (!s.merged || !s.merged.rows.length) return;
-  const plan = bankPlan(s.accountId, s.merged, bal, s.asOf);
+  if (s.from && !/^\d{4}-\d{2}-\d{2}$/.test(s.from)) { toast('Choose the first day to compare, or clear it to compare every line', 3500, 'error'); return; }
+  if (s.from && s.from > s.asOf) { toast('The first day to compare is after the balance date', 3500, 'error'); return; }
+  const start = bankStartPosition(s.sources, s.accountId, s.from);
+  const plan = bankPlan(s.accountId, s.merged, bal, s.asOf, { from: s.from || '', startBank: start ? start.bank : null });
   if (plan.holdReason && plan.missing.length) { bankHoldDialog(plan); return; }
   bankFinish(plan, true);
 }
@@ -7935,6 +8011,8 @@ function bankRunHTML(a) {
       <tr><td>Bank balance</td><td class="num">${fmt(r.bankBalance)}</td></tr>
       <tr><td>The app, same date, before the check</td><td class="num">${fmt(r.appBefore)}</td></tr>
       <tr><td><strong>Difference</strong></td><td class="num ${r.balanced ? '' : 'neg'}"><strong>${r.balanced ? 'none — balances match' : fmt(r.gapBefore)}</strong></td></tr>
+      ${r.from ? `<tr><td>Lines compared from <span class="help-tip" tabindex="0" title="Older lines were left out. The difference on the day before is what the app and the bank already disagreed by when this window began.">?</span></td>
+        <td class="num">${fmtDate(r.from)}${r.startGap != null ? ` · difference the day before ${fmt(r.startGap)}` : ' · no running balance, start not compared'}</td></tr>` : ''}
       <tr><td>Statement lines read</td><td class="num">${r.rows} · ${r.matched} already in the app${r.skipped ? ` · ${r.skipped} rows ignored` : ''}</td></tr>
       <tr><td>Added automatically (${Math.round(BANK_AUTO_CONF * 100)}%+ sure)</td><td class="num">${autoTxs.length} · ${bankSigned(r.autoSum || 0)}</td></tr>
       <tr><td>Waiting for your decision</td><td class="num">${r.queuedCount} · ${bankSigned(r.queuedSum || 0)}</td></tr>

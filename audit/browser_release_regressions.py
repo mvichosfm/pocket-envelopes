@@ -306,6 +306,34 @@ class ReleaseRegressions(unittest.TestCase):
         p.evaluate("performUndo()")                                      # the first check
         self.assertEqual(p.evaluate("[data.transactions.filter(t=>t.bankAuto).length,data.bankQueue.length,data.accounts[0].bank===undefined]"), [0, 0, True])
 
+    def test_comparison_window_limits_which_lines_are_compared(self):
+        """Decision #75: 'Compare lines from' leaves older lines (and the drift before them) out; what the window explains still adds up."""
+        p = self.page
+        p.evaluate("""() => {
+          data=emptyData();
+          data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:1000,includeInNetWorth:true}];
+          data.envelopes=[{id:'e0',name:'Groceries',budgetAmount:0,cadence:'monthly',rolloverPolicy:'rollover'}];
+          data.transactions=[['2024-01-04',41],['2024-01-18',55],['2024-02-02',47],['2024-02-16',36],['2024-03-01',20]]
+            .map((x,i)=>({id:'h'+i,date:x[0],type:'expense',amount:x[1],accountId:'eb',envelopeId:'e0',payee:'Corner Market',notes:''}));
+          activeView='reconcile';render();undoStack.length=0;redoStack.length=0;
+        }""")
+        csv = ("Date,Description,Amount,Balance\n2024-03-01,CORNER MARKET 12,-20.00,801.00\n"
+               "2024-03-04,CORNER MARKET 12,-30.00,771.00\n2024-03-06,DENTIST CLINIC,-120.00,651.00\n")
+        p.evaluate("bankImportStart('eb')")
+        p.locator('#bk_file').set_input_files({'name': 's.csv', 'mimeType': 'text/csv', 'buffer': csv.encode()})
+        p.wait_for_function('document.getElementById("bk_bal") && document.getElementById("bk_bal").value==="651.00"')
+        self.assertRegex(p.locator('#bk_from').input_value(), r'^\d{4}-\d{2}-\d{2}$')
+        p.locator('#bk_from').fill('2024-03-05')
+        p.locator('#bk_from').dispatch_event('change')
+        p.wait_for_function('document.querySelector(".modal").innerText.includes("1 statement line to compare from")')
+        self.assertRegex(p.locator('.modal').inner_text(), r'bank 771[.,]00.*app 801[.,]00')      # the browser's locale decides the separator
+        p.locator('#bk_go').click()
+        p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankAuto).length"), 0, 'the 03-04 line is before the window: not booked')
+        self.assertEqual(p.evaluate("data.bankQueue.map(q=>q.desc)"), ['DENTIST CLINIC'])
+        self.assertEqual(p.evaluate("(()=>{const r=data.accounts[0].bank.lastRun;return [r.from,r.startGap,r.unexplained]})()"), ['2024-03-05', -30, 0])
+        self.assertIn('Lines compared from', p.locator('#main').inner_text())
+
     def test_two_bank_files_make_one_app_account(self):
         """Decision #75: an app account that is the sum of two bank accounts takes two files, adds their balances, drops moves between them."""
         p = self.page

@@ -24,6 +24,10 @@ because those are the ones worth re-checking your own figures after.
   statement-booked entry remembers it as dismissed). The 90% rule, run leave-one-out over the
   history of one real account, would have booked about a fifth of its entries, nine in ten
   of them with the right envelope and tag.
+  Only recent lines are compared: a **Compare lines from** date (suggested as the day after the
+  recent day on which the bank and the app agreed best) leaves older lines, and the drift before
+  them, out, and shows both balances the day before; what the window explains still adds up to the
+  cent. A statement is no longer judged against history the app was never reconciled to.
   One app account may be several bank accounts: the dialog takes any number of statement
   files, adds their closing balances, and leaves out moves between them (the same amount
   leaving one file and arriving in another within a day), which cancel in the total.
