@@ -438,6 +438,40 @@ class ReleaseRegressions(unittest.TestCase):
         p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
         self.assertEqual(p.evaluate("data.accounts[0].bank.available.amount"), 3800, 'a Compare without a fresh figure keeps the last one')
 
+    def test_lines_dated_tomorrow_are_booked_today(self):
+        """The bank dates weekend card payments to its next working day; the app books them today, never in the future."""
+        p = self.page
+        today, tomorrow = p.evaluate("[todayISO(), isoDate(addDays(new Date(), 1))]")
+        p.evaluate("""() => {
+          data=emptyData();
+          data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:1000,includeInNetWorth:true}];
+          data.envelopes=[{id:'e0',name:'Groceries',budgetAmount:0,cadence:'monthly',rolloverPolicy:'rollover'}];
+          data.transactions=[['2024-01-04',41],['2024-01-18',55],['2024-02-02',47],['2024-02-16',36]]
+            .map((x,i)=>({id:'h'+i,date:x[0],type:'expense',amount:x[1],accountId:'eb',envelopeId:'e0',payee:'Corner Market',notes:''}));
+          activeView='reconcile';render();undoStack.length=0;redoStack.length=0;
+        }""")
+        # 1000 - 179 history = 821; the bank has two more lines, both dated tomorrow.
+        csv = (f"Date,Description,Amount,Balance\n{today},OPENING,0.01,821.01\n{today},OPENING BACK,-0.01,821.00\n"
+               f"{tomorrow},CORNER MARKET 12,-30.00,791.00\n{tomorrow},DENTIST CLINIC,-120.00,671.00\n")
+        p.evaluate("bankImportStart('eb')")
+        p.locator('#bk_file').set_input_files({'name': 's.csv', 'mimeType': 'text/csv', 'buffer': csv.encode()})
+        p.wait_for_function('document.getElementById("bk_bal") && document.getElementById("bk_bal").value==="671.00"')
+        p.locator('#bk_from').fill(today); p.locator('#bk_from').dispatch_event('change')
+        p.wait_for_function(f'document.getElementById("bk_from").value === "{today}"')
+        p.locator('#bk_go').click()
+        p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
+        auto = p.evaluate("data.transactions.filter(t=>t.bankAuto).map(t=>[t.payee,t.date,t.notes])")
+        self.assertEqual(auto, [['Corner Market', today, f'Added from the bank statement (bank date {tomorrow})']])
+        # The queued line keeps the bank's date; both ways of booking it use today.
+        self.assertEqual(p.evaluate("data.bankQueue.filter(q=>q.desc==='DENTIST CLINIC').map(q=>q.date)"), [tomorrow])
+        p.locator('[data-bank-resolve]').first.click()
+        p.wait_for_function('document.getElementById("modalBg").classList.contains("open")')
+        self.assertEqual(p.locator('#t_date').input_value(), today)
+        p.evaluate("closeModal()")
+        p.evaluate("bankUseGuess(data.bankQueue.find(q=>q.desc==='DENTIST CLINIC').id)")
+        self.assertEqual(p.evaluate("data.transactions.filter(t=>t.bankDesc==='DENTIST CLINIC').map(t=>t.date)"), [today])
+        self.assertEqual(p.evaluate(f"data.transactions.filter(t=>t.date>'{today}').length"), 0, 'nothing from the bank lands in the future')
+
     def test_two_bank_files_make_one_app_account(self):
         """Decision #75: an app account that is the sum of two bank accounts takes two files, adds their balances, drops moves between them."""
         p = self.page

@@ -7569,6 +7569,18 @@ function bankPlan(accountId, parsed, bankBalance, asOf, opts) {
   };
 }
 
+// The date a statement line is booked on. A bank dates weekend and evening card payments to its next working day,
+// so a line can carry tomorrow's date while the money has already gone: book it today, never in the future (the
+// owner's rule, 2026-11-08), and keep the bank's own date in the note. The line's identity (ref) is unchanged, and
+// the date window of the matching covers the difference.
+function bankBookingDate(iso) {
+  const today = todayISO();
+  return iso > today ? today : iso;
+}
+function bankStatementNote(iso) {
+  return 'Added from the bank statement' + (iso > todayISO() ? ` (bank date ${iso})` : '');
+}
+
 // Write the plan into the data. `autoOn` false sends every missing line to the
 // queue (a held run the user chose not to auto-book). One undo step.
 function bankApplyPlan(plan, autoOn) {
@@ -7582,9 +7594,9 @@ function bankApplyPlan(plan, autoOn) {
     if (plan.balanced) continue;                       // balances agree: touch nothing
     if (doAuto && it.auto) {
       const tx = {
-        id: uid(), date: it.row.date, type: it.row.amount < 0 ? 'expense' : 'income', amount: Math.abs(it.row.amount),
+        id: uid(), date: bankBookingDate(it.row.date), type: it.row.amount < 0 ? 'expense' : 'income', amount: Math.abs(it.row.amount),
         accountId: plan.accountId, envelopeId: it.sug.envelopeId || null, payee: it.sug.payee || it.row.desc,
-        notes: 'Added from the bank statement', source: 'statement', bankRef: it.row.ref, bankDesc: it.row.desc, bankAuto: true
+        notes: bankStatementNote(it.row.date), source: 'statement', bankRef: it.row.ref, bankDesc: it.row.desc, bankAuto: true
       };
       if (it.sug.tag) tx.tag = it.sug.tag;
       data.transactions.push(tx);
@@ -8045,8 +8057,9 @@ function bankResolve(id) {
   const q = bankQueueItem(id); if (!q) return;
   const s = q.sug || {};
   const prefill = {
-    id: uid(), date: q.date, type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
-    envelopeId: s.envelopeId && envelopeById(s.envelopeId) ? s.envelopeId : null, payee: s.payee || q.desc, notes: '',
+    id: uid(), date: bankBookingDate(q.date), type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
+    envelopeId: s.envelopeId && envelopeById(s.envelopeId) ? s.envelopeId : null, payee: s.payee || q.desc,
+    notes: q.date > todayISO() ? bankStatementNote(q.date) : '',
     ...(s.tag ? { tag: s.tag } : {}), source: 'statement', bankRef: q.ref, bankDesc: q.desc
   };
   txFormModal(prefill, true, {
@@ -8059,9 +8072,9 @@ function bankUseGuess(id) {
   const s = q.sug || {};
   pushUndo('Book bank line');
   data.transactions.push({
-    id: uid(), date: q.date, type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
+    id: uid(), date: bankBookingDate(q.date), type: q.amount < 0 ? 'expense' : 'income', amount: Math.abs(q.amount), accountId: q.accountId,
     envelopeId: s.envelopeId && envelopeById(s.envelopeId) ? s.envelopeId : null, payee: s.payee || q.desc,
-    notes: 'Added from the bank statement', source: 'statement', bankRef: q.ref, bankDesc: q.desc, ...(s.tag ? { tag: s.tag } : {})
+    notes: bankStatementNote(q.date), source: 'statement', bankRef: q.ref, bankDesc: q.desc, ...(s.tag ? { tag: s.tag } : {})
   });
   data.bankQueue = data.bankQueue.filter(x => x.id !== id);
   saveDirty(); render();

@@ -1246,7 +1246,7 @@ function bankApi() {
   const names = [
     "bankNormTokens", "bankDescKey", "bankDayDiff", "bankAddDays", "accountBalanceAsOf", "bankDecode", "bankSniffDelimiter",
     "bankGuessDateOrder", "bankHeaderKind", "bankDetectLayout", "bankGuessLayout", "bankParseStatement", "bankStatementEnd",
-    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements", "statementLinkOk", "bankTimeline", "bankBalanceAt", "bankStartPosition", "bankSuggestFrom",
+    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements", "statementLinkOk", "bankTimeline", "bankBalanceAt", "bankStartPosition", "bankSuggestFrom", "bankBookingDate", "bankStatementNote",
     "txAccountDelta", "accountById", "envelopeById", "parseCSV", "parseImportAmount", "parseImportDate", "plural",
   ];
   const bundle = [
@@ -1255,6 +1255,7 @@ function bankApi() {
     "const RETURN_PAYEE = 'Return to spendable';",
     "const SCENARIO_ID_RE = /^[A-Za-z0-9_\\-]{1,80}$/;",
     "const dueRecurringOccurrences = () => __due;",
+    "var __today = '2026-11-08'; const todayISO = () => __today;",
     source.slice(start, end),
     ...names.map((name) => extractFunction(source, name)),
     `globalThis.__bank = { ${names.join(",")}, setData(v) { data = v; }, getData() { return data; }, setDue(v) { __due = v; }, BANK_AUTO_CONF, BANK_MAX_AUTO };`,
@@ -1507,6 +1508,14 @@ if (bank) {
     assert.equal(raw.bankQueue[0].status, "open");
     const empty = { accounts: [] }; bank.sanitizeBank(empty);
     deepEq(empty.bankQueue, []);
+  });
+
+  check("A statement line dated after today is booked today, with the bank's date in the note", () => {
+    assert.equal(bank.bankBookingDate("2026-11-09"), "2026-11-08", "tomorrow (the bank's next working day) becomes today");
+    assert.equal(bank.bankBookingDate("2026-11-08"), "2026-11-08");
+    assert.equal(bank.bankBookingDate("2026-11-02"), "2026-11-02", "past dates are kept as the bank gives them");
+    assert.equal(bank.bankStatementNote("2026-11-09"), "Added from the bank statement (bank date 2026-11-09)");
+    assert.equal(bank.bankStatementNote("2026-11-05"), "Added from the bank statement");
   });
 
   check("The bank's available balance is kept when well formed and dropped when not", () => {
