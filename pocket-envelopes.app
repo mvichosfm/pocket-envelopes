@@ -7977,11 +7977,13 @@ function bankUseGuess(id) {
 }
 function bankDismiss(id) {
   const q = bankQueueItem(id); if (!q) return;
-  if (!confirm(`Leave “${q.desc || 'this line'}” (${fmt(Math.abs(q.amount))}) out of the app?\n\nThe bank balance will keep differing from the app's by this amount. You can reopen it from the dismissed list.`)) return;
+  // No native confirm(): a window that does not show browser dialogs (an automated or embedded one) would swallow the
+  // click and the button would look dead. The warning rides on the Undo toast instead, like every other bank action.
   pushUndo('Dismiss bank line');
   q.status = 'dismissed';
   saveDirty(); render();
-  toast('Dismissed', 4000, 'success', { label: 'Undo', onClick: performUndo });
+  toast(`Left “${q.desc || 'this line'}” out of the app (${fmt(Math.abs(q.amount))}); the bank balance will keep differing by that. Reopen it from the dismissed list.`,
+    9000, 'success', { label: 'Undo', onClick: performUndo });
 }
 function bankReopen(id) {
   const q = bankQueueItem(id); if (!q) return;
@@ -7991,10 +7993,10 @@ function bankReopen(id) {
 }
 function bankStopTracking(id) {
   const a = accountById(id); if (!a || !a.bank) return;
-  if (!confirm(`Stop comparing “${a.name}” with the bank? Lines still waiting for you stay on this page.`)) return;
   pushUndo('Stop bank tracking');
   delete a.bank;
   saveDirty(); render();
+  toast(`“${a.name}” is no longer compared with the bank. Lines still waiting stay on this page.`, 9000, 'success', { label: 'Undo', onClick: performUndo });
 }
 
 // ---- the Reconcile page -------------------------------------------------------

@@ -334,6 +334,28 @@ class ReleaseRegressions(unittest.TestCase):
         self.assertEqual(p.evaluate("(()=>{const r=data.accounts[0].bank.lastRun;return [r.from,r.startGap,r.unexplained]})()"), ['2024-03-05', -30, 0])
         self.assertIn('Lines compared from', p.locator('#main').inner_text())
 
+    def test_bank_buttons_work_in_a_window_that_swallows_browser_dialogs(self):
+        """Playwright (like an embedded browser) auto-cancels confirm(); Dismiss and Stop must not depend on it. Both stay undoable."""
+        p = self.page
+        p.evaluate("""() => {
+          data=emptyData();
+          data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:0,includeInNetWorth:true,bank:{balance:10,asOf:'2024-03-06'}}];
+          data.bankQueue=[{id:'q1',accountId:'eb',date:'2024-03-04',amount:-5,desc:'SOME SHOP',ref:'eb|x|0',status:'open',sug:{conf:0,payee:'',envelopeId:'',tag:'',why:'',rec:''}}];
+          activeView='reconcile';render();undoStack.length=0;redoStack.length=0;
+        }""")
+        p.locator('[data-bank-dismiss="q1"]').click()
+        self.assertEqual(p.evaluate("data.bankQueue[0].status"), 'dismissed')
+        p.evaluate("performUndo()")
+        self.assertEqual(p.evaluate("data.bankQueue[0].status"), 'open')
+        p.locator('[data-bank-dismiss="q1"]').click()
+        p.locator('[data-bank-reopen="q1"]').click() if p.locator('[data-bank-reopen="q1"]').is_visible() else p.locator('details.archived-list summary').click()
+        p.locator('[data-bank-reopen="q1"]').click()
+        self.assertEqual(p.evaluate("data.bankQueue[0].status"), 'open')
+        p.locator('[data-bank-stop="eb"]').click()
+        self.assertEqual(p.evaluate("data.accounts[0].bank"), None)
+        p.evaluate("performUndo()")
+        self.assertEqual(p.evaluate("data.accounts[0].bank.balance"), 10)
+
     def test_two_bank_files_make_one_app_account(self):
         """Decision #75: an app account that is the sum of two bank accounts takes two files, adds their balances, drops moves between them."""
         p = self.page
