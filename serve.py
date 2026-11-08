@@ -489,6 +489,7 @@ FETCH_COOLDOWN = int(os.environ.get("FETCH_COOLDOWN", "300"))
 FETCH_ACTIVE = ("starting", "logging-in", "waiting-approval", "downloading", "comparing")
 FETCH_STATES = FETCH_ACTIVE + ("done", "failed", "stopped")
 FETCH_STALE_SECONDS = 20 * 60          # an active state this old means the run died without saying so
+FETCH_START_GRACE_SECONDS = 120        # after a start, the task has this long to write its first status
 FETCH_STATUS_MAX_BYTES = 8 * 1024
 _FETCH_SUMMARY_KEYS = ("booked", "queued", "lines", "gap", "unexplained")
 _fetch_lock = threading.Lock()
@@ -533,6 +534,10 @@ def _fetch_status():
     started = _fetch_started_at
     at = _fetch_parse_time(st["at"]) if st else None
     if started and (st is None or at is None or at < started):
+        if (now - started).total_seconds() > FETCH_START_GRACE_SECONDS:
+            # Started, but nothing was ever reported (it died or was refused before its first status): do not stay
+            # "starting" for ever and block every later press.
+            return {"state": "stopped", "message": "The task did not report back. Check the PC it runs on.", "at": started.isoformat()}
         return {"state": "starting", "message": "Asked this PC to start the statement helper.", "at": started.isoformat()}
     if st is None:
         return {"state": "idle", "message": "", "at": None}

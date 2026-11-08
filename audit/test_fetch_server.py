@@ -154,5 +154,24 @@ class Enabled(unittest.TestCase):
                 self.assertEqual(request(port, "POST", headers=HEADER)[0], 202, "a failed start does not trigger the cooldown")
 
 
+class Silent(unittest.TestCase):
+    """A task that starts but never reports must not leave the server saying 'starting' for ever."""
+
+    def test_a_started_task_that_never_reports_stops_blocking(self):
+        with tempfile.TemporaryDirectory() as t, Env(FETCH_TASK="Test Task", FETCH_STATUS_FILE=str(Path(t) / "fetch-status.json"), FETCH_COOLDOWN="0"):
+            spec = importlib.util.spec_from_file_location("fetch_serve_silent", ROOT / "serve.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            with mock.patch("subprocess.run", Fake()):
+                self.assertEqual(module._fetch_start()[0], 202)
+                self.assertEqual(module._fetch_status()["state"], "starting")
+                self.assertEqual(module._fetch_start()[0], 409, "inside the grace period it is still starting")
+                module._fetch_started_at = datetime.datetime.now().astimezone() - datetime.timedelta(seconds=module.FETCH_START_GRACE_SECONDS + 5)
+                st = module._fetch_status()
+                self.assertEqual(st["state"], "stopped")
+                self.assertIn("did not report", st["message"])
+                self.assertEqual(module._fetch_start()[0], 202, "so the next press starts a new run (cooldown is 0)")
+
+
 if __name__ == "__main__":
     unittest.main()
