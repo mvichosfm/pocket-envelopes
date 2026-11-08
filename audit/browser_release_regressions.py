@@ -340,6 +340,25 @@ class ReleaseRegressions(unittest.TestCase):
         self.assertEqual(p.evaluate("data.accounts[0].bank.lastRun.internalCount"), 1)
         self.assertEqual(p.evaluate("bankStatus(data.accounts[0]).diff"), -40)
 
+    def test_statement_helper_link_shows_a_button_only_for_a_custom_scheme(self):
+        """Decision #76: Settings -> Statement helper link; the Reconcile page offers the button only for a custom scheme."""
+        p = self.page
+        p.evaluate("activeView='reconcile';render()")
+        self.assertEqual(p.locator('#bankFetchBtn').count(), 0)
+        p.evaluate("activeView='settings';render()")
+        field = p.locator('#s_stlink')
+        field.fill('https://example.com/'); field.dispatch_event('change')
+        self.assertEqual(p.evaluate("data.settings.statementLink"), None, 'a web address is refused')
+        field = p.locator('#s_stlink')
+        field.fill('statement-fetch:'); field.dispatch_event('change')
+        self.assertEqual(p.evaluate("data.settings.statementLink"), 'statement-fetch:')
+        p.evaluate("activeView='reconcile';render()")
+        self.assertEqual(p.locator('#bankFetchBtn').count(), 1)
+        # The click would hand the link to the operating system; here it must at least not navigate the page away.
+        p.evaluate("window.__opened=[];const o=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){window.__opened.push(this.getAttribute('href'))};0")
+        p.locator('#bankFetchBtn').click()
+        self.assertEqual(p.evaluate("window.__opened"), ['statement-fetch:'])
+
     def test_scenarios_compare_apply_and_undo(self):
         p=self.page
         nxt="monthKeyAdd(monthKeyOf(todayISO()),1)"

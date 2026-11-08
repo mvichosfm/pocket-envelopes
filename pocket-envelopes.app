@@ -7618,7 +7618,26 @@ function bankNoteDeleted(removed) {
   }
 }
 function bankCandidateAccounts() { return activeAccounts().filter(a => !a.isInvestment && a.type !== 'investment' && a.type !== 'loan'); }
-const bankSigned = n => `<span class="${n < 0 ? 'neg' : 'pos'}">${n < 0 ? '−' : '+'}${fmt(Math.abs(n))}</span>`;
+// The optional link the Reconcile page opens to start a statement helper on this PC
+// (decision #76). Only a custom scheme counts: a web address, script, data or file
+// URL is refused here and again when a file loads, so a hand-edited budget cannot
+// turn the button into a navigation to somewhere else.
+function statementLinkOk(s) {
+  const t = String(s == null ? '' : s).trim();
+  if (!t || t.length > 120 || /\s/.test(t)) return false;
+  const m = t.match(/^([a-z][a-z0-9+.-]{2,30}):/);
+  if (!m) return false;
+  return !['http', 'https', 'javascript', 'data', 'file', 'blob', 'vbscript', 'about', 'ftp', 'ws', 'wss', 'mailto', 'tel', 'sms', 'chrome', 'view-source', 'intent'].includes(m[1]);
+}
+function bankFetchStatement() {
+  const link = data && data.settings && data.settings.statementLink;
+  if (!statementLinkOk(link)) { toast('No statement helper link is set (Settings → Statement helper link)', 4000, 'error'); return; }
+  const a = document.createElement('a');
+  a.href = link; a.style.display = 'none';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('Asked this PC to start the statement helper. Log in to your bank in the window that opens; the Check a statement dialog follows.', 10000, 'info');
+}
+const bankSigned = n =>`<span class="${n < 0 ? 'neg' : 'pos'}">${n < 0 ? '−' : '+'}${fmt(Math.abs(n))}</span>`;
 
 // ---- the statement dialog ---------------------------------------------------
 // One app account can be several bank accounts (the user's "main account" is the
@@ -7966,6 +7985,7 @@ function renderReconcile() {
   <div class="page-heading"><div><h2>Reconcile with the bank</h2><p>Compare a bank statement with the app, add what is missing, and decide the rest.</p></div>
     <button class="btn primary" id="bankImportBtn">${icon('download')}Check a statement</button></div>
   <div class="toolbar">
+    ${statementLinkOk(data.settings.statementLink) ? `<button class="btn" id="bankFetchBtn" title="Starts the statement helper on this PC: you log in to your bank, it downloads the statements and hands them to Check a statement">${icon('refresh')}Fetch from the bank</button>` : ''}
     <button class="btn" id="bankSetBtn">Set a bank balance by hand</button>
     <div class="spacer"></div>
     ${open.length ? `<div class="toolbar-stat"><span class="stat-label">Waiting for you</span><strong>${plural(open.length, 'line')} · ${bankSigned(openSum)}</strong></div>` : ''}
@@ -8002,6 +8022,8 @@ function bindReconcile() {
   const on = (sel, fn) => main.querySelectorAll(sel).forEach(b => b.onclick = ev => { ev.preventDefault(); fn(b); });
   document.getElementById('bankImportBtn').onclick = () => bankImportStart();
   document.getElementById('bankSetBtn').onclick = () => bankSetBalanceDialog();
+  const fetchBtn = document.getElementById('bankFetchBtn');
+  if (fetchBtn) fetchBtn.onclick = () => bankFetchStatement();
   on('[data-bank-check]', b => bankImportStart(b.dataset.bankCheck));
   on('[data-bank-set]', b => bankSetBalanceDialog(b.dataset.bankSet));
   on('[data-bank-stop]', b => bankStopTracking(b.dataset.bankStop));
@@ -8019,6 +8041,7 @@ function wireBankLinks(root) {
 // Clean the bank fields of a loaded file: additive, no schema bump (decision #75).
 function sanitizeBank(raw) {
   const DATE = /^\d{4}-\d{2}-\d{2}$/;
+  if (raw.settings && raw.settings.statementLink !== undefined && !statementLinkOk(raw.settings.statementLink)) delete raw.settings.statementLink;
   const accIds = new Set((raw.accounts || []).map(a => a && a.id));
   for (const a of raw.accounts || []) {
     if (!a || typeof a !== 'object' || a.bank === undefined) continue;
@@ -10063,6 +10086,11 @@ function renderSettings() {
       <input id="s_fcfloor" type="text" inputmode="decimal" value="${typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''}" placeholder="none" style="width:120px;text-align:right;">
     </div>
     <div class="setting-row">
+      <div><label class="label" for="s_stlink">Statement helper link</label>
+        <div class="desc">Optional. A custom link, such as <code>statement-fetch:</code>, that your PC is set up to answer by starting a program that downloads your bank statements. When set, the Reconcile tab shows a <em>Fetch from the bank</em> button that opens it. Web addresses are not accepted; leave empty for no button.</div></div>
+      <input id="s_stlink" type="text" value="${esc(data.settings.statementLink || '')}" placeholder="none" autocomplete="off" spellcheck="false" style="width:200px;">
+    </div>
+    <div class="setting-row">
       <div><label class="label" for="s_taglimit">Tag limit</label>
         <div class="desc">How many tags you can define under Tags below (default ${TAG_LIMIT_DEFAULT}). Chip and chart colours repeat after ${chartPalette().length - 1}. Lowering it below the tags you already have keeps them all; it only stops you adding more.</div></div>
       <input id="s_taglimit" type="number" min="${TAG_LIMIT_MIN}" max="${TAG_LIMIT_MAX}" step="1" value="${Number.isInteger(data.settings.tagLimit) ? data.settings.tagLimit : ''}" placeholder="${TAG_LIMIT_DEFAULT}" style="width:80px;text-align:center;">
@@ -10164,6 +10192,16 @@ function bindSettings() {
     const v = evalAmount(raw);
     if (isNaN(v) || v < 0) { toast("Warning floor: enter a non-negative amount, or leave it empty", 3500, 'error'); e.target.value = typeof data.settings.forecastWarnBelow === 'number' ? data.settings.forecastWarnBelow : ''; return; }
     data.settings.forecastWarnBelow = Math.round(v * 100) / 100;
+    saveDirty(); render();
+  };
+  document.getElementById("s_stlink").onchange = e => {
+    const raw = e.target.value.trim();
+    if (!raw) { delete data.settings.statementLink; saveDirty(); render(); return; }
+    if (!statementLinkOk(raw)) {
+      toast('Statement helper link: use a custom link such as statement-fetch: (no web addresses, no spaces), or leave it empty', 5000, 'error');
+      e.target.value = data.settings.statementLink || ''; return;
+    }
+    data.settings.statementLink = raw;
     saveDirty(); render();
   };
   document.getElementById("s_taglimit").onchange = e => {

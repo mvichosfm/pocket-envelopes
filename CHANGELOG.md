@@ -27,6 +27,10 @@ because those are the ones worth re-checking your own figures after.
   One app account may be several bank accounts: the dialog takes any number of statement
   files, adds their closing balances, and leaves out moves between them (the same amount
   leaving one file and arriving in another within a day), which cancel in the total.
+  An optional **Statement helper link** (Settings) puts a *Fetch from the bank* button on the
+  Reconcile tab: it opens a custom link such as `statement-fetch:` that the user's own PC answers
+  by starting a statement downloader. Only a custom scheme is accepted (never a web address,
+  script, data or file URL), on entry and again when a file loads; the app itself runs nothing.
   Nothing leaves the machine. The fields are additive (`account.bank`, `data.bankQueue`, and
   `bankRef` / `bankDesc` / `bankAuto` / `source: 'statement'` on a transaction): no schema bump.
 - **Navigation and page-title icons.** Each view's tab, its phone-dock button and the

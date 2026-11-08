@@ -1246,7 +1246,7 @@ function bankApi() {
   const names = [
     "bankNormTokens", "bankDescKey", "bankDayDiff", "bankAddDays", "accountBalanceAsOf", "bankDecode", "bankSniffDelimiter",
     "bankGuessDateOrder", "bankHeaderKind", "bankDetectLayout", "bankGuessLayout", "bankParseStatement", "bankStatementEnd",
-    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements",
+    "bankMatchRows", "bankHistoryIndex", "bankSuggest", "bankPlan", "sanitizeBank", "bankMergeStatements", "statementLinkOk",
     "txAccountDelta", "accountById", "envelopeById", "parseCSV", "parseImportAmount", "parseImportDate", "plural",
   ];
   const bundle = [
@@ -1476,6 +1476,18 @@ if (bank) {
     assert.equal(raw.bankQueue[0].status, "open");
     const empty = { accounts: [] }; bank.sanitizeBank(empty);
     deepEq(empty.bankQueue, []);
+  });
+
+  check("The statement-helper link accepts only a custom scheme, on entry and when a file loads", () => {
+    for (const ok of ["statement-fetch:", "statement-fetch:apply", "my.helper+x:run?days=30"]) assert.equal(bank.statementLinkOk(ok), true, ok);
+    for (const bad of ["", "   ", "https://example.com", "HTTP://x", "javascript:alert(1)", "data:text/html,x", "file:///c:/x", "C:\\run.cmd", "c:/x", "a:b", "mailto:x@y.z", "statement fetch:", "x".repeat(130) + ":", null, undefined, 5])
+      assert.equal(bank.statementLinkOk(bad), false, String(bad));
+    const raw = { settings: { statementLink: "https://evil.example/" }, accounts: [] };
+    bank.sanitizeBank(raw);
+    assert.equal("statementLink" in raw.settings, false, "a web address in a loaded file is dropped");
+    const keep = { settings: { statementLink: "statement-fetch:" }, accounts: [] };
+    bank.sanitizeBank(keep);
+    assert.equal(keep.settings.statementLink, "statement-fetch:");
   });
 
   check("The transaction form keeps a statement line's identity when it is edited", () => {
