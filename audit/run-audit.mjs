@@ -1509,6 +1509,19 @@ if (bank) {
     deepEq(empty.bankQueue, []);
   });
 
+  check("The bank's available balance is kept when well formed and dropped when not", () => {
+    const raw = { accounts: [
+      { id: "a", bank: { balance: 10, asOf: "2026-11-01", available: { amount: 8.5, holds: 1.5, at: "2026-11-08T10:00:00Z", junk: 1 } } },
+      { id: "b", bank: { balance: 10, asOf: "2026-11-01", available: { amount: "x", at: "t" } } },
+      { id: "c", bank: { balance: 10, asOf: "2026-11-01", available: { amount: 5 } } },
+      { id: "d", bank: { balance: 10, asOf: "2026-11-01", available: [1] } },
+    ] };
+    bank.sanitizeBank(raw);
+    deepEq(raw.accounts[0].bank.available, { amount: 8.5, holds: 1.5, at: "2026-11-08T10:00:00Z" }, "numbers kept, unknown keys dropped");
+    assert.ok(!("available" in raw.accounts[1].bank) && !("available" in raw.accounts[2].bank) && !("available" in raw.accounts[3].bank));
+    assert.equal(raw.accounts[1].bank.balance, 10, "the rest of the record is untouched");
+  });
+
   check("The statement-helper link accepts only a custom scheme, on entry and when a file loads", () => {
     for (const ok of ["statement-fetch:", "statement-fetch:apply", "my.helper+x:run?days=30"]) assert.equal(bank.statementLinkOk(ok), true, ok);
     for (const bad of ["", "   ", "https://example.com", "HTTP://x", "javascript:alert(1)", "data:text/html,x", "file:///c:/x", "C:\\run.cmd", "c:/x", "a:b", "mailto:x@y.z", "statement fetch:", "x".repeat(130) + ":", null, undefined, 5])

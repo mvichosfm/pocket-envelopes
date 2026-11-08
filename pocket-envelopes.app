@@ -7600,8 +7600,11 @@ function bankApplyPlan(plan, autoOn) {
   }
   const autoSum = bankRound(autoIds.length ? plan.auto.reduce((s, x) => s + x.row.amount, 0) : 0);
   const queuedItems = plan.balanced ? [] : (doAuto ? plan.queue : plan.missing);
+  // The bank's AVAILABLE balance (the ledger balance less money held for card payments) is not in a statement; a
+  // downloader can hand it over (bankSetAvailable). Keep the latest one across runs.
+  const avail = bankTakeAvailable(plan.accountId) || (acc.bank && acc.bank.available) || null;
   acc.bank = {
-    balance: plan.bankBalance, asOf: plan.asOf,
+    balance: plan.bankBalance, asOf: plan.asOf, ...(avail ? { available: avail } : {}),
     lastRun: {
       at: new Date().toISOString(), asOf: plan.asOf, bankBalance: plan.bankBalance, appBefore: plan.appBal, gapBefore: plan.gap,
       rows: plan.rows.length, matched: plan.matched.length, skipped: plan.skipped || 0, balanced: plan.balanced, hold: plan.holdReason,
@@ -7616,6 +7619,24 @@ function bankApplyPlan(plan, autoOn) {
   return { autoIds, queued: queuedItems.length };
 }
 
+// The bank's available balance, when something that can read it (the statement downloader) hands it over: the amount, the
+// money on hold inside it, and when it was read. Display only, never an accounting input. If the account is already
+// tracked it is recorded at once; otherwise it waits for the next Compare.
+let _bankAvailableHint = null;
+function bankSetAvailable(accountId, amount, holds) {
+  const a = accountById(accountId);
+  if (!a || !Number.isFinite(amount)) return false;
+  const available = { amount: bankRound(amount), ...(Number.isFinite(holds) ? { holds: bankRound(holds) } : {}), at: new Date().toISOString() };
+  if (a.bank) { a.bank.available = available; _bankAvailableHint = null; saveDirty(); render(); }
+  else _bankAvailableHint = { accountId, available };
+  return true;
+}
+function bankTakeAvailable(accountId) {
+  const h = _bankAvailableHint;
+  if (!h || h.accountId !== accountId) return null;
+  _bankAvailableHint = null;
+  return h.available;
+}
 // What the bank says against what the app says, for one account.
 function bankStatus(a) {
   const b = a && a.bank;
@@ -7624,7 +7645,7 @@ function bankStatus(a) {
   const diff = bankRound(b.balance - app);
   const open = (data.bankQueue || []).filter(q => q.accountId === a.id && q.status === 'open');
   return {
-    bank: b.balance, asOf: b.asOf, app, diff, ok: Math.abs(diff) < 0.005,
+    bank: b.balance, asOf: b.asOf, avail: b.available || null, app, diff, ok: Math.abs(diff) < 0.005,
     open: open.length, openSum: bankRound(open.reduce((s, q) => s + q.amount, 0)),
     ageDays: Math.max(0, bankDayDiff(todayISO(), b.asOf))
   };
@@ -7633,7 +7654,7 @@ function bankStatusLine(a) {
   const s = bankStatus(a);
   if (!s) return '';
   return `<div class="micro bank-line" title="The balance on the last bank statement you checked, against the app's balance on that date">
-    Bank ${fmt(s.bank)} · ${fmtDate(s.asOf)}
+    Bank ${fmt(s.bank)} · ${fmtDate(s.asOf)}${s.avail ? ` · available ${fmt(s.avail.amount)}` : ''}
     ${s.ok ? '<span class="badge income">matches</span>' : `<span class="badge due">differs by ${fmt(Math.abs(s.diff))}</span>`}
     ${s.open ? `<a href="#" data-go-reconcile>${plural(s.open, 'line')} to decide</a>` : ''}</div>`;
 }
@@ -8147,7 +8168,7 @@ function renderReconcile() {
       return `<tr>
         <td><strong>${esc(a.name)}</strong><div class="micro">statement of ${fmtDate(s.asOf)}${s.ageDays > 7 ? ` · ${s.ageDays} days old` : ''}</div></td>
         <td class="num" data-label="In the app">${fmt(s.app)}</td>
-        <td class="num" data-label="At the bank"><strong>${fmt(s.bank)}</strong></td>
+        <td class="num" data-label="At the bank"><strong>${fmt(s.bank)}</strong>${s.avail ? `<div class="micro" title="What the bank's own app shows as available: the ledger balance less money held for card payments${s.avail.at ? '. Read ' + esc(String(s.avail.at).slice(0, 16).replace('T', ' ')) : ''}. The comparison above uses the ledger balance, which is what the statements list.">available ${fmt(s.avail.amount)}${s.avail.holds ? ` · ${fmt(s.avail.holds)} on hold` : ''}</div>` : ''}</td>
         <td class="num" data-label="Difference">${s.ok ? '<span class="badge income">matches</span>' : `<span class="${s.diff < 0 ? 'neg' : 'pos'}"><strong>${s.diff > 0 ? '+' : '−'}${fmt(Math.abs(s.diff))}</strong></span>`}</td>
         <td data-label="To decide">${s.open ? `${plural(s.open, 'line')} · ${bankSigned(s.openSum)}` : '—'}</td>
         <td class="actions"><button class="btn sm" data-bank-check="${a.id}">Check statement</button>
@@ -8200,6 +8221,11 @@ function sanitizeBank(raw) {
     const b = a.bank;
     if (!b || typeof b !== 'object' || Array.isArray(b) || !(typeof b.balance === 'number' && isFinite(b.balance)) || !DATE.test(String(b.asOf))) { delete a.bank; continue; }
     if (b.lastRun !== undefined && (!b.lastRun || typeof b.lastRun !== 'object' || Array.isArray(b.lastRun))) delete b.lastRun;
+    if (b.available !== undefined) {
+      const v = b.available;
+      if (!v || typeof v !== 'object' || Array.isArray(v) || !(typeof v.amount === 'number' && isFinite(v.amount)) || typeof v.at !== 'string') delete b.available;
+      else b.available = { amount: v.amount, ...(typeof v.holds === 'number' && isFinite(v.holds) ? { holds: v.holds } : {}), at: v.at.slice(0, 40) };
+    }
   }
   const list = Array.isArray(raw.bankQueue) ? raw.bankQueue : [];
   raw.bankQueue = list.filter(q => q && typeof q === 'object' && !Array.isArray(q) && SCENARIO_ID_RE.test(String(q.id)) && accIds.has(q.accountId) &&

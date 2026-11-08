@@ -402,6 +402,42 @@ class ReleaseRegressions(unittest.TestCase):
         self.assertFalse(p.locator('#bankFetchBtn').is_disabled(), 'free to start another run once it is done')
         self.assertEqual(box['posts'], 2)
 
+    def test_available_balance_is_shown_and_survives_a_compare(self):
+        """The bank's available balance (statement figure less card holds) comes from the downloader, is shown next to the ledger balance and kept across runs."""
+        p = self.page
+        p.evaluate("""() => {
+          data=emptyData();
+          data.accounts=[{id:'eb',name:'Bank',type:'checking',openingBalance:1000,includeInNetWorth:true}];
+          data.envelopes=[{id:'e0',name:'Groceries',budgetAmount:0,cadence:'monthly',rolloverPolicy:'rollover'}];
+          data.transactions=[['2024-01-04',41],['2024-01-18',55],['2024-02-02',47],['2024-02-16',36],['2024-03-01',20]]
+            .map((x,i)=>({id:'h'+i,date:x[0],type:'expense',amount:x[1],accountId:'eb',envelopeId:'e0',payee:'Corner Market',notes:''}));
+          activeView='reconcile';render();undoStack.length=0;redoStack.length=0;
+        }""")
+        # Handed over BEFORE the account is tracked: kept for the next Compare.
+        self.assertTrue(p.evaluate("bankSetAvailable('eb', 3902.30, 332.41)"))
+        self.assertFalse(p.evaluate("bankSetAvailable('nope', 1, 0)"))
+        self.assertFalse(p.evaluate("bankSetAvailable('eb', NaN, 0)"))
+        self.assertIsNone(p.evaluate("data.accounts[0].bank || null"))
+        csv = "Date,Description,Amount,Balance\n2024-03-01,CORNER MARKET 12,-20.00,801.00\n2024-03-06,DENTIST CLINIC,-120.00,681.00\n"
+        p.evaluate("bankImportStart('eb')")
+        p.locator('#bk_file').set_input_files({'name': 's.csv', 'mimeType': 'text/csv', 'buffer': csv.encode()})
+        p.wait_for_function('document.getElementById("bk_bal") && document.getElementById("bk_bal").value==="681.00"')
+        p.locator('#bk_go').click()
+        p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
+        self.assertEqual(p.evaluate("(()=>{const a=data.accounts[0].bank.available;return [a.amount,a.holds,typeof a.at]})()"), [3902.3, 332.41, 'string'])
+        text = p.locator('#main').inner_text()
+        self.assertRegex(text, r'available 3[.,]?902[.,]30')      # 3.902,30 in a Greek browser, 3,902.30 in an English one
+        self.assertRegex(text, r'332[.,]41\W{0,3}on hold')        # the currency sign sits between the amount and the words
+        # Already tracked: recorded at once, and a later Compare keeps it.
+        self.assertTrue(p.evaluate("bankSetAvailable('eb', 3800, 100)"))
+        self.assertEqual(p.evaluate("data.accounts[0].bank.available.amount"), 3800)
+        p.evaluate("bankImportStart('eb')")
+        p.locator('#bk_file').set_input_files({'name': 's.csv', 'mimeType': 'text/csv', 'buffer': csv.encode()})
+        p.wait_for_function('document.getElementById("bk_bal") && document.getElementById("bk_bal").value==="681.00"')
+        p.locator('#bk_go').click()
+        p.wait_for_function('activeView==="reconcile" && !document.getElementById("modalBg").classList.contains("open")')
+        self.assertEqual(p.evaluate("data.accounts[0].bank.available.amount"), 3800, 'a Compare without a fresh figure keeps the last one')
+
     def test_two_bank_files_make_one_app_account(self):
         """Decision #75: an app account that is the sum of two bank accounts takes two files, adds their balances, drops moves between them."""
         p = self.page

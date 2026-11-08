@@ -56,7 +56,8 @@ data = {
   version: 2,                  // schema version, see migrate()
   accounts: [{ id, name, type, openingBalance, includeInNetWorth, isInvestment?, pinned?, owner?, archived?, warnBelow? }],
   // warnBelow?: the account's own red line (decision #68) — a finite number, absent = "red below zero". Display only.
-  // bank?: {balance, asOf:'YYYY-MM-DD', lastRun?} — the bank's own balance from the last statement checked (decision #75). Display + reconciliation only; never an accounting input.
+  // bank?: {balance, asOf:'YYYY-MM-DD', available?, lastRun?} — the bank's own balance from the last statement checked (decision #75). Display + reconciliation only; never an accounting input.
+  // bank.available?: {amount, holds?, at} — the bank's AVAILABLE balance (ledger less card holds), handed over by a downloader through bankSetAvailable(); shown next to the ledger figure, never compared. Kept across runs until a newer one arrives.
   // data.bankQueue: [{id, accountId, date, amount (signed), desc, ref, status:'open'|'dismissed', sug?, note?}] — statement lines awaiting a decision.
   // A transaction booked from a statement line also carries source:'statement', bankRef, bankDesc and (while untouched by the user) bankAuto:true.
   envelopes: [{ id, name, budgetAmount, cadence: 'monthly'|'annual', rolloverPolicy: 'rollover'|'reset'|'sweep', category?, pinned?, isReserve?, accountId?, archived? }],
